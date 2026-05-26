@@ -8,6 +8,7 @@
 - Fixed file claims for hidden paths such as `.github/workflows/test.yml`.
 - Made missing-Ollama diagnostic regression coverage portable across fresh CI hosts.
 - Updated GitHub Actions to Node 24-compatible action major versions.
+- Wait for daemon termination before returning from `continuum down` so Windows log handles are released.
 
 ## 0.1.0 - Alpha Baseline
 

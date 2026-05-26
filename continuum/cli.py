@@ -101,6 +101,13 @@ def pid_is_running(pid: int) -> bool:
         return False
 
 
+def wait_for_process_exit(pid: int, timeout: float = 5.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while pid_is_running(pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    return not pid_is_running(pid)
+
+
 def up(args: argparse.Namespace) -> int:
     store = store_from(args)
     if not store.config_file.exists():
@@ -150,6 +157,16 @@ def down(args: argparse.Namespace) -> int:
             subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, check=False)
         else:
             os.kill(pid, signal.SIGTERM)
+        if not wait_for_process_exit(pid):
+            if os.name == "nt":
+                action = f"Run `taskkill /PID {pid} /T /F`, then retry `continuum down`."
+            else:
+                action = f"Run `kill -TERM {pid}`, then retry `continuum down`."
+            print(f"Continuum did not stop within 5 seconds (PID {pid}). Next action: {action}")
+            return 1
+        if os.name == "nt":
+            # Allow redirected log handles to be released before callers delete temp projects.
+            time.sleep(0.05)
         print(f"Stopped Continuum (PID {pid}).")
     else:
         print(f"Removed stale daemon PID {pid}.")
