@@ -1,0 +1,220 @@
+"""Minimal MCP stdio server for project-scoped Continuum memory."""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+from typing import IO, Any
+
+from .core import CONTEXT_BUDGETS, MemoryStore, compact_text
+
+SERVER_INFO = {"name": "continuum", "version": "0.1.0"}
+PROTOCOL_VERSION = "2025-03-26"
+
+
+def read_note(path: Path) -> str:
+    if not path.exists():
+        return "No memory has been written yet."
+    return compact_text(path.read_text(encoding="utf-8"), 12_000)
+
+
+def tool_definitions() -> list[dict[str, Any]]:
+    return [
+        {
+            "name": "get_startup_context",
+            "description": "Read the smallest current task context. Use this first.",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "get_current_state",
+            "description": "Read compact project state when startup context is insufficient.",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "get_latest_handoff",
+            "description": "Read the compact latest handoff and next step for this project.",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "search_memory",
+            "description": "Return compressed matching memory IDs for targeted expansion.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+                },
+                "required": ["query"],
+            },
+        },
+        {
+            "name": "expand_memory",
+            "description": "Expand one memory event by its ID after a targeted search.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"memory_id": {"type": "integer"}},
+                "required": ["memory_id"],
+            },
+        },
+        {
+            "name": "get_raw_log",
+            "description": "Read a bounded tail of one named local session log for debugging only.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"filename": {"type": "string"}},
+                "required": ["filename"],
+            },
+        },
+        {
+            "name": "write_handoff",
+            "description": "Write a deliberate project handoff after completing or pausing work.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"task": {"type": "string"}, "next_step": {"type": "string"}},
+                "required": ["task", "next_step"],
+            },
+        },
+        {
+            "name": "get_open_tasks",
+            "description": "List non-final controlled tasks in this project.",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "claim_task_files",
+            "description": "Claim specific files for one assigned agent task. Conflicting claims are rejected.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string"},
+                    "agent": {"type": "string"},
+                    "files": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["task_id", "agent", "files"],
+            },
+        },
+        {
+            "name": "complete_task",
+            "description": "Mark a task DONE and release its file claims.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"task_id": {"type": "string"}, "summary": {"type": "string"}},
+                "required": ["task_id", "summary"],
+            },
+        },
+    ]
+
+
+def call_tool(store: MemoryStore, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    if name == "get_startup_context":
+        text = compact_text(read_note(store.state_dir / "current.md"), CONTEXT_BUDGETS["startup"] * 4)
+    elif name == "get_current_state":
+        text = compact_text(read_note(store.state_dir / "current_state.md"), 8_000)
+    elif name == "get_latest_handoff":
+        text = read_note(store.state_dir / "latest_handoff.md")
+    elif name == "search_memory":
+        results = store.search(str(arguments.get("query", "")), int(arguments.get("limit", 8)))
+        text = "\n".join(
+            f"M{item['id']} {item['created_at']} {item['kind']}: {json.dumps(item['payload'], ensure_ascii=True)}"
+            for item in results
+        ) or "No matching local memory events."
+        text = compact_text(text, CONTEXT_BUDGETS["retrieval_default"] * 4)
+    elif name == "expand_memory":
+        event = store.get_memory(int(arguments.get("memory_id", 0)))
+        text = json.dumps(event, ensure_ascii=True, indent=2) if event else "Memory not found."
+        text = compact_text(text, CONTEXT_BUDGETS["retrieval_default"] * 4)
+    elif name == "get_raw_log":
+        filename = Path(str(arguments.get("filename", ""))).name
+        path = store.state_dir / "session_logs" / filename
+        if not path.exists():
+            text = "Log not found."
+        else:
+            text = compact_text(path.read_text(encoding="utf-8", errors="replace"), CONTEXT_BUDGETS["raw_log_default"] * 4)
+    elif name == "write_handoff":
+        task = str(arguments.get("task", "")).strip()
+        next_step = str(arguments.get("next_step", "")).strip()
+        if not task or not next_step:
+            raise ValueError("task and next_step are required")
+        store.event("handoff", {"task": task, "next_step": next_step, "source": "mcp"})
+        store.write_handoff(task, next_step)
+        text = "Handoff written."
+    elif name == "get_open_tasks":
+        tasks = [task for task in store.list_tasks(limit=20) if task["status"] not in {"DONE", "FAILED"}]
+        text = "\n".join(
+            f"{task['task_id']} {task['status']} {task['title']} agent={task['agent'] or 'unassigned'}"
+            for task in tasks
+        ) or "No open tasks."
+        text = compact_text(text, CONTEXT_BUDGETS["retrieval_default"] * 4)
+    elif name == "claim_task_files":
+        claimed = store.claim_files(
+            str(arguments.get("task_id", "")),
+            str(arguments.get("agent", "")),
+            [str(path) for path in arguments.get("files", [])],
+        )
+        text = f"{claimed['task_id']} RUNNING; claimed {len(claimed['locked_files'])} file(s)."
+    elif name == "complete_task":
+        completed = store.set_task_status(
+            str(arguments.get("task_id", "")), "DONE", str(arguments.get("summary", ""))
+        )
+        text = f"{completed['task_id']} DONE; file claims released."
+    else:
+        raise ValueError(f"Unknown tool: {name}")
+    return {"content": [{"type": "text", "text": text}]}
+
+
+def handle_request(store: MemoryStore, request: dict[str, Any]) -> dict[str, Any] | None:
+    request_id = request.get("id")
+    method = request.get("method")
+    if request_id is None:
+        return None
+    try:
+        if method == "initialize":
+            requested = request.get("params", {}).get("protocolVersion") or PROTOCOL_VERSION
+            result = {
+                "protocolVersion": requested,
+                "capabilities": {"tools": {"listChanged": False}},
+                "serverInfo": SERVER_INFO,
+            }
+        elif method == "ping":
+            result = {}
+        elif method == "tools/list":
+            result = {"tools": tool_definitions()}
+        elif method == "tools/call":
+            params = request.get("params", {})
+            result = call_tool(store, str(params.get("name", "")), params.get("arguments", {}))
+        else:
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {"code": -32601, "message": f"Method not found: {method}"},
+            }
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
+    except (ValueError, TypeError) as error:
+        return {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "error": {"code": -32602, "message": str(error)},
+        }
+
+
+def serve_stdio(store: MemoryStore, input_stream: IO[str] | None = None, output_stream: IO[str] | None = None) -> int:
+    input_stream = input_stream or sys.stdin
+    output_stream = output_stream or sys.stdout
+    if not store.config_file.exists():
+        store.initialize(100_000, 0.80)
+    for line in input_stream:
+        if not line.strip():
+            continue
+        try:
+            request = json.loads(line)
+            response = handle_request(store, request)
+        except json.JSONDecodeError:
+            response = {
+                "jsonrpc": "2.0",
+                "id": None,
+                "error": {"code": -32700, "message": "Parse error"},
+            }
+        if response is not None:
+            output_stream.write(json.dumps(response, ensure_ascii=True) + "\n")
+            output_stream.flush()
+    return 0

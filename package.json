@@ -1,0 +1,33 @@
+{
+  "name": "continuum-agent-memory",
+  "version": "0.1.0",
+  "description": "Local shared memory and orchestration infrastructure for AI coding agents and model providers.",
+  "license": "MIT",
+  "bin": {
+    "continuum": "bin/continuum.js",
+    "continuum-agent-memory": "bin/continuum.js"
+  },
+  "files": [
+    "bin/",
+    "continuum/*.py",
+    "continuum/ui/",
+    "docs/",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml"
+  ],
+  "keywords": [
+    "ai",
+    "agents",
+    "codex",
+    "claude",
+    "gemini",
+    "ollama",
+    "openrouter",
+    "mcp",
+    "obsidian"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

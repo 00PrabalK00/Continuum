@@ -1,0 +1,179 @@
+const state = {
+  view: "teams", overview: null, project: null, providers: [], teams: [],
+  tasks: [], events: [], memory: null
+};
+const pageMeta = {
+  overview: ["Overview", "Monitor the local daemon, memory and planned work."],
+  projects: ["Projects", "Inspect the repository and its local memory paths."],
+  teams: ["Teams", "Inspect roles and routes configured through Continuum commands."],
+  providers: ["Providers", "Inspect CLI agents and model backends configured for this project."],
+  memory: ["Memory", "Read compact state and retrieve only relevant stored events."],
+  runs: ["Runs", "Inspect controlled tasks, ownership and file claims."],
+  handoffs: ["Handoffs", "Read the compact continuation note used across agents."],
+  settings: ["Settings", "Review local storage and configured context boundaries."]
+};
+
+async function api(path) {
+  const response = await fetch(path);
+  const data = await response.json();
+  if (!response.ok || data.error) throw new Error(data.error || `Request failed: ${response.status}`);
+  return data;
+}
+function escapeHtml(value = "") {
+  return String(value).replace(/[&<>"']/g, value => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[value]));
+}
+function human(value) {
+  return String(value || "").replaceAll("_", " ").replace(/\b\w/g, character => character.toUpperCase());
+}
+function command(text) {
+  return `<p class="field-label">Terminal command</p><pre>${escapeHtml(text)}</pre>`;
+}
+function field(label, value) {
+  return `<div><p class="field-label">${escapeHtml(label)}</p><p class="field-value">${escapeHtml(value ?? "-")}</p></div>`;
+}
+function inspect(title, body) {
+  document.getElementById("inspect-title").textContent = title;
+  document.getElementById("inspect-body").innerHTML = body;
+}
+function viewOnly() {
+  document.getElementById("primary-action").innerHTML = `<span class="pill">View only | configure with CLI commands</span>`;
+}
+function showError(message) {
+  const toast = document.getElementById("toast");
+  toast.textContent = message;
+  toast.classList.add("show");
+  setTimeout(() => toast.classList.remove("show"), 4000);
+}
+async function loadAll() {
+  [state.overview, state.project, state.providers, state.teams, state.tasks, state.events, state.memory] = await Promise.all([
+    api("/api/overview"), api("/api/project"), api("/api/providers"), api("/api/teams"),
+    api("/api/tasks"), api("/api/events"), api("/api/memory")
+  ]);
+  const daemon = state.overview.daemon;
+  document.getElementById("daemon-dot").classList.toggle("running", daemon.running);
+  document.getElementById("daemon-label").textContent = daemon.running ? `Daemon running | PID ${daemon.pid}` : "Daemon stopped";
+  renderActivity();
+  render();
+}
+function render() {
+  const [title, description] = pageMeta[state.view];
+  document.getElementById("title").textContent = title;
+  document.getElementById("description").textContent = description;
+  document.querySelectorAll("#nav button").forEach(button => button.classList.toggle("active", button.dataset.view === state.view));
+  viewOnly();
+  ({
+    overview: renderOverview, projects: renderProjects, teams: renderTeams, providers: renderProviders,
+    memory: renderMemory, runs: renderRuns, handoffs: renderHandoffs, settings: renderSettings
+  }[state.view])();
+}
+function taskTable(tasks) {
+  if (!tasks.length) return `<div class="empty"><h3>No controlled tasks</h3><p>Create work from the terminal.</p>${command('continuum task create "Fix auth"')}</div>`;
+  return `<div class="table"><div class="row header"><span>Task</span><span>Worker</span><span>Status</span><span>Files</span></div>${tasks.map(task => `
+    <div class="row selectable task-row" data-task="${task.task_id}"><span>${escapeHtml(task.title)}</span><span>${escapeHtml(task.agent || "Unassigned")}</span><span>${escapeHtml(task.status)}</span><span>${task.locked_files.length} claimed</span></div>`).join("")}</div>`;
+}
+function bindTasks() {
+  document.querySelectorAll(".task-row").forEach(row => row.onclick = () => {
+    const task = state.tasks.find(item => item.task_id === row.dataset.task);
+    inspect(task.task_id, field("Task", task.title) + field("Status", task.status) + field("Worker", task.agent || "Unassigned") +
+      field("Claimed files", task.locked_files.map(lock => lock.path).join(", ") || "None") +
+      command(`continuum task show ${task.task_id}`));
+  });
+}
+function renderOverview() {
+  const overview = state.overview;
+  const daemon = overview.daemon.running ? "Running" : "Stopped";
+  document.getElementById("content").innerHTML = `
+    <div class="grid cards">
+      <article class="card selectable" id="daemon-card"><p class="label">Daemon status</p><p class="value">${daemon}</p><p class="detail">${overview.daemon.pid ? `PID ${overview.daemon.pid}` : "No active process"}</p></article>
+      <article class="card"><p class="label">Active project</p><p class="value">${escapeHtml(overview.project.name)}</p><p class="detail mono">${escapeHtml(overview.project.branch || "No branch")}</p></article>
+      <article class="card"><p class="label">Current team</p><p class="value">${escapeHtml(overview.current_team || "Not selected")}</p><p class="detail">${state.teams.length} configured</p></article>
+      <article class="card"><p class="label">Providers</p><p class="value">${overview.providers.filter(provider => provider.enabled).length} enabled</p><p class="detail">${overview.providers.length} configured entries</p></article>
+    </div>
+    <div class="section"><div class="section-head"><h2>Latest compact state</h2></div><pre>${escapeHtml(overview.latest_handoff || "No handoff has been recorded.")}</pre></div>
+    <div class="section"><div class="section-head"><h2>Controlled work</h2></div>${taskTable(overview.tasks)}</div>`;
+  document.getElementById("daemon-card").onclick = () => inspect("Daemon", field("Status", daemon) + field("PID", overview.daemon.pid || "-") + command(`continuum ${overview.daemon.running ? "down" : "up"}`));
+  document.getElementById("daemon-card").onclick();
+  bindTasks();
+}
+function renderProjects() {
+  const project = state.project;
+  document.getElementById("content").innerHTML = `
+    <article class="card selectable" id="project-card"><p class="status connected">Observed</p><h2>${escapeHtml(project.name)}</h2><p class="detail mono">${escapeHtml(project.path)}</p>
+      <div class="section grid cards"><div><p class="label">Git branch</p><p>${escapeHtml(project.branch || "Not committed")}</p></div><div><p class="label">Memory</p><p>${escapeHtml(project.memory_path)}</p></div><div><p class="label">Obsidian</p><p>${project.obsidian_path ? "Configured" : "Disabled"}</p></div></div>
+    </article>`;
+  document.getElementById("project-card").onclick = () => inspect("Project", field("Path", project.path) + field("Branch", project.branch || "None") + field("Memory path", project.memory_path) + field("Obsidian path", project.obsidian_path || "Disabled") + command("continuum status"));
+  document.getElementById("project-card").onclick();
+}
+function renderProviders() {
+  document.getElementById("content").innerHTML = state.providers.length ? `<div class="grid cards">${state.providers.map(provider => `
+    <article class="card selectable provider-card" data-name="${provider.name}"><p class="status ${provider.enabled ? "connected" : "disabled"}">${provider.enabled ? "Enabled" : "Disabled"}</p><h3>${human(provider.name)}</h3><p class="detail">${human(provider.kind)} | ${human(provider.type)}</p><p class="detail">${escapeHtml(provider.model)}</p></article>`).join("")}</div>` :
+    `<div class="empty"><h3>No provider config</h3><p>Initialize the project, then enable only providers you choose.</p>${command("continuum init")}</div>`;
+  document.querySelectorAll(".provider-card").forEach(card => card.onclick = () => {
+    const provider = state.providers.find(item => item.name === card.dataset.name);
+    inspect(human(provider.name), field("Type", `${human(provider.kind)} / ${human(provider.type)}`) + field("State", provider.enabled ? "Enabled" : "Disabled") + field("Model", provider.model) + field("Endpoint / command", provider.base_url || provider.command) + command(`continuum providers test ${provider.name}`));
+  });
+  if (state.providers[0]) document.querySelector(".provider-card").click();
+}
+function renderTeams() {
+  const team = state.teams[0];
+  if (!team) {
+    document.getElementById("content").innerHTML = `<div class="empty"><h3>No teams configured</h3><p>Install a starter preset or write a team JSON file from the terminal.</p>${command("continuum team init default_dev_team")}</div>`;
+    inspect("Teams", command("continuum team list"));
+    return;
+  }
+  document.getElementById("content").innerHTML = `<div class="section-head"><div><h2>${human(team.name)}</h2><p class="muted">${human(team.mode)} workflow</p></div></div>
+    <div class="grid columns">${Object.entries(team.agents).map(([name, agent]) => `
+      <article class="card role-card selectable team-role" data-name="${name}"><p class="role-name">${human(name)}</p><p class="provider">${human(agent.provider)}</p><p class="detail">${human(agent.role)}</p>
+      <div class="pills"><span class="pill">${agent.can_edit_files ? "Can edit" : "Read / model"}</span><span class="pill">${agent.can_run_commands ? "Commands" : "No commands"}</span></div></article>`).join("")}</div>
+    <div class="section"><div class="section-head"><h2>Plan workflow from the terminal</h2></div>${command(`continuum team explain ${team.name} "Fix failing auth test"\ncontinuum team run ${team.name} "Fix failing auth test"`)}</div>`;
+  document.querySelectorAll(".team-role").forEach(card => card.onclick = () => {
+    const agent = team.agents[card.dataset.name];
+    inspect(human(card.dataset.name), field("Provider", human(agent.provider)) + field("Role", human(agent.role)) + field("Can edit files", agent.can_edit_files ? "Yes" : "No") + field("Can run commands", agent.can_run_commands ? "Yes" : "No") + field("One writer safety", team.safety.one_writer_at_a_time ? "Enabled" : "Custom"));
+  });
+  document.querySelector(".team-role").click();
+}
+function renderRuns() {
+  document.getElementById("content").innerHTML = taskTable(state.tasks);
+  bindTasks();
+  inspect("Tasks", command("continuum task list"));
+}
+function renderMemory() {
+  document.getElementById("content").innerHTML = `<div class="tabs"><button class="active">Current State</button><button>Decisions</button><button>Implemented</button><button>Open Tasks</button><button>Raw Events</button></div>
+    <div class="search"><input id="memory-query" placeholder="Search a file, failure or decision"><button id="memory-search">Search</button></div>
+    <div class="section"><pre id="memory-note">${escapeHtml(state.memory.current || "No current context.")}</pre></div><div class="section" id="memory-results"></div>
+    <p class="muted section">Tiny handoff first. Relevant memory only when needed. Raw logs only on demand.</p>`;
+  const notes = [state.memory.current, state.memory.decisions, state.memory.implemented, state.memory.open_tasks, JSON.stringify(state.memory.results, null, 2)];
+  document.querySelectorAll(".tabs button").forEach((button, index) => button.onclick = () => {
+    document.querySelectorAll(".tabs button").forEach(item => item.classList.remove("active"));
+    button.classList.add("active");
+    document.getElementById("memory-note").textContent = notes[index] || "No recorded content.";
+  });
+  document.getElementById("memory-search").onclick = searchMemory;
+  inspect("Memory", command('continuum search "topic"'));
+}
+async function searchMemory() {
+  state.memory = await api(`/api/memory?q=${encodeURIComponent(document.getElementById("memory-query").value)}`);
+  const results = document.getElementById("memory-results");
+  results.innerHTML = state.memory.results.length ? state.memory.results.map(event => `<article class="card"><p class="status connected">${escapeHtml(human(event.kind))}</p><p class="detail mono">${escapeHtml(event.created_at)}</p><p>${escapeHtml(JSON.stringify(event.payload).slice(0, 180))}</p></article>`).join("") : `<div class="empty"><h3>No matching memory</h3><p>Try a narrower query.</p></div>`;
+}
+function renderHandoffs() {
+  document.getElementById("content").innerHTML = `<div class="section"><pre>${escapeHtml(state.memory.handoff || "No handoff recorded.")}</pre></div>`;
+  inspect("Handoff", command('continuum handoff --task "<current task>" --next-step "<next action>"'));
+}
+function renderSettings() {
+  document.getElementById("content").innerHTML = `<div class="grid cards">
+    <article class="card"><p class="label">Privacy</p><p class="value">Local-first</p><p class="detail">State remains under .continuum/</p></article>
+    <article class="card"><p class="label">Session context limit</p><p class="value">${escapeHtml(state.project.context_limit || "Not initialized")}</p><p class="detail">Checkpoint threshold ${escapeHtml(state.project.threshold || "-")}</p></article>
+    <article class="card"><p class="label">Control Center</p><p class="value">Read-only</p><p class="detail">All mutations use CLI commands</p></article></div>`;
+  inspect("Settings", field("Project", state.project.path) + field("Memory path", state.project.memory_path) + field("Obsidian mirror", state.project.obsidian_path || "Disabled") + command("continuum doctor"));
+}
+function renderActivity() {
+  const latest = state.events[0];
+  document.getElementById("activity-summary").textContent = latest ? `${latest.kind} | ${latest.created_at}` : "No recorded activity";
+  document.getElementById("activity-log").innerHTML = state.events.map(event => `<div class="event"><time>${escapeHtml(event.created_at)}</time><span class="kind">${escapeHtml(event.kind)}</span><span>${escapeHtml(JSON.stringify(event.payload).slice(0, 180))}</span></div>`).join("");
+}
+
+document.querySelectorAll("#nav button").forEach(button => button.onclick = () => { state.view = button.dataset.view; render(); });
+document.getElementById("activity-toggle").onclick = () => document.getElementById("activity").classList.toggle("collapsed");
+loadAll().catch(error => showError(error.message));
+setInterval(() => api("/api/events").then(events => { state.events = events; renderActivity(); }).catch(() => {}), 5000);
