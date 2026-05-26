@@ -14,3 +14,6 @@
 - npm is the intended user front door; publishing remains a tracked release issue until completed.
 - Automatic writer execution requires explicit file claims and stops when unrelated dirty paths prevent enforcement.
 - `continuum resume` injects bounded startup context only into CLIs launched through Continuum; external sessions are not auto-detected.
+- Worktree merges require recorded passing tests and explicit review approval; parallel team scheduling is still separate.
+- Control Center writes use explicit command-parity endpoints only; no hidden automatic execution.
+- Docker remains optional infrastructure for vector services while the daemon and CLI agents stay host-local.

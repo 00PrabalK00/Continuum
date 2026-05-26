@@ -19,6 +19,14 @@ async function api(path) {
   if (!response.ok || data.error) throw new Error(data.error || `Request failed: ${response.status}`);
   return data;
 }
+async function post(path, payload) {
+  const response = await fetch(path, {
+    method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload)
+  });
+  const data = await response.json();
+  if (!response.ok || data.error) throw new Error(data.error || `Request failed: ${response.status}`);
+  return data;
+}
 function escapeHtml(value = "") {
   return String(value).replace(/[&<>"']/g, value => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[value]));
 }
@@ -36,7 +44,7 @@ function inspect(title, body) {
   document.getElementById("inspect-body").innerHTML = body;
 }
 function viewOnly() {
-  document.getElementById("primary-action").innerHTML = `<span class="pill">View only | configure with CLI commands</span>`;
+  document.getElementById("primary-action").innerHTML = `<span class="pill">Explicit controls | CLI remains canonical</span>`;
 }
 function showError(message) {
   const toast = document.getElementById("toast");
@@ -110,14 +118,22 @@ function renderProviders() {
     `<div class="empty"><h3>No provider config</h3><p>Initialize the project, then enable only providers you choose.</p>${command("continuum init")}</div>`;
   document.querySelectorAll(".provider-card").forEach(card => card.onclick = () => {
     const provider = state.providers.find(item => item.name === card.dataset.name);
-    inspect(human(provider.name), field("Type", `${human(provider.kind)} / ${human(provider.type)}`) + field("State", provider.enabled ? "Enabled" : "Disabled") + field("Model", provider.model) + field("Endpoint / command", provider.base_url || provider.command) + command(`continuum providers test ${provider.name}`));
+    inspect(human(provider.name), field("Type", `${human(provider.kind)} / ${human(provider.type)}`) + field("State", provider.enabled ? "Enabled" : "Disabled") + field("Model", provider.model) + field("Endpoint / command", provider.base_url || provider.command) + `<button id="test-provider" class="button">Test connection</button>` + command(`continuum providers test ${provider.name}`));
+    document.getElementById("test-provider").onclick = async () => {
+      try { const result = await post("/api/providers/test", {provider: provider.name}); showError(result.result); await loadAll(); }
+      catch (error) { showError(error.message); }
+    };
   });
   if (state.providers[0]) document.querySelector(".provider-card").click();
 }
 function renderTeams() {
   const team = state.teams[0];
   if (!team) {
-    document.getElementById("content").innerHTML = `<div class="empty"><h3>No teams configured</h3><p>Install a starter preset or write a team JSON file from the terminal.</p>${command("continuum team init default_dev_team")}</div>`;
+    document.getElementById("content").innerHTML = `<div class="empty"><h3>No teams configured</h3><p>Create the editable default starter team.</p><button id="create-team" class="button">Create Team</button>${command("continuum team init default_dev_team")}</div>`;
+    document.getElementById("create-team").onclick = async () => {
+      try { await post("/api/teams/create", {preset: "default_dev_team"}); await loadAll(); }
+      catch (error) { showError(error.message); }
+    };
     inspect("Teams", command("continuum team list"));
     return;
   }
@@ -125,16 +141,37 @@ function renderTeams() {
     <div class="grid columns">${Object.entries(team.agents).map(([name, agent]) => `
       <article class="card role-card selectable team-role" data-name="${name}"><p class="role-name">${human(name)}</p><p class="provider">${human(agent.provider)}</p><p class="detail">${human(agent.role)}</p>
       <div class="pills"><span class="pill">${agent.can_edit_files ? "Can edit" : "Read / model"}</span><span class="pill">${agent.can_run_commands ? "Commands" : "No commands"}</span></div></article>`).join("")}</div>
-    <div class="section"><div class="section-head"><h2>Plan workflow from the terminal</h2></div>${command(`continuum team explain ${team.name} "Fix failing auth test"\ncontinuum team run ${team.name} "Fix failing auth test"`)}</div>`;
+    <div class="section"><div class="section-head"><h2>Run a controlled workflow</h2></div><div class="search"><input id="workflow-request" placeholder="Fix failing auth test"><input id="workflow-files" placeholder="Writable paths, comma-separated"><button id="plan-workflow">Plan</button><button id="execute-workflow">Execute</button></div>${command(`continuum team run ${team.name} "Fix failing auth test" --execute --allow-file src/auth.ts`)}</div>`;
+  document.getElementById("plan-workflow").onclick = async () => {
+    const request = document.getElementById("workflow-request").value.trim();
+    if (!request) return showError("Enter a task before planning.");
+    try { const workflow = await post("/api/workflows/run", {team: team.name, request}); showError(`Planned ${workflow.workflow_id}`); await loadAll(); }
+    catch (error) { showError(error.message); }
+  };
+  document.getElementById("execute-workflow").onclick = async () => {
+    const request = document.getElementById("workflow-request").value.trim();
+    const allowFiles = document.getElementById("workflow-files").value.split(",").map(value => value.trim()).filter(Boolean);
+    if (!request) return showError("Enter a task before executing.");
+    try { const workflow = await post("/api/workflows/run", {team: team.name, request, execute: true, allow_files: allowFiles}); showError(`Executed ${workflow.workflow_id}`); await loadAll(); }
+    catch (error) { showError(error.message); }
+  };
   document.querySelectorAll(".team-role").forEach(card => card.onclick = () => {
     const agent = team.agents[card.dataset.name];
-    inspect(human(card.dataset.name), field("Provider", human(agent.provider)) + field("Role", human(agent.role)) + field("Can edit files", agent.can_edit_files ? "Yes" : "No") + field("Can run commands", agent.can_run_commands ? "Yes" : "No") + field("One writer safety", team.safety.one_writer_at_a_time ? "Enabled" : "Custom"));
+    inspect(human(card.dataset.name), field("Provider", human(agent.provider)) + field("Role", human(agent.role)) + field("Can edit files", agent.can_edit_files ? "Yes" : "No") + field("Can run commands", agent.can_run_commands ? "Yes" : "No") + field("One writer safety", team.safety.one_writer_at_a_time ? "Enabled" : "Custom") + `<p class="field-label">Team JSON</p><textarea id="team-json" rows="10">${escapeHtml(JSON.stringify(team, null, 2))}</textarea><button id="save-team" class="button">Save Team</button>`);
+    document.getElementById("save-team").onclick = async () => {
+      try { await post("/api/teams/save", {name: team.name, config: JSON.parse(document.getElementById("team-json").value)}); showError("Team saved."); await loadAll(); }
+      catch (error) { showError(error.message); }
+    };
   });
   document.querySelector(".team-role").click();
 }
 function renderRuns() {
-  document.getElementById("content").innerHTML = taskTable(state.tasks);
+  document.getElementById("content").innerHTML = `${taskTable(state.tasks)}<div class="section"><div class="section-head"><h2>Resume context</h2></div><div class="search"><input id="resume-role" value="coder"><button id="resume-context">Build compact packet</button></div><pre id="resume-output"></pre></div>`;
   bindTasks();
+  document.getElementById("resume-context").onclick = async () => {
+    try { const result = await post("/api/resume-context", {role: document.getElementById("resume-role").value, mode: "compact"}); document.getElementById("resume-output").textContent = result.text; }
+    catch (error) { showError(error.message); }
+  };
   inspect("Tasks", command("continuum task list"));
 }
 function renderMemory() {
@@ -164,7 +201,7 @@ function renderSettings() {
   document.getElementById("content").innerHTML = `<div class="grid cards">
     <article class="card"><p class="label">Privacy</p><p class="value">Local-first</p><p class="detail">State remains under .continuum/</p></article>
     <article class="card"><p class="label">Session context limit</p><p class="value">${escapeHtml(state.project.context_limit || "Not initialized")}</p><p class="detail">Checkpoint threshold ${escapeHtml(state.project.threshold || "-")}</p></article>
-    <article class="card"><p class="label">Control Center</p><p class="value">Read-only</p><p class="detail">All mutations use CLI commands</p></article></div>`;
+    <article class="card"><p class="label">Control Center</p><p class="value">Explicit controls</p><p class="detail">Actions mirror audited CLI operations</p></article></div>`;
   inspect("Settings", field("Project", state.project.path) + field("Memory path", state.project.memory_path) + field("Obsidian mirror", state.project.obsidian_path || "Disabled") + command("continuum doctor"));
 }
 function renderActivity() {

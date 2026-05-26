@@ -65,22 +65,79 @@ class ControlCenterTest(unittest.TestCase):
             self.assertIn("<svg", logo)
             self.assertEqual(payload["project"]["name"], "project")
 
-    def test_http_server_rejects_mutating_actions(self):
+    def test_http_server_allows_explicit_team_creation_and_workflow_planning(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            app = ControlCenter(Path(temporary) / "project")
+            app.store.initialize(1000, 0.8)
+            server = ControlCenterServer(("127.0.0.1", 0), app)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                create = urllib.request.Request(
+                    f"http://127.0.0.1:{server.server_port}/api/teams/create",
+                    data=json.dumps({"preset": "local_only"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"}, method="POST",
+                )
+                with urllib.request.urlopen(create) as response:
+                    created = json.loads(response.read().decode("utf-8"))
+                plan = urllib.request.Request(
+                    f"http://127.0.0.1:{server.server_port}/api/workflows/run",
+                    data=json.dumps({"team": "local_only", "request": "document auth"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"}, method="POST",
+                )
+                with urllib.request.urlopen(plan) as response:
+                    workflow = json.loads(response.read().decode("utf-8"))
+                self.assertEqual(created["team"], "local_only")
+                self.assertEqual(workflow["status"], "PLANNED")
+                resume = urllib.request.Request(
+                    f"http://127.0.0.1:{server.server_port}/api/resume-context",
+                    data=json.dumps({"role": "reasoner", "mode": "compact"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"}, method="POST",
+                )
+                with urllib.request.urlopen(resume) as response:
+                    packet = json.loads(response.read().decode("utf-8"))
+                self.assertIn("Continuum Context Packet", packet["text"])
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
+    def test_unknown_action_endpoint_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
             app = ControlCenter(Path(temporary) / "project")
             server = ControlCenterServer(("127.0.0.1", 0), app)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             request = urllib.request.Request(
-                f"http://127.0.0.1:{server.server_port}/api/handoff",
-                data=json.dumps({"task": "x", "next_step": "y"}).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-                method="POST",
+                f"http://127.0.0.1:{server.server_port}/api/unknown",
+                data=b"{}", headers={"Content-Type": "application/json"}, method="POST",
             )
             try:
                 with self.assertRaises(urllib.error.HTTPError) as context:
                     urllib.request.urlopen(request)
-                self.assertEqual(context.exception.code, 405)
+                self.assertEqual(context.exception.code, 404)
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
+    def test_team_save_endpoint_rejects_path_traversal_name(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            app = ControlCenter(Path(temporary) / "project")
+            app.store.initialize(1000, 0.8)
+            server = ControlCenterServer(("127.0.0.1", 0), app)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/teams/save",
+                data=json.dumps({"name": "../outside", "config": {"agents": {}, "routing": {}}}).encode("utf-8"),
+                headers={"Content-Type": "application/json"}, method="POST",
+            )
+            try:
+                with self.assertRaises(urllib.error.HTTPError) as context:
+                    urllib.request.urlopen(request)
+                self.assertEqual(context.exception.code, 400)
+                self.assertFalse((app.store.state_dir / "outside.json").exists())
             finally:
                 server.shutdown()
                 server.server_close()

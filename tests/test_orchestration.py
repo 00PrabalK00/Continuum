@@ -26,6 +26,7 @@ class OrchestratorTest(unittest.TestCase):
             self.assertEqual([call[0] for call in calls], ["ollama", "ollama"])
             self.assertIn("ollama result", calls[1][1])
             self.assertEqual(len(store.messages(workflow_ref=workflow["workflow_id"])), 2)
+            self.assertIn("Review completed workflow", (store.state_dir / "latest_handoff.md").read_text(encoding="utf-8"))
 
     def test_writer_execution_requires_explicit_claimed_paths(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -102,6 +103,7 @@ class OrchestratorTest(unittest.TestCase):
             workflow = store.list_workflows(1)[0]
             self.assertIn("provider connection dropped", workflow["steps"][0]["output"])
             self.assertEqual(workflow["status"], "FAILED")
+            self.assertIn("Inspect failed workflow", (store.state_dir / "latest_handoff.md").read_text(encoding="utf-8"))
 
     def test_unexpected_model_step_failure_marks_workflow_failed(self):
         with tempfile.TemporaryDirectory() as temporary:

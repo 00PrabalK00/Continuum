@@ -1,7 +1,8 @@
 # Continuum Control Center
 
-Control Center is a read-only local web interface for inspecting a Continuum
-project. Configuration and all state mutations remain CLI operations.
+Control Center is a local web interface for inspecting a Continuum project and
+running explicit command-parity actions. The CLI remains the canonical
+automation and scripting surface.
 
 ```bash
 continuum ui --project /path/to/project --open
@@ -9,6 +10,13 @@ continuum ui --project /path/to/project --open
 
 By default it listens on `127.0.0.1:7357`. It does not expose an internet
 service or upload project data.
+
+Supported actions:
+
+- Create or save a validated team configuration.
+- Test a selected configured provider.
+- Plan a workflow or explicitly invoke sequential execution.
+- Build compact resume context for a selected role.
 
 ## Pages
 

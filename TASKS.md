@@ -10,14 +10,14 @@
 
 - [x] [#1 Add ranked semantic retrieval over Ollama-generated embeddings.](https://github.com/00PrabalK00/Continuum/issues/1)
 - [x] [#3 Add automatic sequential Continuum Teams execution.](https://github.com/00PrabalK00/Continuum/issues/3)
+- [x] [#4 Add Git worktree isolation before concurrent write workers.](https://github.com/00PrabalK00/Continuum/issues/4)
+- [x] [#5 Add writable Control Center configuration and planned-task controls.](https://github.com/00PrabalK00/Continuum/issues/5)
+- [x] [#7 Add optional Docker Compose mode.](https://github.com/00PrabalK00/Continuum/issues/7)
 
 ## Remaining Roadmap
 
 - [ ] [#2 Add PTY-aware wrappers for Claude Code, Gemini CLI and Codex.](https://github.com/00PrabalK00/Continuum/issues/2)
-- [ ] [#4 Add Git worktree isolation before concurrent write workers.](https://github.com/00PrabalK00/Continuum/issues/4)
-- [ ] [#5 Add writable Control Center configuration and planned-task controls.](https://github.com/00PrabalK00/Continuum/issues/5)
 - [ ] [#6 Add macOS and Linux service installers.](https://github.com/00PrabalK00/Continuum/issues/6)
-- [ ] [#7 Add optional Docker Compose mode.](https://github.com/00PrabalK00/Continuum/issues/7)
 - [ ] Add claim recovery commands with auditable reasons.
 - [ ] Add persisted retry/continue for a failed sequential workflow step without rebuilding earlier tasks.
 - [ ] Improve wrapper review output capture when a provider returns a plan-only completion marker.

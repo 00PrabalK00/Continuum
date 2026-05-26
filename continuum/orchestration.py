@@ -89,9 +89,14 @@ class Orchestrator:
                 self.store.set_task_status(task_id, "FAILED", message)
                 self.store.update_workflow(workflow_id, "FAILED", step["order"], message)
                 self.store.send_message("continuum", role, message, "error", workflow_id, task_id)
+                self.store.event("handoff", {"task": request, "next_step": f"Inspect failed workflow {workflow_id} step {step['order']}: {message}"})
+                self.store.write_handoff(request, f"Inspect failed workflow {workflow_id} step {step['order']}: {message}")
                 raise OrchestrationError(message) from error
         summary = f"Sequential workflow completed for {request}."
-        return self.store.update_workflow(workflow_id, "DONE", len(workflow["steps"]), summary)
+        completed = self.store.update_workflow(workflow_id, "DONE", len(workflow["steps"]), summary)
+        self.store.event("handoff", {"task": request, "next_step": f"Review completed workflow {workflow_id} outputs and commit verified changes."})
+        self.store.write_handoff(request, f"Review completed workflow {workflow_id} outputs and commit verified changes.")
+        return completed
 
     def _begin_step(
         self,

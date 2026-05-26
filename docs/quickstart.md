@@ -50,6 +50,22 @@ For Windows sign-in startup:
 continuum autostart install
 ```
 
+On macOS or Linux, use native service definitions:
+
+```bash
+continuum service install
+continuum service status
+```
+
+For isolated writer work:
+
+```bash
+continuum worktree create T0001
+continuum worktree test-result T0001 --pass --note "tests passed"
+continuum worktree review T0001 --approve --note "reviewed"
+continuum worktree merge T0001
+```
+
 ## Record Work
 
 ```bash

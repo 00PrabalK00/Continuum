@@ -21,7 +21,7 @@ v0.2 proves Continuum can automatically orchestrate agents.
 - JSON Continuum Teams presets with deterministic routed task planning
 - Continuum Control Center localhost UI for projects, providers, teams, memory, runs and handoffs
 - Deterministic `continuum status` and `continuum doctor` diagnostics
-- CLI-owned configuration with read-only Control Center views
+- Explicit Control Center team/provider/workflow actions with CLI parity
 - Editable team starter presets with task-only planning output
 - Shared packaged logo asset and verified Control Center handoff display
 - Windows startup installation
@@ -30,6 +30,8 @@ v0.2 proves Continuum can automatically orchestrate agents.
 - Ollama-ranked retrieval over stored embedding previews
 - Prompt injection for sessions launched through `continuum resume`
 - File claim enforcement for model providers at storage and MCP boundaries
+- Task worktrees with diff metadata and required test/review gates
+- Optional Docker Compose vector-service profile
 
 ## v0.2 Issues
 
@@ -37,12 +39,6 @@ v0.2 proves Continuum can automatically orchestrate agents.
 
 Create tested adapters for interactive Codex, Claude Code and Gemini CLI
 behavior on Windows, macOS and Linux.
-
-### [#4 Isolated Parallel Work](https://github.com/00PrabalK00/Continuum/issues/4)
-
-Create Git worktree-backed parallel tasks with review/test gates before any
-merge. File claims alone protect routed intent; worktrees provide filesystem
-isolation.
 
 ### Sequential Recovery
 
@@ -56,17 +52,6 @@ Provide native service installation for Windows, macOS and Linux, along with
 clean status and uninstall commands.
 
 Tracked as [#6 macOS and Linux service installers](https://github.com/00PrabalK00/Continuum/issues/6).
-
-### [#5 Writable Control Center Configuration](https://github.com/00PrabalK00/Continuum/issues/5)
-
-Add team editing, provider testing and planned-task run/resume controls without
-decorative or simulated activity.
-
-### [#7 Optional Docker Mode](https://github.com/00PrabalK00/Continuum/issues/7)
-
-Provide a Docker Compose profile for optional vector/search and dashboard
-services, without moving host file watching or local agent execution into a
-required container.
 
 ## Release Issues
 

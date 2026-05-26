@@ -18,3 +18,7 @@
 - Resume prompt injection for Claude, Gemini and Codex sessions launched through Continuum.
 - Local semantic ranking over stored Ollama embeddings with compact previews.
 - Storage and MCP enforcement blocking model providers from file claims.
+- Semantic retrieval refresh, bounded fallback, event attribution and weighted ranking.
+- Git task worktrees with diff metadata plus mandatory test/review merge gates.
+- Explicit Control Center actions for teams, provider tests, workflow planning/execution and resume packets.
+- macOS/Linux native service definitions and optional Docker vector profile.

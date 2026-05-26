@@ -1,0 +1,12 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.13.6
+    profiles: ["vector"]
+    ports:
+      - "127.0.0.1:6333:6333"
+    volumes:
+      - continuum_qdrant:/qdrant/storage
+    restart: unless-stopped
+
+volumes:
+  continuum_qdrant:
