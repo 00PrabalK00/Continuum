@@ -6,6 +6,7 @@
 - Added an end-to-end multi-agent demo script and installation-first documentation.
 - Added cross-platform installation smoke coverage in CI.
 - Fixed file claims for hidden paths such as `.github/workflows/test.yml`.
+- Made missing-Ollama diagnostic regression coverage portable across fresh CI hosts.
 
 ## 0.1.0 - Alpha Baseline
 

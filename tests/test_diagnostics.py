@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import shutil
 from pathlib import Path
 from unittest.mock import patch
 
@@ -42,8 +43,12 @@ class DiagnosticsTest(unittest.TestCase):
             store = MemoryStore(Path(temporary) / "project")
             store.initialize(1000, 0.8)
             ProviderManager(store.state_dir).add("ollama")
+            node = shutil.which("node")
 
-            with patch("continuum.diagnostics.shutil.which", return_value="ollama"), patch.object(
+            with patch(
+                "continuum.diagnostics.shutil.which",
+                side_effect=lambda command: "ollama" if command == "ollama" else node,
+            ), patch.object(
                 ProviderManager, "models", side_effect=ProviderError("connection refused")
             ):
                 results = run_doctor(store)
@@ -51,6 +56,23 @@ class DiagnosticsTest(unittest.TestCase):
             check = next(item for item in results if item["name"] == "Ollama API localhost:11434")
             self.assertEqual(check["status"], "FAIL")
             self.assertIn("ollama serve", check["fix"])
+
+    def test_doctor_reports_missing_ollama_installation_without_executing_it(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "project")
+            store.initialize(1000, 0.8)
+            ProviderManager(store.state_dir).add("ollama")
+            node = shutil.which("node")
+
+            with patch(
+                "continuum.diagnostics.shutil.which",
+                side_effect=lambda command: None if command == "ollama" else node,
+            ), patch.object(ProviderManager, "models", side_effect=ProviderError("connection refused")):
+                results = run_doctor(store)
+
+            check = next(item for item in results if item["name"] == "Ollama installation")
+            self.assertEqual(check["status"], "FAIL")
+            self.assertIn("Install Ollama", check["fix"])
 
 
 if __name__ == "__main__":
