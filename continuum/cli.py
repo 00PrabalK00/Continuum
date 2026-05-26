@@ -155,18 +155,14 @@ def down(args: argparse.Namespace) -> int:
     if pid_is_running(pid):
         if os.name == "nt":
             subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, check=False)
-        else:
-            os.kill(pid, signal.SIGTERM)
-        if not wait_for_process_exit(pid):
-            if os.name == "nt":
+            if not wait_for_process_exit(pid):
                 action = f"Run `taskkill /PID {pid} /T /F`, then retry `continuum down`."
-            else:
-                action = f"Run `kill -TERM {pid}`, then retry `continuum down`."
-            print(f"Continuum did not stop within 5 seconds (PID {pid}). Next action: {action}")
-            return 1
-        if os.name == "nt":
+                print(f"Continuum did not stop within 5 seconds (PID {pid}). Next action: {action}")
+                return 1
             # Allow redirected log handles to be released before callers delete temp projects.
             time.sleep(0.05)
+        else:
+            os.kill(pid, signal.SIGTERM)
         print(f"Stopped Continuum (PID {pid}).")
     else:
         print(f"Removed stale daemon PID {pid}.")
