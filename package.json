@@ -1,7 +1,7 @@
 {
   "name": "continuum-agent-memory",
-  "version": "0.1.0",
-  "description": "Local shared memory and orchestration infrastructure for AI coding agents and model providers.",
+  "version": "0.1.1",
+  "description": "Local shared memory and controlled task planning for AI coding agents.",
   "license": "MIT",
   "bin": {
     "continuum": "bin/continuum.js",
@@ -12,6 +12,7 @@
     "continuum/*.py",
     "continuum/ui/",
     "docs/",
+    "examples/",
     "README.md",
     "LICENSE",
     "pyproject.toml"

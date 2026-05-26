@@ -353,7 +353,15 @@ class MemoryStore:
             raise ValueError(f"Unknown task: {task_ref}")
         if task["status"] in FINAL_TASK_STATUSES:
             raise ValueError(f"Cannot claim files for final task: {task_ref}")
-        normalized = sorted({str(Path(path).as_posix()).lstrip("./") for path in files if path.strip()})
+        normalized = []
+        for path in files:
+            if not path.strip():
+                continue
+            value = str(Path(path).as_posix())
+            while value.startswith("./"):
+                value = value[2:]
+            normalized.append(value)
+        normalized = sorted(set(normalized))
         if not normalized:
             raise ValueError("At least one file is required.")
         connection = self.connect()

@@ -1,5 +1,12 @@
 # Roadmap
 
+## Release Boundary
+
+```text
+v0.1 proves Continuum can preserve context across agents.
+v0.2 proves Continuum can automatically orchestrate agents.
+```
+
 ## Implemented In v0.1
 
 - Local project initialization and compact Markdown handoffs
@@ -19,25 +26,25 @@
 - Shared packaged logo asset and verified Control Center handoff display
 - Windows startup installation
 
-## Next Milestones
+## v0.2 Issues
 
-### Semantic Retrieval
+### [#1 Semantic Retrieval Using Ollama Embeddings](https://github.com/00PrabalK00/Continuum/issues/1)
 
 Use the stored Ollama embeddings for ranked retrieval, with bounded retrieved
 context and an exact-search fallback. Users should not need a cloud account.
 
-### Agent Adapters
+### [#2 PTY-Aware Agent Wrappers](https://github.com/00PrabalK00/Continuum/issues/2)
 
 Create tested adapters for interactive Codex, Claude Code and Gemini CLI
 behavior on Windows, macOS and Linux.
 
-### Orchestrator Routing
+### [#3 Automatic Continuum Teams Execution](https://github.com/00PrabalK00/Continuum/issues/3)
 
 Add provider adapters and a task router that can assign sequential specialist
 roles and launch workers with scoped MCP configuration. Team route planning is
 implemented; automatic execution is not.
 
-### Isolated Parallel Work
+### [#4 Isolated Parallel Work](https://github.com/00PrabalK00/Continuum/issues/4)
 
 Create Git worktree-backed parallel tasks with review/test gates before any
 merge. File claims alone protect routed intent; worktrees provide filesystem
@@ -48,11 +55,24 @@ isolation.
 Provide native service installation for Windows, macOS and Linux, along with
 clean status and uninstall commands.
 
-### Optional Docker Mode
+Tracked as [#6 macOS and Linux service installers](https://github.com/00PrabalK00/Continuum/issues/6).
+
+### [#5 Writable Control Center Configuration](https://github.com/00PrabalK00/Continuum/issues/5)
+
+Add team editing, provider testing and planned-task run/resume controls without
+decorative or simulated activity.
+
+### [#7 Optional Docker Mode](https://github.com/00PrabalK00/Continuum/issues/7)
 
 Provide a Docker Compose profile for optional vector/search and dashboard
 services, without moving host file watching or local agent execution into a
 required container.
+
+## Release Issues
+
+- [#8 Publish npm package and verify npx first-run flow](https://github.com/00PrabalK00/Continuum/issues/8)
+- [#9 Publish the Python package to PyPI](https://github.com/00PrabalK00/Continuum/issues/9)
+- [#10 Record the v0.1 context continuity demo video](https://github.com/00PrabalK00/Continuum/issues/10)
 
 ## Non-Goals
 

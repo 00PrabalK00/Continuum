@@ -10,3 +10,5 @@
 - Initialization writes disabled provider starters and installs no team automatically.
 - Alpha compaction is bounded delta notes plus targeted retrieval; semantic ranking is not part of the correctness path.
 - Branding uses one packaged SVG asset shared by GitHub README and Control Center to avoid redundant large raster assets.
+- v0.1 promises cross-agent context continuity only; automatic execution belongs to v0.2.
+- npm is the intended user front door; publishing remains a tracked release issue until completed.

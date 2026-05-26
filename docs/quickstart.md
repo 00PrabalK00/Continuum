@@ -1,5 +1,17 @@
 # Quickstart
 
+## Target npm Flow
+
+After npm publishing is complete, the main user path is:
+
+```bash
+npx -y continuum-agent-memory@latest init
+npx -y continuum-agent-memory@latest up
+npx -y continuum-agent-memory@latest ui --open
+```
+
+For the GitHub alpha source checkout, use the commands below.
+
 ## Initialize A Project
 
 ```bash
@@ -50,6 +62,7 @@ continuum resume claude compact
 
 ```bash
 continuum status
+continuum doctor
 continuum search "login timeout"
 ```
 

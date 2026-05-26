@@ -1,6 +1,13 @@
 # Changelog
 
-## 0.1.0 - Unreleased
+## 0.1.1 - Alpha
+
+- Declared the release boundary: `v0.1` proves context continuity; `v0.2` owns automatic orchestration.
+- Added an end-to-end multi-agent demo script and installation-first documentation.
+- Added cross-platform installation smoke coverage in CI.
+- Fixed file claims for hidden paths such as `.github/workflows/test.yml`.
+
+## 0.1.0 - Alpha Baseline
 
 - Added local project memory with SQLite events and bounded Markdown handoffs.
 - Added `init`, `up`, `down`, `logs`, `handoff`, `run`, `resume`, `status`

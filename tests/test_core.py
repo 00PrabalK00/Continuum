@@ -73,6 +73,16 @@ class MemoryStoreTest(unittest.TestCase):
             claimed = store.claim_files(second["task_id"], "gemini", ["src/auth.ts"])
             self.assertEqual(claimed["status"], "RUNNING")
 
+    def test_task_claim_preserves_hidden_directory_prefix(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "app")
+            store.initialize(1000, 0.8)
+            task = store.create_task("Edit CI")
+
+            claimed = store.claim_files(task["task_id"], "codex", [".github/workflows/test.yml"])
+
+            self.assertEqual(claimed["locked_files"][0]["path"], ".github/workflows/test.yml")
+
 
 if __name__ == "__main__":
     unittest.main()

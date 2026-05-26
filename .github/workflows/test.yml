@@ -9,7 +9,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: ["3.9", "3.13"]
     steps:
       - uses: actions/checkout@v4
@@ -20,6 +20,14 @@ jobs:
         with:
           node-version: 20
       - run: python -m unittest discover -s tests -v
+      - run: python -m unittest discover -s examples/multi-agent-handoff -v
       - run: python -m continuum --help
+      - run: node --check continuum/ui/app.js
+      - run: python -m pip install .
+      - run: continuum --version
       - run: node bin/continuum.js --version
       - run: npm pack --dry-run
+      - run: npm install --global .
+      - run: continuum --version
+      - run: continuum init --project "${{ runner.temp }}/continuum-smoke"
+      - run: continuum status --project "${{ runner.temp }}/continuum-smoke"

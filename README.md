@@ -20,13 +20,25 @@ Claude Code       Codex CLI       Gemini CLI
          optional Obsidian notes
 ```
 
-Continuum does not replace an agent. It is the parent controller and shared
-memory layer: it preserves what changed, assigns scoped work, rejects
-conflicting file claims and carries compact context to the next worker.
+Continuum does not replace an agent. It is the shared memory and task-planning
+layer: it preserves what changed, assigns scoped work, rejects conflicting
+file claims and carries compact context to the next worker.
+
+## Release Promise
+
+```text
+v0.1 proves Continuum can preserve context across agents.
+v0.2 proves Continuum can automatically orchestrate agents.
+```
+
+Version `0.1` ships shared memory, compact handoffs, provider configuration,
+team planning, MCP memory tools, controlled tasks and a read-only Control
+Center. It does not claim autonomous multi-agent execution.
 
 ## Status
 
-This repository is an alpha CLI baseline.
+This repository is a `v0.1.1` alpha baseline focused on context continuity
+between agent sessions.
 
 Shipped in `v0.1`:
 
@@ -46,12 +58,13 @@ Shipped in `v0.1`:
 - Optional Obsidian mirroring with one small folder per project.
 - Windows `continuum autostart install` for sign-in startup.
 
-Planned, not claimed as shipped:
+Deferred to `v0.2`, not claimed as shipped:
 
 - Semantic/vector retrieval over older memories.
 - Automated execution of Team workflows across provider adapters.
 - Fully interactive PTY-aware wrappers across operating systems.
 - macOS/Linux background service installers.
+- Optional Docker mode.
 
 ## Installation Strategy
 
@@ -84,28 +97,43 @@ npm link
 continuum --version
 ```
 
-Once published to npm, the low-friction entrypoint is:
+The intended npm install experience is:
 
 ```bash
-npx continuum-agent-memory init
-npx continuum-agent-memory up
+npx -y continuum-agent-memory@latest init
+npx -y continuum-agent-memory@latest up
+npx -y continuum-agent-memory@latest ui --open
 ```
 
-## Ten Second Demo
+Until the npm publication issue is complete, run from GitHub without a global install:
 
 ```bash
+npx -y github:00PrabalK00/Continuum --version
+```
+
+GitHub Actions now runs install smoke coverage for Windows, macOS and Linux.
+The public milestone is tracked in [issue #8](https://github.com/00PrabalK00/Continuum/issues/8):
+fresh-machine setup in under two minutes.
+
+## Context Continuity Demo
+
+```bash
+cd examples/multi-agent-handoff
 continuum init
-continuum team init default_dev_team
 continuum up
-continuum task create "Fix auth callback" --mode sequential
-continuum task claim T0001 codex src/auth/callback.ts
-continuum handoff --task "Fix auth callback" --next-step "Run the failing auth test."
-continuum status
+continuum run claude
+continuum handoff --task "Add greeting validation" --next-step "Inspect Claude's edit and continue implementation."
+continuum resume gemini compact
+continuum handoff --task "Add greeting validation" --next-step "Run tests and finish the patch."
 continuum resume codex compact
+continuum ui --open
 ```
 
-This records compact shared memory, establishes file ownership and resumes an
-agent with bounded context. Planning a team route is also deterministic:
+This is the `v0.1` proof: Claude starts work, Gemini and Codex receive compact
+handoffs instead of a full transcript, and Control Center shows the local
+memory and run state. See [docs/demo.md](docs/demo.md) for a recording script.
+
+Team planning is deterministic but does not execute agents:
 
 ```bash
 continuum providers add codex
@@ -115,7 +143,7 @@ continuum team run default_dev_team "Fix failing auth test"
 
 `team run` creates planned controlled tasks only. It does not launch agents.
 
-## Quickstart
+## Quickstart From Source
 
 Inside a project:
 
@@ -296,8 +324,9 @@ Task status is structured (`CREATED`, `ASSIGNED`, `RUNNING`, `REVIEWING`,
 `TESTING`, `DONE`, `BLOCKED`, `FAILED`, `NEEDS_USER`). A claimed file cannot
 be claimed by a different active task; finalizing a task releases its claims.
 
-Automatic provider selection, SDK-backed execution and isolated Git worktree
-merging are not yet shipped.
+Automatic provider selection, sequential Teams execution, PTY-backed wrappers,
+semantic retrieval and isolated Git worktree merging are not shipped in
+`v0.1`.
 
 ## Providers
 
@@ -411,10 +440,13 @@ checkpoints for important work.
 
 - [Architecture](docs/architecture.md)
 - [Quickstart](docs/quickstart.md)
+- [Getting Started](docs/getting-started.md)
+- [v0.1 Demo Script](docs/demo.md)
 - [Tasks and Claims](docs/tasks-and-claims.md)
 - [Memory Model](docs/memory-model.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [MCP Integration](docs/mcp.md)
+- [MCP Setup](docs/mcp-setup.md)
 - [Providers](docs/providers.md)
 - [Teams](docs/teams.md)
 - [Control Center](docs/control-center.md)
