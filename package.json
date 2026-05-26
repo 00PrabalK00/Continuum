@@ -12,7 +12,8 @@
     "continuum/*.py",
     "continuum/ui/",
     "docs/",
-    "examples/",
+    "examples/**/*.md",
+    "examples/**/*.py",
     "README.md",
     "LICENSE",
     "pyproject.toml"

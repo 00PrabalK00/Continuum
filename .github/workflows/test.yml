@@ -28,6 +28,8 @@ jobs:
       - run: continuum --version
       - run: node bin/continuum.js --version
       - run: npm pack --dry-run
+      - run: >-
+          python -c "import subprocess; result = subprocess.run('npm pack --dry-run', shell=True, capture_output=True, text=True, check=True); output = result.stdout + result.stderr; assert '__pycache__' not in output; assert 'examples/multi-agent-handoff/app.py' in output"
       - run: npm install --global .
       - run: continuum --version
       - run: continuum init --project "${{ runner.temp }}/continuum-smoke"
