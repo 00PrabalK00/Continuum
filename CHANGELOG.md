@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0 - Alpha
+
+- Added opt-in sequential Continuum Teams execution with bounded per-role context packets.
+- Added workflow/message persistence and MCP tools for bounded inter-agent collaboration.
+- Added Ollama-ranked retrieval over stored embeddings with exact search preserved as the default.
+- Added explicit CLI-agent invocation adapters without permission-bypass flags.
+- Changed `continuum resume` to inject its bounded handoff as the next agent's initial prompt.
+- Enforced that Ollama and OpenRouter cannot claim files through storage or MCP.
+- Required claimed paths and clean unrelated state before automatically executing writer roles.
+
 ## 0.1.1 - Alpha
 
 - Declared the release boundary: `v0.1` proves context continuity; `v0.2` owns automatic orchestration.

@@ -27,6 +27,7 @@ from .core import (
     write_text,
 )
 from .mcp_server import serve_stdio
+from .orchestration import OrchestrationError, Orchestrator
 from .providers import DEFAULT_PROVIDERS, ProviderError, ProviderManager
 from .teams import PRESETS, TeamError, TeamManager
 from .control_center import serve_control_center
@@ -189,7 +190,25 @@ def agent_command(agent: str, passthrough: list[str]) -> list[str]:
     return [executable, *passthrough]
 
 
-def run_agent(args: argparse.Namespace, resumed: bool = False) -> int:
+def injected_resume_args(agent: str, passthrough: list[str], prompt: str) -> list[str]:
+    if agent == "gemini":
+        for index, value in enumerate(passthrough):
+            if value in {"-p", "--prompt", "-i", "--prompt-interactive"}:
+                if index + 1 >= len(passthrough):
+                    raise ValueError(f"Missing value after Gemini prompt option: {value}")
+                merged = list(passthrough)
+                merged[index + 1] = prompt + "\n\nAdditional user instruction:\n" + passthrough[index + 1]
+                return merged
+            if value.startswith("--prompt=") or value.startswith("--prompt-interactive="):
+                option, requested = value.split("=", 1)
+                merged = list(passthrough)
+                merged[index] = option + "=" + prompt + "\n\nAdditional user instruction:\n" + requested
+                return merged
+        return ["--prompt-interactive", prompt, *passthrough]
+    return [*passthrough, prompt]
+
+
+def run_agent(args: argparse.Namespace, resumed: bool = False, injected_context: str | None = None) -> int:
     store = store_from(args)
     if not store.config_file.exists():
         store.initialize(args.context_limit, args.threshold)
@@ -201,12 +220,15 @@ def run_agent(args: argparse.Namespace, resumed: bool = False) -> int:
     agent_args = list(args.agent_args)
     if agent_args and agent_args[0] == "--":
         agent_args.pop(0)
+    if injected_context:
+        agent_args = injected_resume_args(args.agent, agent_args, injected_context)
     session_id = dt.datetime.now().strftime("%Y%m%d-%H%M%S") + f"-{args.agent}"
     log_file = store.state_dir / "session_logs" / f"{session_id}.log"
     action = "resume" if resumed else "run"
     store.event("agent_start", {"summary": f"{action} {args.agent}", "session": session_id})
     if resumed:
         print(f"Resume context: {store.state_dir / 'latest_handoff.md'}")
+        print("Bounded Continuum context injected as the agent's initial prompt.")
     print(f"Recording output: {log_file}")
     tokens = 0
     triggered = False
@@ -275,7 +297,13 @@ def resume(args: argparse.Namespace) -> int:
     print(f"Estimated context: {estimate_tokens(context)} tokens")
     print("Included: compact project state and the bounded handoff required by this mode.")
     print(context)
-    return run_agent(args, resumed=True)
+    prompt = (
+        "Read this bounded Continuum handoff before acting. Continue the existing task from its current state. "
+        "Use targeted Continuum MCP/context retrieval when more detail is needed; do not restart work or request all history.\n\n"
+        + context
+    )
+    store.event("context_injected", {"agent": args.agent, "mode": args.mode, "summary": f"Injected {estimate_tokens(prompt)} estimated tokens."})
+    return run_agent(args, resumed=True, injected_context=prompt)
 
 
 def status(args: argparse.Namespace) -> int:
@@ -293,6 +321,8 @@ def status(args: argparse.Namespace) -> int:
     print(f"Running tasks: {result['running_tasks']}")
     print(f"Claimed files: {result['claimed_files']}")
     print(f"Embedding count: {result['embedding_count']}")
+    print(f"Workflow count: {result['workflow_count']}")
+    print(f"Message count: {result['message_count']}")
     print(f"Latest handoff path: {result['handoff_path']}")
     print(f"Latest handoff mirror path: {result['mirror_path']}")
     if args.events:
@@ -434,6 +464,47 @@ def memory_embed(args: argparse.Namespace) -> int:
     return 0
 
 
+def memory_retrieve(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    if args.semantic:
+        model, vector = ProviderManager(store.state_dir).embed("ollama", args.query, args.model)
+        results = store.semantic_search(vector, args.limit)
+        print(f"Semantic retrieval via ollama/{model}: {len(results)} result(s)")
+        for item in results:
+            print(f"{item['memory_key']} score={item['score']}: {item['preview']}")
+    else:
+        results = store.search(args.query, args.limit)
+        print(f"Exact retrieval: {len(results)} result(s)")
+        for item in results:
+            print(f"M{item['id']} {item['kind']}: {json.dumps(item['payload'], ensure_ascii=True)}")
+    return 0
+
+
+def context_build(args: argparse.Namespace) -> int:
+    packet = store_from(args).context_packet(args.role, args.query, args.mode, args.workflow)
+    print(f"Context mode: {packet['mode']}")
+    print(f"Estimated context: {packet['estimated_tokens']} tokens")
+    print(packet["text"])
+    return 0
+
+
+def message_send(args: argparse.Namespace) -> int:
+    message = store_from(args).send_message(
+        args.sender, args.recipient, args.body, args.kind, args.workflow, args.task_id
+    )
+    print(f"{message['message_id']} {message['sender']} -> {message['recipient']}: recorded")
+    return 0
+
+
+def message_inbox(args: argparse.Namespace) -> int:
+    messages = store_from(args).messages(args.recipient, args.workflow, args.limit)
+    for item in messages:
+        print(f"{item['message_id']} {item['sender']} -> {item['recipient']} [{item['kind']}]: {item['body']}")
+    if not messages:
+        print("No messages.")
+    return 0
+
+
 def team_init(args: argparse.Namespace) -> int:
     path = TeamManager(store_from(args)).init(args.preset)
     print(f"Team preset ready: {path}")
@@ -467,16 +538,28 @@ def team_explain(args: argparse.Namespace) -> int:
 
 
 def team_run(args: argparse.Namespace) -> int:
-    manager = TeamManager(store_from(args))
+    store = store_from(args)
+    manager = TeamManager(store)
     plan = manager.explain(args.team, args.request, args.task_type)
     show_plan(plan)
-    tasks = manager.plan_tasks(args.team, args.request, args.task_type)
-    print("Workflow planned.")
-    print("Tasks created. File claims are ready to be assigned with `continuum task claim`.")
-    for task in tasks:
-        print(f"- {task['task_id']} {task['agent']}: {task['title']}")
-    print("Open your selected coding agent and run `continuum resume <agent> compact`.")
-    print("Automatic provider launching is not enabled in this version.")
+    orchestrator = Orchestrator(store)
+    try:
+        if args.execute:
+            workflow = orchestrator.execute(
+                args.team, args.request, args.task_type, args.allow_file, args.context_mode
+            )
+            print(f"Workflow executed: {workflow['workflow_id']} {workflow['status']}")
+            print("Steps exchanged bounded context packets and persisted result messages.")
+        else:
+            workflow = orchestrator.plan(args.team, args.request, args.task_type)
+            print(f"Workflow planned: {workflow['workflow_id']}.")
+            print("Tasks created. File claims are ready to be assigned with `continuum task claim`.")
+            for step in workflow["steps"]:
+                print(f"- {step['task_id']} {step['role']}:{step['provider']}")
+            print("Open your selected coding agent and run `continuum resume <agent> compact`.")
+            print("Automatic provider launching was not requested. Use `--execute` for sequential opt-in execution.")
+    except OrchestrationError as error:
+        raise SystemExit(f"Workflow stopped: {error}") from error
     return 0
 
 
@@ -626,6 +709,37 @@ def parser() -> argparse.ArgumentParser:
     embed.add_argument("--text")
     embed.add_argument("--model")
     embed.set_defaults(func=memory_embed)
+    retrieve = memory_commands.add_parser("retrieve", parents=[common], help="Retrieve exact or Ollama-ranked bounded memory.")
+    retrieve.add_argument("query")
+    retrieve.add_argument("--limit", type=int, default=8)
+    retrieve.add_argument("--semantic", action="store_true", help="Use stored embeddings ranked against an Ollama query embedding.")
+    retrieve.add_argument("--model")
+    retrieve.set_defaults(func=memory_retrieve)
+
+    context = commands.add_parser("context", help="Create bounded role-specific context packets.")
+    context_commands = context.add_subparsers(dest="context_command", required=True)
+    build_context = context_commands.add_parser("build", parents=[common], help="Build a compact context packet for one role.")
+    build_context.add_argument("role")
+    build_context.add_argument("--query", default="")
+    build_context.add_argument("--mode", choices=["compact", "normal", "deep"], default="compact")
+    build_context.add_argument("--workflow")
+    build_context.set_defaults(func=context_build)
+
+    messages = commands.add_parser("message", help="Exchange bounded workflow messages between agent roles.")
+    message_commands = messages.add_subparsers(dest="message_command", required=True)
+    send_message = message_commands.add_parser("send", parents=[common], help="Send a bounded agent result or instruction.")
+    send_message.add_argument("sender")
+    send_message.add_argument("recipient")
+    send_message.add_argument("body")
+    send_message.add_argument("--kind", default="result")
+    send_message.add_argument("--workflow")
+    send_message.add_argument("--task-id")
+    send_message.set_defaults(func=message_send)
+    inbox = message_commands.add_parser("inbox", parents=[common], help="Read bounded messages addressed to a role.")
+    inbox.add_argument("recipient")
+    inbox.add_argument("--workflow")
+    inbox.add_argument("--limit", type=int, default=20)
+    inbox.set_defaults(func=message_inbox)
 
     team = commands.add_parser("team", help="Configure and plan custom AI engineering teams.")
     team_commands = team.add_subparsers(dest="team_command", required=True)
@@ -642,10 +756,13 @@ def parser() -> argparse.ArgumentParser:
     explain_team.add_argument("request")
     explain_team.add_argument("--task-type")
     explain_team.set_defaults(func=team_explain)
-    run_team = team_commands.add_parser("run", parents=[common], help="Plan controlled tasks for a team route.")
+    run_team = team_commands.add_parser("run", parents=[common], help="Plan a team route or execute it sequentially with explicit consent.")
     run_team.add_argument("team")
     run_team.add_argument("request")
     run_team.add_argument("--task-type")
+    run_team.add_argument("--execute", action="store_true", help="Execute providers sequentially using bounded context packets.")
+    run_team.add_argument("--allow-file", action="append", default=[], help="Path a writing role may edit during --execute; repeat per file.")
+    run_team.add_argument("--context-mode", choices=["compact", "normal", "deep"], default="compact")
     run_team.set_defaults(func=team_run)
 
     route = commands.add_parser("route", help="Explain provider/team routing.")

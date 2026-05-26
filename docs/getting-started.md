@@ -1,15 +1,16 @@
 # Getting Started
 
-## v0.1 Promise
+## Release Boundary
 
 ```text
 v0.1 proves Continuum can preserve context across agents.
 v0.2 proves Continuum can automatically orchestrate agents.
 ```
 
-Continuum v0.1 does not run an autonomous AI team. It records local project
-memory, writes compact handoffs, provides MCP memory tools, protects claimed
-files and lets another agent continue with bounded context.
+Continuum v0.2 retains local project memory and compact handoffs, then adds
+explicit sequential workflows. `team run` plans only; `team run --execute`
+launches enabled providers in route order with bounded context packets and
+file-claim checks for writer roles.
 
 ## Source Install
 
@@ -54,5 +55,6 @@ Add Obsidian mirroring only when required:
 continuum init --vault "/path/to/Obsidian Vault/Agents"
 ```
 
-Proceed to [the v0.1 demo](demo.md) to hand work from Claude to Gemini to
-Codex without reloading the entire session history.
+Proceed to [the demo](demo.md) to hand work from Claude to Gemini to Codex
+without reloading the entire session history, then try opt-in sequential
+execution with a configured team.

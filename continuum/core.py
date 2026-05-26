@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import math
 import os
 import re
 import sqlite3
@@ -26,6 +27,8 @@ CONTEXT_BUDGETS = {
 }
 TASK_STATUSES = {"CREATED", "ASSIGNED", "RUNNING", "CHECKPOINTED", "REVIEWING", "TESTING", "DONE", "BLOCKED", "FAILED", "NEEDS_USER"}
 FINAL_TASK_STATUSES = {"DONE", "FAILED"}
+WORKFLOW_STATUSES = {"PLANNED", "RUNNING", "DONE", "BLOCKED", "FAILED"}
+NON_WRITING_PROVIDERS = {"ollama", "openrouter"}
 MAX_FIELD_CHARS = 1_200
 MAX_CHANGE_LINES = 40
 MAX_SESSION_EXCERPT_LINES = 30
@@ -209,6 +212,48 @@ class MemoryStore:
                 source_preview TEXT NOT NULL
             )"""
         )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS workflows (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                team TEXT NOT NULL,
+                request TEXT NOT NULL,
+                task_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                current_step INTEGER NOT NULL DEFAULT 0,
+                summary TEXT
+            )"""
+        )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS workflow_steps (
+                workflow_id INTEGER NOT NULL,
+                step_number INTEGER NOT NULL,
+                role TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                task_id INTEGER,
+                status TEXT NOT NULL,
+                output TEXT,
+                PRIMARY KEY(workflow_id, step_number),
+                FOREIGN KEY(workflow_id) REFERENCES workflows(id),
+                FOREIGN KEY(task_id) REFERENCES tasks(id)
+            )"""
+        )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL,
+                workflow_id INTEGER,
+                task_id INTEGER,
+                sender TEXT NOT NULL,
+                recipient TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                body TEXT NOT NULL,
+                token_estimate INTEGER NOT NULL,
+                FOREIGN KEY(workflow_id) REFERENCES workflows(id),
+                FOREIGN KEY(task_id) REFERENCES tasks(id)
+            )"""
+        )
         connection.commit()
         return connection
 
@@ -348,6 +393,9 @@ class MemoryStore:
         return self.get_task(task_ref) or {}
 
     def claim_files(self, task_ref: str, agent: str, files: list[str], expires_at: str | None = None) -> dict[str, Any]:
+        provider = agent.split(":")[-1]
+        if self.is_model_provider(provider):
+            raise ValueError(f"Model provider cannot claim or edit project files: {provider}")
         task = self.get_task(task_ref)
         if not task:
             raise ValueError(f"Unknown task: {task_ref}")
@@ -411,6 +459,18 @@ class MemoryStore:
         self.event("task_status", {"task_id": task_ref.upper(), "status": status, "summary": summary})
         return self.get_task(task_ref) or {}
 
+    def is_model_provider(self, provider: str) -> bool:
+        if provider in NON_WRITING_PROVIDERS:
+            return True
+        path = self.state_dir / "providers.json"
+        if not path.exists():
+            return False
+        try:
+            config = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False
+        return config.get("providers", {}).get(provider, {}).get("kind") == "model"
+
     def store_embedding(self, memory_key: str, provider: str, model: str, vector: list[float], source: str) -> None:
         connection = self.connect()
         connection.execute(
@@ -427,6 +487,193 @@ class MemoryStore:
             "memory_embedded",
             {"memory_key": memory_key, "provider": provider, "model": model, "dimensions": len(vector)},
         )
+
+    @staticmethod
+    def workflow_ref(workflow_id: int) -> str:
+        return f"W{workflow_id:04d}"
+
+    @staticmethod
+    def parse_workflow_ref(value: str) -> int:
+        normalized = value.strip().upper()
+        if normalized.startswith("W"):
+            normalized = normalized[1:]
+        if not normalized.isdigit():
+            raise ValueError(f"Invalid workflow id: {value}")
+        return int(normalized)
+
+    def create_workflow(self, team: str, request: str, task_type: str, steps: list[dict[str, Any]]) -> dict[str, Any]:
+        now = utc_now()
+        connection = self.connect()
+        cursor = connection.execute(
+            "INSERT INTO workflows(created_at, updated_at, team, request, task_type, status) VALUES (?, ?, ?, ?, ?, ?)",
+            (now, now, team, compact_text(request, 600), task_type, "PLANNED"),
+        )
+        workflow_id = int(cursor.lastrowid)
+        for step in steps:
+            connection.execute(
+                "INSERT INTO workflow_steps(workflow_id, step_number, role, provider, status) VALUES (?, ?, ?, ?, ?)",
+                (workflow_id, int(step["order"]), str(step["name"]), str(step["provider"]), "PLANNED"),
+            )
+        connection.commit()
+        connection.close()
+        self.event("workflow_created", {"workflow_id": self.workflow_ref(workflow_id), "team": team, "task_type": task_type})
+        return self.get_workflow(self.workflow_ref(workflow_id)) or {}
+
+    def get_workflow(self, workflow_ref: str) -> dict[str, Any] | None:
+        workflow_id = self.parse_workflow_ref(workflow_ref)
+        connection = self.connect()
+        row = connection.execute(
+            "SELECT id, created_at, updated_at, team, request, task_type, status, current_step, summary FROM workflows WHERE id = ?",
+            (workflow_id,),
+        ).fetchone()
+        steps = connection.execute(
+            "SELECT step_number, role, provider, task_id, status, output FROM workflow_steps WHERE workflow_id = ? ORDER BY step_number",
+            (workflow_id,),
+        ).fetchall()
+        connection.close()
+        if not row:
+            return None
+        return {
+            "workflow_id": self.workflow_ref(row[0]),
+            "created_at": row[1],
+            "updated_at": row[2],
+            "team": row[3],
+            "request": row[4],
+            "task_type": row[5],
+            "status": row[6],
+            "current_step": row[7],
+            "summary": row[8],
+            "steps": [
+                {
+                    "order": item[0], "role": item[1], "provider": item[2],
+                    "task_id": self.task_ref(item[3]) if item[3] else None,
+                    "status": item[4], "output": item[5],
+                }
+                for item in steps
+            ],
+        }
+
+    def list_workflows(self, limit: int = 20) -> list[dict[str, Any]]:
+        connection = self.connect()
+        rows = connection.execute("SELECT id FROM workflows ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        connection.close()
+        return [item for row in rows if (item := self.get_workflow(self.workflow_ref(row[0]))) is not None]
+
+    def update_workflow(
+        self, workflow_ref: str, status: str, current_step: int | None = None, summary: str | None = None
+    ) -> dict[str, Any]:
+        if status not in WORKFLOW_STATUSES:
+            raise ValueError(f"Invalid workflow status: {status}")
+        workflow_id = self.parse_workflow_ref(workflow_ref)
+        connection = self.connect()
+        connection.execute(
+            """UPDATE workflows SET updated_at = ?, status = ?,
+               current_step = COALESCE(?, current_step), summary = COALESCE(?, summary)
+               WHERE id = ?""",
+            (utc_now(), status, current_step, compact_text(summary, 800) if summary else None, workflow_id),
+        )
+        connection.commit()
+        connection.close()
+        self.event("workflow_status", {"workflow_id": workflow_ref, "status": status, "current_step": current_step, "summary": summary})
+        return self.get_workflow(workflow_ref) or {}
+
+    def update_workflow_step(
+        self, workflow_ref: str, step_number: int, status: str, task_ref: str | None = None, output: str | None = None
+    ) -> None:
+        workflow_id = self.parse_workflow_ref(workflow_ref)
+        task_id = self.parse_task_ref(task_ref) if task_ref else None
+        connection = self.connect()
+        connection.execute(
+            """UPDATE workflow_steps SET status = ?, task_id = COALESCE(?, task_id),
+               output = COALESCE(?, output) WHERE workflow_id = ? AND step_number = ?""",
+            (status, task_id, compact_text(output, 2_400) if output else None, workflow_id, step_number),
+        )
+        connection.commit()
+        connection.close()
+
+    def send_message(
+        self, sender: str, recipient: str, body: str, kind: str = "result",
+        workflow_ref: str | None = None, task_ref: str | None = None
+    ) -> dict[str, Any]:
+        text = compact_text(body, CONTEXT_BUDGETS["retrieval_default"] * 4)
+        connection = self.connect()
+        cursor = connection.execute(
+            """INSERT INTO messages(created_at, workflow_id, task_id, sender, recipient, kind, body, token_estimate)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                utc_now(),
+                self.parse_workflow_ref(workflow_ref) if workflow_ref else None,
+                self.parse_task_ref(task_ref) if task_ref else None,
+                sender, recipient, kind, text, estimate_tokens(text),
+            ),
+        )
+        connection.commit()
+        message_id = int(cursor.lastrowid)
+        connection.close()
+        self.event("message_sent", {"message_id": f"MSG{message_id:04d}", "sender": sender, "recipient": recipient, "kind": kind})
+        return {"message_id": f"MSG{message_id:04d}", "sender": sender, "recipient": recipient, "kind": kind, "body": text}
+
+    def messages(self, recipient: str | None = None, workflow_ref: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
+        connection = self.connect()
+        conditions: list[str] = []
+        parameters: list[Any] = []
+        if recipient:
+            conditions.append("(recipient = ? OR recipient = '*')")
+            parameters.append(recipient)
+        if workflow_ref:
+            conditions.append("workflow_id = ?")
+            parameters.append(self.parse_workflow_ref(workflow_ref))
+        where = " WHERE " + " AND ".join(conditions) if conditions else ""
+        rows = connection.execute(
+            f"SELECT id, created_at, sender, recipient, kind, body, token_estimate FROM messages{where} ORDER BY id DESC LIMIT ?",
+            (*parameters, limit),
+        ).fetchall()
+        connection.close()
+        return [
+            {"message_id": f"MSG{row[0]:04d}", "created_at": row[1], "sender": row[2], "recipient": row[3], "kind": row[4], "body": row[5], "estimated_tokens": row[6]}
+            for row in reversed(rows)
+        ]
+
+    def semantic_search(self, vector: list[float], limit: int = 8) -> list[dict[str, Any]]:
+        if not vector:
+            return []
+        connection = self.connect()
+        rows = connection.execute("SELECT memory_key, created_at, provider, model, vector, source_preview FROM embeddings").fetchall()
+        connection.close()
+        query_norm = math.sqrt(sum(value * value for value in vector))
+        if not query_norm:
+            return []
+        ranked: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                candidate = [float(value) for value in json.loads(row[4])]
+            except (json.JSONDecodeError, TypeError, ValueError):
+                continue
+            if len(candidate) != len(vector):
+                continue
+            denominator = query_norm * math.sqrt(sum(value * value for value in candidate))
+            if not denominator:
+                continue
+            score = sum(left * right for left, right in zip(vector, candidate)) / denominator
+            ranked.append({"memory_key": row[0], "created_at": row[1], "provider": row[2], "model": row[3], "score": round(score, 6), "preview": row[5]})
+        return sorted(ranked, key=lambda item: item["score"], reverse=True)[:limit]
+
+    def context_packet(
+        self, role: str, query: str = "", mode: str = "compact", workflow_ref: str | None = None
+    ) -> dict[str, Any]:
+        if mode not in {"compact", "normal", "deep"}:
+            raise ValueError(f"Invalid context mode: {mode}")
+        sections = [f"# Continuum Context Packet\n\nRole: `{role}`\nMode: `{mode}`"]
+        sections.append(self.resume_context(mode))
+        inbox = self.messages(role, workflow_ref, 4 if mode == "compact" else 10)
+        if inbox:
+            sections.append("## Messages\n" + "\n".join(f"- {item['sender']}: {item['body']}" for item in inbox))
+        if query and mode != "compact":
+            matches = self.search(query, 3 if mode == "normal" else 8)
+            if matches:
+                sections.append("## Retrieved Memory\n" + "\n".join(f"- M{item['id']} `{item['kind']}`: {json.dumps(item['payload'], ensure_ascii=True)}" for item in matches))
+        text = compact_text("\n\n".join(sections), CONTEXT_BUDGETS[mode] * 4)
+        return {"role": role, "mode": mode, "estimated_tokens": estimate_tokens(text), "text": text}
 
     def latest_task(self) -> tuple[str, str | None] | None:
         for item in reversed(self.recent_events(100)):

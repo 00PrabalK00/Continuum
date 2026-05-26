@@ -13,3 +13,8 @@
 - Control Center latest-handoff view corrected and covered by static-asset regression tests.
 - v0.1 release boundary, multi-agent demo documentation and cross-platform install smoke workflow.
 - Hidden-directory file claims preserve paths such as `.github/workflows/test.yml`.
+- Opt-in sequential Continuum Teams workflow execution across enabled model and CLI provider adapters.
+- Bounded role context packets and persisted inter-agent messages through CLI and MCP.
+- Resume prompt injection for Claude, Gemini and Codex sessions launched through Continuum.
+- Local semantic ranking over stored Ollama embeddings with compact previews.
+- Storage and MCP enforcement blocking model providers from file claims.

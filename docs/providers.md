@@ -43,8 +43,12 @@ continuum model ask ollama "Compress this handoff."
 continuum memory embed ollama
 ```
 
-Embeddings are stored in the local SQLite memory database. Semantic ranking
-over stored embeddings is a subsequent milestone.
+Embeddings are stored in the local SQLite memory database. Rank stored
+embeddings for a targeted query with:
+
+```bash
+continuum memory retrieve "authentication callback" --semantic
+```
 
 ## OpenRouter
 
@@ -65,3 +69,14 @@ continuum model ask openrouter "Review this implementation plan."
 
 Continuum does not store the API key; it reads the configured environment
 variable at request time.
+
+## Agent Execution
+
+Enabled CLI providers can be invoked sequentially through a team workflow:
+
+```bash
+continuum team run default_dev_team "Fix login crash" --execute --allow-file src/login.py
+```
+
+Continuum injects bounded context packets into those steps. It does not pass
+permission-bypass flags to Claude, Gemini or Codex.

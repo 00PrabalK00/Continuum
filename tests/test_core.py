@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import json
 from pathlib import Path
 
 from continuum.core import MemoryStore, compact_text, project_key
@@ -57,6 +58,7 @@ class MemoryStoreTest(unittest.TestCase):
             store.write_handoff("active task " + ("x" * 10000), "continue")
             self.assertLessEqual(len(store.resume_context("compact")), 800 * 4)
             self.assertLessEqual(len(store.resume_context("normal")), 2000 * 4)
+            self.assertLessEqual(len(store.resume_context("deep")), 6000 * 4)
 
     def test_task_file_claims_reject_conflicts_and_release_when_done(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -82,6 +84,65 @@ class MemoryStoreTest(unittest.TestCase):
             claimed = store.claim_files(task["task_id"], "codex", [".github/workflows/test.yml"])
 
             self.assertEqual(claimed["locked_files"][0]["path"], ".github/workflows/test.yml")
+
+    def test_model_provider_cannot_claim_files_through_store(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "app")
+            store.initialize(1000, 0.8)
+            task = store.create_task("Text-only reasoning")
+
+            with self.assertRaisesRegex(ValueError, "Model provider cannot claim"):
+                store.claim_files(task["task_id"], "reasoner:openrouter", ["src/auth.py"])
+
+    def test_configured_custom_model_provider_cannot_claim_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "app")
+            store.initialize(1000, 0.8)
+            providers = store.state_dir / "providers.json"
+            providers.write_text(json.dumps({"providers": {"gateway": {"kind": "model"}}}), encoding="utf-8")
+            task = store.create_task("Text-only custom provider")
+
+            with self.assertRaisesRegex(ValueError, "gateway"):
+                store.claim_files(task["task_id"], "planner:gateway", ["src/auth.py"])
+
+    def test_workflow_messages_produce_bounded_role_context(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "app")
+            store.initialize(1000, 0.8)
+            workflow = store.create_workflow(
+                "team", "fix auth", "bug_fix", [{"order": 1, "name": "coder", "provider": "codex"}]
+            )
+            store.send_message("explorer", "coder", "Relevant auth finding " + ("x" * 10000), workflow_ref=workflow["workflow_id"])
+
+            packet = store.context_packet("coder", "auth", "compact", workflow["workflow_id"])
+
+            self.assertIn("Relevant auth finding", packet["text"])
+            self.assertLessEqual(len(packet["text"]), 800 * 4)
+
+    def test_semantic_search_ranks_stored_embeddings(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "app")
+            store.initialize(1000, 0.8)
+            store.store_embedding("near", "ollama", "embed", [1.0, 0.0], "near result")
+            store.store_embedding("far", "ollama", "embed", [0.0, 1.0], "far result")
+
+            results = store.semantic_search([0.9, 0.1])
+
+            self.assertEqual(results[0]["memory_key"], "near")
+
+    def test_semantic_search_skips_corrupt_vector_rows(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "app")
+            store.initialize(1000, 0.8)
+            connection = store.connect()
+            connection.execute(
+                "INSERT INTO embeddings(memory_key, created_at, provider, model, vector, source_preview) VALUES (?, ?, ?, ?, ?, ?)",
+                ("bad", "now", "ollama", "embed", "{broken", "bad row"),
+            )
+            connection.commit()
+            connection.close()
+
+            self.assertEqual(store.semantic_search([1.0]), [])
 
 
 if __name__ == "__main__":

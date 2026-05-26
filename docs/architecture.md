@@ -1,6 +1,7 @@
 # Architecture
 
-Continuum is context continuity infrastructure, not an autonomous agent.
+Continuum is local context continuity and sequential orchestration
+infrastructure, not an unrestricted autonomous agent.
 
 ```text
 agent CLI -> session recorder -> local event store -> compact handoff notes
@@ -8,14 +9,15 @@ agent CLI -> session recorder -> local event store -> compact handoff notes
                               \-> optional Obsidian project mirror
 file watcher -----------------/
 model provider (Ollama/OpenRouter) -> bounded memory/reasoning output
+team workflow -> bounded step packet -> provider result message -> next step
 ```
 
 ## Controller Boundary
 
-Continuum is the controller. Agent CLIs are workers. In `v0.1`, the controller
-stores tasks, status transitions and exclusive file claims, and exposes them
-through CLI and MCP. It does not yet autonomously choose providers, invoke
-provider SDKs or merge worktrees.
+Continuum is the controller. Agent CLIs are workers. In `v0.2`, the controller
+stores workflows, messages, tasks and exclusive file claims, and exposes them
+through CLI and MCP. `team run --execute` invokes enabled providers
+sequentially; parallel writers and automatic worktree merges are not provided.
 
 ```text
 task CREATED -> ASSIGNED -> RUNNING -> DONE
@@ -29,8 +31,8 @@ being assigned the same file through Continuum.
 
 Agent providers (`claude_code`, `gemini_cli`, `codex`) are intended for repo
 work. Model providers (`ollama`, `openrouter`) are intentionally limited to
-text or embedding work by default. Team validation rejects configurations that
-give model providers file-edit authority.
+text or embedding work. Team validation, storage and MCP reject configurations
+or claims that give model providers file-edit authority.
 
 ## Storage Boundary
 
@@ -50,10 +52,10 @@ the tiny `current.md` note first and MCP retrieval only as needed.
 
 ## Event Retrieval
 
-Version `0.1` uses SQLite event storage and local lexical search. It ships a
-small MCP stdio server for scoped reads and handoff writes. Semantic retrieval
-is a separate future layer because it adds dependencies, backend choices and a
-larger security surface.
+Version `0.2` uses SQLite event storage and local lexical search by default.
+When explicitly requested, an Ollama query embedding ranks stored embedding
+previews. MCP exposes scoped reads, bounded context packets, messages and
+handoff writes.
 
 ## Distribution Boundary
 
@@ -68,3 +70,7 @@ The wrapper estimates token usage from captured output and writes a handoff at
 the configured fraction of a supplied context limit. This is deliberately
 described as an estimate: provider CLIs do not offer one common exact usage
 interface.
+
+`continuum resume` injects its bounded packet into a CLI launched through
+Continuum. It cannot inject into unrelated sessions started directly by the
+user.

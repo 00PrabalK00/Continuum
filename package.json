@@ -1,7 +1,7 @@
 {
   "name": "continuum-agent-memory",
-  "version": "0.1.1",
-  "description": "Local shared memory and controlled task planning for AI coding agents.",
+  "version": "0.2.0",
+  "description": "Local shared memory and opt-in sequential orchestration for AI coding agents.",
   "license": "MIT",
   "bin": {
     "continuum": "bin/continuum.js",

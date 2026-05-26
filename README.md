@@ -7,7 +7,7 @@
 <p align="center"><strong>Continuum is a local coordination layer for AI coding teams.</strong></p>
 
 It gives Claude Code, Codex, Gemini CLI, Ollama and OpenRouter shared memory,
-task ownership, file-claim safety and repeatable planned team workflows.
+task ownership, file-claim safety and opt-in sequential team workflows.
 
 ```text
 Claude Code       Codex CLI       Gemini CLI
@@ -31,21 +31,21 @@ v0.1 proves Continuum can preserve context across agents.
 v0.2 proves Continuum can automatically orchestrate agents.
 ```
 
-Version `0.1` ships shared memory, compact handoffs, provider configuration,
-team planning, MCP memory tools, controlled tasks and a read-only Control
-Center. It does not claim autonomous multi-agent execution.
+Version `0.2` adds opt-in sequential team execution over configured provider
+adapters. It does not claim unattended parallel agents or automatic detection
+of sessions launched outside Continuum.
 
 ## Status
 
-This repository is a `v0.1.1` alpha baseline focused on context continuity
-between agent sessions.
+This repository is a `v0.2.0` alpha focused on context continuity and safe,
+explicit sequential provider orchestration.
 
 Shipped in `v0.1`:
 
 - `continuum init` creates compact shared-memory guidance for supported agents.
 - `continuum daemon` watches local file changes and refreshes the handoff.
 - `continuum run` records an agent session and creates bounded notes.
-- `continuum resume` starts another agent with compact, normal or deep bounded context.
+- `continuum resume` injects compact, normal or deep bounded context into a launched agent.
 - `continuum handoff` records the current task and exact next action.
 - `continuum status` reports daemon, storage, provider, task, claim and mirror state.
 - `continuum doctor` diagnoses installation and configured integrations with specific fixes.
@@ -53,16 +53,18 @@ Shipped in `v0.1`:
 - `continuum mcp serve` exposes progressive, budgeted memory tools to MCP-compatible agents.
 - `continuum task` creates routed tasks and exclusive file claims for controlled workers.
 - Ollama and OpenRouter model backends for text-only memory/reasoning calls.
-- `Continuum Teams` JSON presets for configurable role-based workflow planning.
+- `continuum context build` and `continuum message` expose bounded role packets and result messages.
+- `continuum memory retrieve --semantic` ranks locally stored embedding previews.
+- `Continuum Teams` JSON presets for planning and opt-in sequential `--execute` workflows.
 - **Continuum Control Center**, a read-only local developer-console UI over real project state.
 - Optional Obsidian mirroring with one small folder per project.
 - Windows `continuum autostart install` for sign-in startup.
 
-Deferred to `v0.2`, not claimed as shipped:
+Not implemented yet:
 
-- Semantic/vector retrieval over older memories.
-- Automated execution of Team workflows across provider adapters.
 - Fully interactive PTY-aware wrappers across operating systems.
+- Detection or injection into CLI sessions launched outside Continuum.
+- Parallel write workers and Git worktree isolation.
 - macOS/Linux background service installers.
 - Optional Docker mode.
 
@@ -129,11 +131,11 @@ continuum resume codex compact
 continuum ui --open
 ```
 
-This is the `v0.1` proof: Claude starts work, Gemini and Codex receive compact
+This is the continuity proof: Claude starts work, Gemini and Codex receive compact
 handoffs instead of a full transcript, and Control Center shows the local
 memory and run state. See [docs/demo.md](docs/demo.md) for a recording script.
 
-Team planning is deterministic but does not execute agents:
+Team planning is deterministic and does not execute agents unless explicitly requested:
 
 ```bash
 continuum providers add codex
@@ -141,7 +143,19 @@ continuum route explain "Fix failing auth test"
 continuum team run default_dev_team "Fix failing auth test"
 ```
 
-`team run` creates planned controlled tasks only. It does not launch agents.
+`team run` creates planned controlled tasks by default. Execution is explicit:
+
+```bash
+continuum providers add gemini_cli
+continuum providers add claude_code
+continuum providers add codex
+continuum providers add ollama
+continuum providers add openrouter
+continuum team run default_dev_team "Fix failing auth test" --execute --allow-file src/auth.ts --allow-file tests/auth.test.ts
+```
+
+Model steps are text-only. Writing steps run sequentially and must stay inside
+their explicitly claimed files.
 
 ## Quickstart From Source
 
@@ -243,11 +257,22 @@ This prevents project history from consuming context unnecessarily.
 | `continuum providers test ollama` | Check a local Ollama endpoint |
 | `continuum model ask openrouter "Review plan"` | Make a text-only model call |
 | `continuum memory embed ollama` | Embed compact current context locally |
+| `continuum memory retrieve "auth" --semantic` | Rank local embedded memory for a targeted query |
+| `continuum context build coder --mode compact` | Produce bounded role-specific context |
+| `continuum message send explorer coder "auth route is relevant"` | Store a bounded role result |
 | `continuum team init default_dev_team` | Create an editable JSON starter team |
 | `continuum team run default_dev_team "Fix auth"` | Create a routed task plan |
+| `continuum team run default_dev_team "Fix auth" --execute --allow-file src/auth.ts` | Run an explicitly authorized sequential workflow |
 | `continuum route explain "Fix auth"` | Explain selected team workflow |
 | `continuum ui --open` | Open the local Control Center web console |
 | `continuum autostart install` | Start the daemon at Windows sign-in |
+
+For commands that pass arguments to an agent, put Continuum options before the
+agent name:
+
+```bash
+continuum run --project . gemini -- --approval-mode plan -p "Review this diff."
+```
 
 ## MCP
 
@@ -262,6 +287,10 @@ expand_memory
 get_raw_log
 write_handoff
 get_open_tasks
+get_context_packet
+get_workflows
+post_agent_message
+get_agent_messages
 claim_task_files
 complete_task
 ```
@@ -295,12 +324,13 @@ it. The compaction algorithm is intentionally simple and stable:
 
 1. Store full event history locally, outside automatic prompts.
 2. Write delta-based `current.md` and `latest_handoff.md` within fixed budgets.
-3. Start resumes from compact state and report the estimated token count.
-4. Retrieve event matches only for a targeted query.
+3. Inject compact state into resumed sessions and orchestrated steps while reporting estimated token count.
+4. Retrieve exact event matches first; request local semantic ranking only for a targeted query.
 5. Expand raw logs or individual memory events only on demand.
 
 This bounds repeated input cost without relying on an unverified summarization
-model. Semantic ranking can be added after exact retrieval remains stable.
+model. Semantic ranking over stored Ollama embeddings is opt-in and returns
+compact previews rather than raw logs.
 
 ## Compact Speech
 
@@ -324,9 +354,9 @@ Task status is structured (`CREATED`, `ASSIGNED`, `RUNNING`, `REVIEWING`,
 `TESTING`, `DONE`, `BLOCKED`, `FAILED`, `NEEDS_USER`). A claimed file cannot
 be claimed by a different active task; finalizing a task releases its claims.
 
-Automatic provider selection, sequential Teams execution, PTY-backed wrappers,
-semantic retrieval and isolated Git worktree merging are not shipped in
-`v0.1`.
+Sequential Teams execution and stored-embedding ranking are explicitly opt-in.
+PTY-backed wrappers, external session detection and isolated Git worktree
+merging are not shipped in `v0.2`.
 
 ## Providers
 
@@ -346,6 +376,7 @@ ollama pull nomic-embed-text
 continuum providers add ollama
 continuum providers test ollama
 continuum memory embed ollama
+continuum memory retrieve "authentication callback" --semantic
 ```
 
 `OpenRouter` uses its OpenAI-compatible hosted API for optional planning,
@@ -390,9 +421,9 @@ Gemini exploration -> OpenRouter reasoning -> Claude coding -> Codex tests -> Ol
 
 Team definitions are JSON files under `.continuum/teams/`. Continuum does not
 select a team during `init`. `team run` validates permissions and creates
-planned controlled tasks; automatic provider launching is not enabled in this
-version. Model roles cannot edit files, and write-capable tasks remain subject
-to exclusive file claims.
+planned controlled tasks by default. `team run --execute` invokes enabled
+providers sequentially with bounded context packets. Model roles cannot claim
+files, and writing steps require explicit `--allow-file` paths.
 
 ## Continuum Control Center
 

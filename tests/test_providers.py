@@ -1,7 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from continuum.core import MemoryStore
 from continuum.providers import ProviderError, ProviderManager
@@ -54,6 +54,30 @@ class ProviderManagerTest(unittest.TestCase):
 
             events = store.search("memory_embedded")
             self.assertEqual(events[0]["payload"]["dimensions"], 2)
+
+    def test_enabled_agent_receives_bounded_prompt_through_adapter(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            manager = ProviderManager(Path(temporary))
+            manager.add("codex")
+            completed = Mock(returncode=0, stdout="review complete", stderr="")
+            with patch("continuum.providers.shutil.which", return_value="codex"), patch(
+                "continuum.providers.subprocess.run", return_value=completed
+            ) as invoked:
+                result = manager.run_agent("codex", "inspect current state", Path(temporary))
+
+            self.assertEqual(result, "review complete")
+            self.assertIn("exec", invoked.call_args.args[0])
+            self.assertIn("inspect current state", invoked.call_args.args[0])
+
+    def test_agent_launch_os_error_has_actionable_failure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            manager = ProviderManager(Path(temporary))
+            manager.add("codex")
+            with patch("continuum.providers.shutil.which", return_value="codex"), patch(
+                "continuum.providers.subprocess.run", side_effect=OSError("gone")
+            ):
+                with self.assertRaisesRegex(ProviderError, "continuum providers test codex"):
+                    manager.run_agent("codex", "inspect", Path(temporary))
 
 
 if __name__ == "__main__":

@@ -33,6 +33,8 @@ class McpServerTest(unittest.TestCase):
             self.assertIn("get_startup_context", names)
             self.assertIn("expand_memory", names)
             self.assertIn("claim_task_files", names)
+            self.assertIn("get_context_packet", names)
+            self.assertIn("post_agent_message", names)
             self.assertIn("Handoff written", written["result"]["content"][0]["text"])
 
     def test_mcp_task_claim_and_complete(self):
@@ -66,6 +68,45 @@ class McpServerTest(unittest.TestCase):
             )
             self.assertIn("RUNNING", claimed["result"]["content"][0]["text"])
             self.assertIn("DONE", done["result"]["content"][0]["text"])
+
+    def test_mcp_rejects_model_provider_file_claim(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "project")
+            store.initialize(1000, 0.8)
+            task = store.create_task("Reason only")
+            rejected = handle_request(
+                store,
+                {
+                    "jsonrpc": "2.0", "id": 5, "method": "tools/call",
+                    "params": {"name": "claim_task_files", "arguments": {
+                        "task_id": task["task_id"], "agent": "openrouter", "files": ["auth.py"]
+                    }},
+                },
+            )
+
+            self.assertIn("Model provider cannot claim", rejected["error"]["message"])
+
+    def test_mcp_exposes_bounded_agent_messages(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "project")
+            store.initialize(1000, 0.8)
+            posted = handle_request(
+                store,
+                {"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {
+                    "name": "post_agent_message", "arguments": {
+                        "sender": "explorer", "recipient": "coder", "body": "inspect auth"
+                    }
+                }},
+            )
+            read = handle_request(
+                store,
+                {"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {
+                    "name": "get_agent_messages", "arguments": {"recipient": "coder"}
+                }},
+            )
+
+            self.assertIn("recorded", posted["result"]["content"][0]["text"])
+            self.assertIn("inspect auth", read["result"]["content"][0]["text"])
 
     def test_stdio_initialize_response(self):
         with tempfile.TemporaryDirectory() as temporary:

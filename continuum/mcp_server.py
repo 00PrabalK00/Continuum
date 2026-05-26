@@ -9,7 +9,7 @@ from typing import IO, Any
 
 from .core import CONTEXT_BUDGETS, MemoryStore, compact_text
 
-SERVER_INFO = {"name": "continuum", "version": "0.1.0"}
+SERVER_INFO = {"name": "continuum", "version": "0.2.0"}
 PROTOCOL_VERSION = "2025-03-26"
 
 
@@ -81,6 +81,54 @@ def tool_definitions() -> list[dict[str, Any]]:
             "inputSchema": {"type": "object", "properties": {}},
         },
         {
+            "name": "get_context_packet",
+            "description": "Read bounded role-specific context, including only relevant workflow messages.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "role": {"type": "string"},
+                    "query": {"type": "string"},
+                    "mode": {"type": "string", "enum": ["compact", "normal", "deep"]},
+                    "workflow_id": {"type": "string"},
+                },
+                "required": ["role"],
+            },
+        },
+        {
+            "name": "get_workflows",
+            "description": "List recently planned or executed team workflows and their step state.",
+            "inputSchema": {"type": "object", "properties": {"limit": {"type": "integer"}}},
+        },
+        {
+            "name": "post_agent_message",
+            "description": "Post a bounded result or instruction to a workflow role.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "sender": {"type": "string"},
+                    "recipient": {"type": "string"},
+                    "body": {"type": "string"},
+                    "kind": {"type": "string"},
+                    "workflow_id": {"type": "string"},
+                    "task_id": {"type": "string"},
+                },
+                "required": ["sender", "recipient", "body"],
+            },
+        },
+        {
+            "name": "get_agent_messages",
+            "description": "Read bounded result messages addressed to a workflow role.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "recipient": {"type": "string"},
+                    "workflow_id": {"type": "string"},
+                    "limit": {"type": "integer"},
+                },
+                "required": ["recipient"],
+            },
+        },
+        {
             "name": "claim_task_files",
             "description": "Claim specific files for one assigned agent task. Conflicting claims are rejected.",
             "inputSchema": {
@@ -144,6 +192,41 @@ def call_tool(store: MemoryStore, name: str, arguments: dict[str, Any]) -> dict[
             f"{task['task_id']} {task['status']} {task['title']} agent={task['agent'] or 'unassigned'}"
             for task in tasks
         ) or "No open tasks."
+        text = compact_text(text, CONTEXT_BUDGETS["retrieval_default"] * 4)
+    elif name == "get_context_packet":
+        packet = store.context_packet(
+            str(arguments.get("role", "")).strip(),
+            str(arguments.get("query", "")),
+            str(arguments.get("mode", "compact")),
+            str(arguments.get("workflow_id")) if arguments.get("workflow_id") else None,
+        )
+        text = f"Estimated context: {packet['estimated_tokens']} tokens\n\n{packet['text']}"
+    elif name == "get_workflows":
+        workflows = store.list_workflows(int(arguments.get("limit", 10)))
+        text = "\n".join(
+            f"{item['workflow_id']} {item['status']} team={item['team']} step={item['current_step']}: {item['request']}"
+            for item in workflows
+        ) or "No workflows."
+        text = compact_text(text, CONTEXT_BUDGETS["retrieval_default"] * 4)
+    elif name == "post_agent_message":
+        message = store.send_message(
+            str(arguments.get("sender", "")),
+            str(arguments.get("recipient", "")),
+            str(arguments.get("body", "")),
+            str(arguments.get("kind", "result")),
+            str(arguments.get("workflow_id")) if arguments.get("workflow_id") else None,
+            str(arguments.get("task_id")) if arguments.get("task_id") else None,
+        )
+        text = f"{message['message_id']} recorded for {message['recipient']}."
+    elif name == "get_agent_messages":
+        messages = store.messages(
+            str(arguments.get("recipient", "")),
+            str(arguments.get("workflow_id")) if arguments.get("workflow_id") else None,
+            int(arguments.get("limit", 10)),
+        )
+        text = "\n".join(
+            f"{item['message_id']} {item['sender']} -> {item['recipient']}: {item['body']}" for item in messages
+        ) or "No messages."
         text = compact_text(text, CONTEXT_BUDGETS["retrieval_default"] * 4)
     elif name == "claim_task_files":
         claimed = store.claim_files(

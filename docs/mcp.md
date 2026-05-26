@@ -18,6 +18,10 @@ continuum mcp serve --project /path/to/my-project
 | `get_raw_log` | Read a bounded raw session log only for debugging |
 | `write_handoff` | Store the task and exact next action |
 | `get_open_tasks` | List active routed work |
+| `get_context_packet` | Read bounded role context and applicable messages |
+| `get_workflows` | Inspect recent planned/executed workflow state |
+| `post_agent_message` | Store a bounded result or instruction for a role |
+| `get_agent_messages` | Read messages addressed to a role |
 | `claim_task_files` | Exclusively reserve files for one worker task |
 | `complete_task` | Finish a task and release its claims |
 

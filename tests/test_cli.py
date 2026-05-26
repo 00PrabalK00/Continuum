@@ -6,7 +6,7 @@ from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 
-from continuum.cli import down, main, pid_is_running, up
+from continuum.cli import down, injected_resume_args, main, pid_is_running, up
 
 
 class CliTest(unittest.TestCase):
@@ -144,7 +144,40 @@ class CliTest(unittest.TestCase):
                     self.assertEqual(main(), 0)
                 finally:
                     sys.argv = previous
-            self.assertIn("Automatic provider launching is not enabled in this version.", output.getvalue())
+            self.assertIn("Automatic provider launching was not requested.", output.getvalue())
+            self.assertIn("Workflow planned: W0001.", output.getvalue())
+
+    def test_context_and_message_commands_are_bounded_and_visible(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            output = StringIO()
+            with redirect_stdout(output):
+                import sys
+
+                previous = sys.argv
+                try:
+                    sys.argv = ["continuum", "init", "--project", str(project)]
+                    self.assertEqual(main(), 0)
+                    sys.argv = ["continuum", "message", "send", "--project", str(project), "explorer", "coder", "check auth"]
+                    self.assertEqual(main(), 0)
+                    sys.argv = ["continuum", "context", "build", "--project", str(project), "coder", "--mode", "compact"]
+                    self.assertEqual(main(), 0)
+                finally:
+                    sys.argv = previous
+            rendered = output.getvalue()
+            self.assertIn("MSG0001", rendered)
+            self.assertIn("Estimated context:", rendered)
+            self.assertIn("check auth", rendered)
+
+    def test_resume_injects_context_with_agent_specific_prompt_mode(self):
+        prompt = "continue from handoff"
+
+        self.assertEqual(injected_resume_args("claude", ["--model", "opus"], prompt)[-1], prompt)
+        self.assertEqual(injected_resume_args("codex", [], prompt), [prompt])
+        self.assertEqual(injected_resume_args("gemini", ["--approval-mode", "plan"], prompt)[:2], ["--prompt-interactive", prompt])
+        merged = injected_resume_args("gemini", ["--prompt", "other"], prompt)
+        self.assertIn(prompt, merged[1])
+        self.assertIn("other", merged[1])
 
 
 if __name__ == "__main__":

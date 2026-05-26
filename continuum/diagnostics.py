@@ -84,11 +84,17 @@ def project_status(store: MemoryStore) -> dict[str, Any]:
     sqlite_status = "missing"
     tasks: list[dict[str, Any]] = []
     embedding_count = 0
+    workflow_count = 0
+    message_count = 0
     if store.db_file.exists():
         try:
+            migration = store.connect()
+            migration.close()
             connection = sqlite3.connect(f"file:{store.db_file}?mode=ro", uri=True)
             connection.execute("SELECT 1 FROM events LIMIT 1").fetchall()
             embedding_count = int(connection.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0])
+            workflow_count = int(connection.execute("SELECT COUNT(*) FROM workflows").fetchone()[0])
+            message_count = int(connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0])
             connection.close()
             sqlite_status = "ready"
             tasks = store.list_tasks(limit=500)
@@ -114,6 +120,8 @@ def project_status(store: MemoryStore) -> dict[str, Any]:
         "running_tasks": len(running_tasks),
         "claimed_files": claimed_files,
         "embedding_count": embedding_count,
+        "workflow_count": workflow_count,
+        "message_count": message_count,
         "handoff_path": str(handoff) if handoff.exists() else "missing",
         "mirror_path": str(mirror) if mirror and mirror.exists() else ("disabled" if not mirror else "missing"),
     }

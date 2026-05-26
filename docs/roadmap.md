@@ -7,7 +7,7 @@ v0.1 proves Continuum can preserve context across agents.
 v0.2 proves Continuum can automatically orchestrate agents.
 ```
 
-## Implemented In v0.1
+## Implemented Through v0.2
 
 - Local project initialization and compact Markdown handoffs
 - SQLite and JSONL event history
@@ -25,30 +25,30 @@ v0.2 proves Continuum can automatically orchestrate agents.
 - Editable team starter presets with task-only planning output
 - Shared packaged logo asset and verified Control Center handoff display
 - Windows startup installation
+- Opt-in sequential Continuum Teams execution through enabled provider adapters
+- Bounded role context packets, persisted result messages and MCP workflow tools
+- Ollama-ranked retrieval over stored embedding previews
+- Prompt injection for sessions launched through `continuum resume`
+- File claim enforcement for model providers at storage and MCP boundaries
 
 ## v0.2 Issues
-
-### [#1 Semantic Retrieval Using Ollama Embeddings](https://github.com/00PrabalK00/Continuum/issues/1)
-
-Use the stored Ollama embeddings for ranked retrieval, with bounded retrieved
-context and an exact-search fallback. Users should not need a cloud account.
 
 ### [#2 PTY-Aware Agent Wrappers](https://github.com/00PrabalK00/Continuum/issues/2)
 
 Create tested adapters for interactive Codex, Claude Code and Gemini CLI
 behavior on Windows, macOS and Linux.
 
-### [#3 Automatic Continuum Teams Execution](https://github.com/00PrabalK00/Continuum/issues/3)
-
-Add provider adapters and a task router that can assign sequential specialist
-roles and launch workers with scoped MCP configuration. Team route planning is
-implemented; automatic execution is not.
-
 ### [#4 Isolated Parallel Work](https://github.com/00PrabalK00/Continuum/issues/4)
 
 Create Git worktree-backed parallel tasks with review/test gates before any
 merge. File claims alone protect routed intent; worktrees provide filesystem
 isolation.
+
+### Sequential Recovery
+
+Add an auditable `team continue` path that resumes a failed sequential
+workflow from its stopped step without silently repeating completed writer
+steps.
 
 ### Background Services
 

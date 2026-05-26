@@ -7,6 +7,7 @@ continuum team init default_dev_team
 continuum team show default_dev_team
 continuum route explain "fix login crash"
 continuum team run default_dev_team "fix login crash"
+continuum team run default_dev_team "fix login crash" --execute --allow-file src/login.py
 ```
 
 Available editable starter presets:
@@ -47,14 +48,15 @@ A bug-fix workflow maps to:
 explorer -> reasoner -> coder -> tester -> memory_worker
 ```
 
-`team run` creates controlled tasks for the steps. It does not execute the
-providers automatically in `v0.1`.
+`team run` creates controlled tasks for the steps by default. Add `--execute`
+to invoke enabled providers sequentially; each step receives a bounded context
+packet and writes a bounded result message for the next role.
 
 ## Safety
 
-- Ollama and OpenRouter cannot be configured as file editors by default.
-- Write work must use task file claims before concurrent routing is enabled.
-- Team workflow execution and Git worktree isolation remain future adapters.
+- Ollama and OpenRouter cannot be configured as file editors or claim files.
+- Automatically executed write roles require explicit `--allow-file` claims.
+- Writable execution stops when existing or new dirty paths are outside claims.
+- Parallel write execution and Git worktree isolation remain future work.
 
-`continuum team run` prints the plan and creates controlled task records only.
-It never launches providers in this version.
+`continuum team run` remains non-executing unless `--execute` is supplied.

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -30,9 +32,9 @@ DEFAULT_PROVIDERS: dict[str, dict[str, Any]] = {
         "default_model": "openai/gpt-4o-mini",
         "use_for": ["plan", "review", "fallback"],
     },
-    "claude_code": {"enabled": False, "kind": "agent", "type": "cli", "command": "claude"},
-    "gemini_cli": {"enabled": False, "kind": "agent", "type": "cli", "command": "gemini"},
-    "codex": {"enabled": False, "kind": "agent", "type": "cli", "command": "codex"},
+    "claude_code": {"enabled": False, "kind": "agent", "type": "cli", "command": "claude", "prompt_args": ["-p"]},
+    "gemini_cli": {"enabled": False, "kind": "agent", "type": "cli", "command": "gemini", "prompt_args": ["-p"]},
+    "codex": {"enabled": False, "kind": "agent", "type": "cli", "command": "codex", "prompt_args": ["exec"]},
 }
 
 DEFAULT_ROUTING = {
@@ -159,3 +161,35 @@ class ProviderManager:
             return str(selected_model), [float(item) for item in result["data"][0]["embedding"]]
         except (KeyError, IndexError, TypeError, ValueError) as error:
             raise ProviderError("Provider returned no embedding vector.") from error
+
+    def run_agent(self, name: str, prompt: str, project: Path) -> str:
+        provider = self.provider(name)
+        if provider.get("kind") != "agent":
+            raise ProviderError(f"`run_agent` requires an agent provider, not {name}.")
+        if not provider.get("enabled"):
+            raise ProviderError(f"Provider is disabled: {name}. Run `continuum providers add {name}`.")
+        command = str(provider.get("command", name))
+        executable = shutil.which(command)
+        if not executable:
+            raise ProviderError(f"Agent CLI not found: {command}. Install it and run `continuum providers test {name}`.")
+        invocation = [executable, *[str(item) for item in provider.get("prompt_args", [])], compact_text(prompt, 24_000)]
+        if executable.lower().endswith(".ps1"):
+            invocation = ["powershell", "-ExecutionPolicy", "Bypass", "-File", *invocation]
+        try:
+            completed = subprocess.run(
+                invocation,
+                cwd=str(project),
+                capture_output=True,
+                text=True,
+                errors="replace",
+                timeout=int(provider.get("timeout_seconds", 900)),
+                check=False,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise ProviderError(f"{name} exceeded its configured timeout. Increase timeout_seconds or inspect the agent session.") from error
+        except OSError as error:
+            raise ProviderError(f"Could not launch {name}: {error}. Run `continuum providers test {name}`.") from error
+        output = compact_text((completed.stdout or "") + (completed.stderr or ""), 12_000)
+        if completed.returncode != 0:
+            raise ProviderError(f"{name} exited with code {completed.returncode}: {output or 'no output'}")
+        return output or f"{name} completed without text output."

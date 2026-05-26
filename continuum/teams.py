@@ -115,12 +115,22 @@ class TeamManager:
 
     def validate(self, config: dict[str, Any]) -> None:
         agents = config.get("agents", {})
+        provider_config_path = self.store.state_dir / "providers.json"
+        configured: dict[str, Any] = {}
+        if provider_config_path.exists():
+            configured = json.loads(provider_config_path.read_text(encoding="utf-8")).get("providers", {})
         for name, agent in agents.items():
             provider = agent.get("provider")
-            if provider not in PROVIDERS:
+            if provider not in PROVIDERS and provider not in configured:
                 raise TeamError(f"Unknown provider for {name}: {provider}")
-            if provider in MODEL_PROVIDERS and agent.get("can_edit_files"):
+            if (provider in MODEL_PROVIDERS or configured.get(provider, {}).get("kind") == "model") and agent.get("can_edit_files"):
                 raise TeamError(f"Model provider role cannot edit files by default: {name}")
+            parent = agent.get("parent")
+            if parent and (parent == name or parent not in agents):
+                raise TeamError(f"Invalid parent role for {name}: {parent}")
+            unknown_delegates = [member for member in agent.get("delegates", []) if member not in agents or member == name]
+            if unknown_delegates:
+                raise TeamError(f"Invalid delegates for {name}: {', '.join(unknown_delegates)}")
         for route, members in config.get("routing", {}).items():
             missing = [member for member in members if member not in agents]
             if missing:

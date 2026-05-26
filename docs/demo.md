@@ -1,8 +1,7 @@
-# v0.1 Context Continuity Demo
+# Context Continuity And Sequential Execution Demo
 
-This demo proves the shipped feature: agents can continue work from compact
-local memory and explicit handoffs. It does not demonstrate automatic team
-execution.
+This demo first shows compact handoff continuation, then demonstrates explicit
+sequential team execution. It does not demonstrate parallel writers.
 
 ## Prerequisites
 
@@ -71,5 +70,13 @@ continuum ui --open
 - Control Center displaying the run and latest handoff.
 - A conflicting claim rejection if a second task attempts to claim `app.py`.
 
-The video should state directly: v0.1 preserves context; v0.2 will execute
-planned workflows automatically.
+Then demonstrate opt-in routing in a clean copy of the example project with
+enabled providers:
+
+```bash
+continuum team init fast_bugfix
+continuum team run fast_bugfix "Fix failing greeting test" --execute --allow-file app.py --allow-file test_app.py
+```
+
+The video should state directly: `v0.1` proved preserved context; `v0.2`
+executes configured providers sequentially only when `--execute` is supplied.
