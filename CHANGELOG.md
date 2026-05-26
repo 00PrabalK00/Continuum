@@ -17,3 +17,5 @@
 - Made Control Center read-only and provider/team initialization opt-in.
 - Added five editable team starter presets and explicit planning-only workflow output.
 - Added resume context estimates and npm packaging hygiene checks.
+- Added the Continuum logo to README and Control Center branding, including packaged SVG delivery.
+- Corrected the Control Center overview to render `latest_handoff.md` in its handoff view.

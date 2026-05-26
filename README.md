@@ -1,6 +1,10 @@
-# Continuum
+<p align="center">
+  <img src="continuum/ui/logo.svg" alt="Continuum logo" width="152">
+</p>
 
-**Continuum is a local coordination layer for AI coding teams.**
+<h1 align="center">Continuum</h1>
+
+<p align="center"><strong>Continuum is a local coordination layer for AI coding teams.</strong></p>
 
 It gives Claude Code, Codex, Gemini CLI, Ollama and OpenRouter shared memory,
 task ownership, file-claim safety and repeatable planned team workflows.

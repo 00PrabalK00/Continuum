@@ -16,6 +16,7 @@
 - Deterministic `continuum status` and `continuum doctor` diagnostics
 - CLI-owned configuration with read-only Control Center views
 - Editable team starter presets with task-only planning output
+- Shared packaged logo asset and verified Control Center handoff display
 - Windows startup installation
 
 ## Next Milestones

@@ -9,3 +9,4 @@
 - Control Center is read-only; commands own configuration and state changes.
 - Initialization writes disabled provider starters and installs no team automatically.
 - Alpha compaction is bounded delta notes plus targeted retrieval; semantic ranking is not part of the correctness path.
+- Branding uses one packaged SVG asset shared by GitHub README and Control Center to avoid redundant large raster assets.

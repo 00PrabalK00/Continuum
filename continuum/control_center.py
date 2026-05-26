@@ -136,7 +136,7 @@ class ControlCenter:
             "daemon": self.daemon_info(),
             "project": self.project_info(),
             "current_team": teams[0]["name"] if teams else None,
-            "latest_handoff": read_optional(self.store.state_dir / "current.md", 1_500),
+            "latest_handoff": read_optional(self.store.state_dir / "latest_handoff.md", 1_500),
             "providers": self.providers(),
             "tasks": tasks[:6],
             "events": events[:8],

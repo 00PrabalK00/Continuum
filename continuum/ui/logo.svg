@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 280" role="img" aria-labelledby="title desc">
+  <title id="title">Continuum</title>
+  <desc id="desc">Blue and violet circular continuity mark surrounding an infinity loop.</desc>
+  <defs>
+    <linearGradient id="outer-left" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#14bde8"/>
+      <stop offset="1" stop-color="#1658d8"/>
+    </linearGradient>
+    <linearGradient id="outer-right" x1="0" y1="0" x2="0.2" y2="1">
+      <stop stop-color="#ae63f3"/>
+      <stop offset="1" stop-color="#5129cb"/>
+    </linearGradient>
+    <linearGradient id="loop" x1="0" y1="0.2" x2="1" y2="0.8">
+      <stop stop-color="#079fe6"/>
+      <stop offset="0.48" stop-color="#3252dd"/>
+      <stop offset="1" stop-color="#9c45ef"/>
+    </linearGradient>
+  </defs>
+  <path d="M134 22 A118 118 0 0 0 126 257" fill="none" stroke="url(#outer-left)" stroke-width="29" stroke-linecap="round"/>
+  <path d="M146 22 A118 118 0 0 1 154 257" fill="none" stroke="url(#outer-right)" stroke-width="29" stroke-linecap="round"/>
+  <path d="M42 140c0-34 22-56 51-56 25 0 40 16 56 37l25 32c12 15 22 23 36 23 20 0 31-16 31-36s-11-36-31-36c-15 0-25 9-37 24l-43 54c-15 19-26 27-42 27-27 0-46-22-46-49s19-49 46-49c17 0 29 8 42 25" fill="none" stroke="url(#loop)" stroke-width="27" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

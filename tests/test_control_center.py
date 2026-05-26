@@ -18,11 +18,15 @@ class ControlCenterTest(unittest.TestCase):
             app.store.initialize(1000, 0.8)
             ProviderManager(app.store.state_dir).ensure_config()
             TeamManager(app.store).init("default_dev_team")
+            (app.store.state_dir / "current.md").write_text("current only", encoding="utf-8")
+            (app.store.state_dir / "latest_handoff.md").write_text("handoff only", encoding="utf-8")
 
             overview = app.overview()
 
             self.assertEqual(overview["project"]["name"], "project")
             self.assertEqual(overview["current_team"], "default_dev_team")
+            self.assertIn("handoff only", overview["latest_handoff"])
+            self.assertNotIn("current only", overview["latest_handoff"])
             self.assertEqual(app.tasks(), [])
 
     def test_opening_ui_does_not_initialize_project(self):
@@ -46,6 +50,9 @@ class ControlCenterTest(unittest.TestCase):
                     html = response.read().decode("utf-8")
                 with urllib.request.urlopen(url + "/api/overview") as response:
                     payload = json.loads(response.read().decode("utf-8"))
+                with urllib.request.urlopen(url + "/logo.svg") as response:
+                    logo_type = response.headers.get_content_type()
+                    logo = response.read().decode("utf-8")
             finally:
                 server.shutdown()
                 server.server_close()
@@ -53,6 +60,9 @@ class ControlCenterTest(unittest.TestCase):
 
             self.assertIn("Continuum Control Center", html)
             self.assertIn('class="active" data-view="teams"', html)
+            self.assertIn('src="/logo.svg"', html)
+            self.assertEqual(logo_type, "image/svg+xml")
+            self.assertIn("<svg", logo)
             self.assertEqual(payload["project"]["name"], "project")
 
     def test_http_server_rejects_mutating_actions(self):

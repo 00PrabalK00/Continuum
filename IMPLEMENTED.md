@@ -9,3 +9,5 @@
 - Continuum Control Center local web UI for real project, team, provider, memory, run and handoff state.
 - Deterministic `continuum status` and `continuum doctor` release diagnostics.
 - Read-only Control Center boundary with CLI-owned mutations and opt-in starter configuration.
+- Supplied Continuum brand mark integrated as packaged SVG in README and Control Center.
+- Control Center latest-handoff view corrected and covered by static-asset regression tests.

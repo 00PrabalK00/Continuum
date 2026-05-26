@@ -6,8 +6,8 @@
   --border: #243144;
   --text: #e7edf7;
   --muted: #94a3b8;
-  --accent: #5b8cff;
-  --accent-bg: #18294f;
+  --accent: #5272f2;
+  --accent-bg: #182550;
   --success: #43c59e;
   --danger: #ef7070;
   --warning: #ecb74f;
@@ -51,20 +51,7 @@ button:hover { border-color: #3b4f68; background: var(--surface-2); }
 .brand { display: flex; align-items: center; gap: 12px; padding: 0 8px 28px; }
 .brand strong { display: block; font-size: 16px; }
 .brand span:not(.mark) { color: var(--muted); font-size: 12px; }
-.mark {
-  width: 22px;
-  height: 22px;
-  border: 2px solid var(--accent);
-  border-radius: 7px;
-  position: relative;
-}
-.mark:after {
-  content: "";
-  position: absolute;
-  inset: 5px;
-  background: var(--accent);
-  border-radius: 3px;
-}
+.mark { width: 30px; height: 30px; display: block; }
 nav { display: grid; gap: 4px; }
 nav button {
   border: 0;

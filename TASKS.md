@@ -7,3 +7,4 @@
 - [ ] Add Git worktree isolation before supporting concurrent write workers.
 - [ ] Add guided project/provider editing flows to Continuum Control Center after the read-and-run MVP is validated.
 - [ ] Add claim recovery commands with auditable reasons after the public alpha baseline.
+- [ ] Improve wrapper review output capture when a provider returns a plan-only completion marker.

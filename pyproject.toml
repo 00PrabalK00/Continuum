@@ -27,7 +27,7 @@ continuum = "continuum.cli:main"
 include = ["continuum*"]
 
 [tool.setuptools.package-data]
-continuum = ["ui/*.html", "ui/*.css", "ui/*.js"]
+continuum = ["ui/*.html", "ui/*.css", "ui/*.js", "ui/*.svg"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
