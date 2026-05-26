@@ -14,8 +14,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from .core import MemoryStore, compact_text
-from .providers import ProviderError
+from .core import MemoryStore, compact_text, write_text
+from .orchestration import OrchestrationError, Orchestrator
+from .providers import ProviderError, ProviderManager
 from .teams import TeamError, TeamManager
 
 UI_DIR = Path(__file__).resolve().parent / "ui"
@@ -28,7 +29,7 @@ def read_optional(path: Path, limit: int = 8_000) -> str:
 
 
 class ControlCenter:
-    """Read only the real local Continuum objects exposed in the UI."""
+    """Expose real local Continuum objects and explicit command-parity actions."""
 
     def __init__(self, project: Path, vault: Path | None = None) -> None:
         self.store = MemoryStore(project, vault)
@@ -142,6 +143,34 @@ class ControlCenter:
             "events": events[:8],
         }
 
+    def create_team(self, preset: str) -> dict[str, Any]:
+        path = TeamManager(self.store).init(preset)
+        self.store.event("control_center_action", {"summary": f"Created team preset {preset}."})
+        return {"team": preset, "path": str(path)}
+
+    def save_team(self, name: str, config: dict[str, Any]) -> dict[str, Any]:
+        manager = TeamManager(self.store)
+        manager.validate(config)
+        manager.directory.mkdir(parents=True, exist_ok=True)
+        path = manager.directory / f"{name}.json"
+        write_text(path, json.dumps(config, indent=2) + "\n")
+        self.store.event("control_center_action", {"summary": f"Saved team {name}."})
+        return {"team": name, "path": str(path)}
+
+    def test_provider(self, name: str) -> dict[str, str]:
+        result = ProviderManager(self.store.state_dir).test(name)
+        self.store.event("control_center_action", {"summary": f"Tested provider {name}: {result}"})
+        return {"provider": name, "result": result}
+
+    def plan_workflow(self, team: str, request: str, execute: bool, allow_files: list[str]) -> dict[str, Any]:
+        runner = Orchestrator(self.store)
+        result = runner.execute(team, request, allowed_files=allow_files) if execute else runner.plan(team, request)
+        self.store.event("control_center_action", {"summary": f"{'Executed' if execute else 'Planned'} workflow {result['workflow_id']}."})
+        return result
+
+    def resume_context(self, role: str, mode: str) -> dict[str, Any]:
+        return self.store.context_packet(role, mode=mode)
+
 
 class ControlCenterHandler(BaseHTTPRequestHandler):
     server: "ControlCenterServer"
@@ -197,10 +226,29 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
             self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
 
     def do_POST(self) -> None:  # noqa: N802
-        self.send_json(
-            {"error": "Control Center is read-only. Run the corresponding `continuum` command in a terminal."},
-            HTTPStatus.METHOD_NOT_ALLOWED,
-        )
+        parsed = urlparse(self.path)
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+            if parsed.path == "/api/teams/create":
+                self.send_json(self.server.app.create_team(str(payload.get("preset", "default_dev_team"))))
+            elif parsed.path == "/api/teams/save":
+                self.send_json(self.server.app.save_team(str(payload.get("name", "")), dict(payload.get("config", {}))))
+            elif parsed.path == "/api/providers/test":
+                self.send_json(self.server.app.test_provider(str(payload.get("provider", ""))))
+            elif parsed.path == "/api/workflows/run":
+                self.send_json(
+                    self.server.app.plan_workflow(
+                        str(payload.get("team", "")), str(payload.get("request", "")),
+                        bool(payload.get("execute", False)), [str(item) for item in payload.get("allow_files", [])],
+                    )
+                )
+            elif parsed.path == "/api/resume-context":
+                self.send_json(self.server.app.resume_context(str(payload.get("role", "coder")), str(payload.get("mode", "compact"))))
+            else:
+                self.send_json({"error": "Unknown action endpoint."}, HTTPStatus.NOT_FOUND)
+        except (json.JSONDecodeError, OrchestrationError, ProviderError, TeamError, ValueError) as error:
+            self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
 
 
 class ControlCenterServer(ThreadingHTTPServer):

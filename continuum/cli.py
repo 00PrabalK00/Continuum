@@ -29,7 +29,9 @@ from .core import (
 from .mcp_server import serve_stdio
 from .orchestration import OrchestrationError, Orchestrator
 from .providers import DEFAULT_PROVIDERS, ProviderError, ProviderManager
+from .services import ServiceError, ServiceManager
 from .teams import PRESETS, TeamError, TeamManager
+from .worktrees import WorktreeError, WorktreeManager
 from .control_center import serve_control_center
 from .diagnostics import project_status, run_doctor
 
@@ -467,16 +469,42 @@ def memory_embed(args: argparse.Namespace) -> int:
 def memory_retrieve(args: argparse.Namespace) -> int:
     store = store_from(args)
     if args.semantic:
-        model, vector = ProviderManager(store.state_dir).embed("ollama", args.query, args.model)
-        results = store.semantic_search(vector, args.limit)
-        print(f"Semantic retrieval via ollama/{model}: {len(results)} result(s)")
-        for item in results:
-            print(f"{item['memory_key']} score={item['score']}: {item['preview']}")
+        try:
+            model, vector = ProviderManager(store.state_dir).embed("ollama", args.query, args.model)
+            results = store.semantic_search(vector, args.limit, args.query)
+            lines = [f"{item.get('memory_id') or item['memory_key']} source={item['source']} score={item['score']}: {item['preview']}" for item in results]
+            text = "\n".join(lines)
+            budgeted = text[: 2_000 * 4]
+            print(f"Semantic retrieval via ollama/{model}: {len(results)} result(s); estimated context <= 2000 tokens")
+            print(budgeted)
+        except ProviderError as error:
+            print(f"Semantic retrieval unavailable ({error}). Falling back to exact local search.")
+            results = store.search(args.query, args.limit)
+            for item in results:
+                print(f"M{item['id']} {item['kind']}: {json.dumps(item['payload'], ensure_ascii=True)}")
     else:
         results = store.search(args.query, args.limit)
         print(f"Exact retrieval: {len(results)} result(s)")
         for item in results:
             print(f"M{item['id']} {item['kind']}: {json.dumps(item['payload'], ensure_ascii=True)}")
+    return 0
+
+
+def memory_refresh(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    manager = ProviderManager(store.state_dir)
+    events = list(reversed(store.recent_events(args.limit)))
+    stored = 0
+    for event in events:
+        payload = json.dumps(event["payload"], ensure_ascii=True)
+        source = f"{event['kind']}: {payload}"
+        if not source.strip():
+            continue
+        model, vector = manager.embed("ollama", source, args.model)
+        key = f"M:{event['id']}"
+        store.store_embedding(key, "ollama", model, vector, source)
+        stored += 1
+    print(f"Refreshed {stored} memory embedding(s) via ollama.")
     return 0
 
 
@@ -567,31 +595,64 @@ def route_explain(args: argparse.Namespace) -> int:
     return team_explain(args)
 
 
-def autostart(args: argparse.Namespace) -> int:
-    if os.name != "nt":
-        raise SystemExit("Automatic startup installation is currently supported on Windows only.")
-    startup = Path(os.environ["APPDATA"]) / "Microsoft/Windows/Start Menu/Programs/Startup"
-    launcher = startup / "Continuum Daemon.cmd"
-    if args.action == "remove":
-        if launcher.exists():
-            launcher.unlink()
-        print(f"Removed: {launcher}")
-        return 0
-    store = store_from(args)
-    if not store.config_file.exists():
-        store.initialize(DEFAULT_CONTEXT_LIMIT, DEFAULT_THRESHOLD)
-    module_root = Path(__file__).resolve().parents[1]
-    command = [
-        "@echo off",
-        f'set "PYTHONPATH={module_root};%PYTHONPATH%"',
-        f'"{sys.executable}" -m continuum up --project "{store.project}"'
-        + (f' --vault "{store.vault_dir}"' if store.vault_dir else ""),
-        "",
-    ]
-    write_text(launcher, "\n".join(command))
-    print(f"Installed: {launcher}")
-    print("Continuum will start for this project after your next Windows sign-in.")
+def worktree_create(args: argparse.Namespace) -> int:
+    record = WorktreeManager(store_from(args)).create(args.task_id)
+    print(f"{record['task_id']} worktree: {record['path']}")
+    print(f"Branch: {record['branch']}")
     return 0
+
+
+def worktree_list(args: argparse.Namespace) -> int:
+    records = WorktreeManager(store_from(args)).list()
+    for item in records:
+        print(f"{item['task_id']} {item['status']} {item['branch']} {item['path']}")
+    if not records:
+        print("No worktrees.")
+    return 0
+
+
+def worktree_diff(args: argparse.Namespace) -> int:
+    record = WorktreeManager(store_from(args)).diff(args.task_id)
+    print(f"{record['task_id']} changed files: {', '.join(record.get('changed_files', [])) or 'none'}")
+    print(record.get("diff_summary") or "No diff.")
+    return 0
+
+
+def worktree_test_result(args: argparse.Namespace) -> int:
+    record = WorktreeManager(store_from(args)).record_tests(args.task_id, args.passed, args.note)
+    print(f"{record['task_id']} tests: {record['test_result']} ({record['completion_note']})")
+    return 0
+
+
+def worktree_review(args: argparse.Namespace) -> int:
+    record = WorktreeManager(store_from(args)).record_review(args.task_id, args.approved, args.note)
+    print(f"{record['task_id']} review: {record['review_status']} ({record['review_note']})")
+    return 0
+
+
+def worktree_merge(args: argparse.Namespace) -> int:
+    record = WorktreeManager(store_from(args)).merge(args.task_id)
+    print(f"{record['task_id']} merged from {record['branch']}.")
+    return 0
+
+
+def worktree_discard(args: argparse.Namespace) -> int:
+    record = WorktreeManager(store_from(args)).discard(args.task_id, args.force)
+    print(f"{record['task_id']} discarded; branch removed.")
+    return 0
+
+
+def service(args: argparse.Namespace) -> int:
+    manager = ServiceManager(store_from(args))
+    result = getattr(manager, args.action)()
+    state = "installed" if result.get("installed", args.action == "install") else "not installed"
+    print(f"{result['platform']} service {state}: {result['path']}")
+    print(f"Next action: {result['next_action']}")
+    return 0
+
+
+def autostart(args: argparse.Namespace) -> int:
+    return service(args)
 
 
 def parser() -> argparse.ArgumentParser:
@@ -715,6 +776,11 @@ def parser() -> argparse.ArgumentParser:
     retrieve.add_argument("--semantic", action="store_true", help="Use stored embeddings ranked against an Ollama query embedding.")
     retrieve.add_argument("--model")
     retrieve.set_defaults(func=memory_retrieve)
+    refresh = memory_commands.add_parser("refresh", parents=[common], help="Generate or refresh embeddings for recent event memory.")
+    refresh.add_argument("provider", choices=["ollama"], nargs="?", default="ollama")
+    refresh.add_argument("--limit", type=int, default=20)
+    refresh.add_argument("--model")
+    refresh.set_defaults(func=memory_refresh)
 
     context = commands.add_parser("context", help="Create bounded role-specific context packets.")
     context_commands = context.add_subparsers(dest="context_command", required=True)
@@ -765,6 +831,38 @@ def parser() -> argparse.ArgumentParser:
     run_team.add_argument("--context-mode", choices=["compact", "normal", "deep"], default="compact")
     run_team.set_defaults(func=team_run)
 
+    worktrees = commands.add_parser("worktree", help="Manage task-isolated Git worktrees.")
+    worktree_commands = worktrees.add_subparsers(dest="worktree_command", required=True)
+    create_worktree = worktree_commands.add_parser("create", parents=[common], help="Create a task-bound worktree and branch.")
+    create_worktree.add_argument("task_id")
+    create_worktree.set_defaults(func=worktree_create)
+    list_worktrees = worktree_commands.add_parser("list", parents=[common], help="List task worktrees.")
+    list_worktrees.set_defaults(func=worktree_list)
+    diff_worktree = worktree_commands.add_parser("diff", parents=[common], help="Show changed paths and diff summary for a worktree.")
+    diff_worktree.add_argument("task_id")
+    diff_worktree.set_defaults(func=worktree_diff)
+    test_worktree = worktree_commands.add_parser("test-result", parents=[common], help="Record the required test gate for merging.")
+    test_worktree.add_argument("task_id")
+    gate = test_worktree.add_mutually_exclusive_group(required=True)
+    gate.add_argument("--pass", dest="passed", action="store_true")
+    gate.add_argument("--fail", dest="passed", action="store_false")
+    test_worktree.add_argument("--note", required=True)
+    test_worktree.set_defaults(func=worktree_test_result)
+    review_worktree = worktree_commands.add_parser("review", parents=[common], help="Record the required review gate for merging.")
+    review_worktree.add_argument("task_id")
+    review_gate = review_worktree.add_mutually_exclusive_group(required=True)
+    review_gate.add_argument("--approve", dest="approved", action="store_true")
+    review_gate.add_argument("--request-changes", dest="approved", action="store_false")
+    review_worktree.add_argument("--note", required=True)
+    review_worktree.set_defaults(func=worktree_review)
+    merge_worktree = worktree_commands.add_parser("merge", parents=[common], help="Merge a tested task worktree into the current branch.")
+    merge_worktree.add_argument("task_id")
+    merge_worktree.set_defaults(func=worktree_merge)
+    discard_worktree = worktree_commands.add_parser("discard", parents=[common], help="Remove an unneeded task worktree and branch.")
+    discard_worktree.add_argument("task_id")
+    discard_worktree.add_argument("--force", action="store_true")
+    discard_worktree.set_defaults(func=worktree_discard)
+
     route = commands.add_parser("route", help="Explain provider/team routing.")
     route_commands = route.add_subparsers(dest="route_command", required=True)
     explain_route = route_commands.add_parser("explain", parents=[common], help="Classify and show the selected team route.")
@@ -773,8 +871,12 @@ def parser() -> argparse.ArgumentParser:
     explain_route.add_argument("--task-type")
     explain_route.set_defaults(func=route_explain)
 
-    startup = commands.add_parser("autostart", parents=[common], help="Install or remove Windows login startup.")
-    startup.add_argument("action", choices=["install", "remove"])
+    services = commands.add_parser("service", parents=[common], help="Manage the native login service for this project.")
+    services.add_argument("action", choices=["install", "status", "remove"])
+    services.set_defaults(func=service)
+
+    startup = commands.add_parser("autostart", parents=[common], help="Compatibility alias for native login service installation.")
+    startup.add_argument("action", choices=["install", "status", "remove"])
     startup.set_defaults(func=autostart)
 
     mcp = commands.add_parser("mcp", parents=[common], help="Expose scoped memory tools over MCP stdio.")
@@ -805,7 +907,7 @@ def main() -> int:
         raise SystemExit("--context-limit must be positive")
     try:
         return int(args.func(args))
-    except (ProviderError, TeamError, ValueError) as error:
+    except (ProviderError, ServiceError, TeamError, WorktreeError, ValueError) as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1
 

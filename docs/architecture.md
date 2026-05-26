@@ -17,7 +17,8 @@ team workflow -> bounded step packet -> provider result message -> next step
 Continuum is the controller. Agent CLIs are workers. In `v0.2`, the controller
 stores workflows, messages, tasks and exclusive file claims, and exposes them
 through CLI and MCP. `team run --execute` invokes enabled providers
-sequentially; parallel writers and automatic worktree merges are not provided.
+sequentially. Task-bound worktree create/diff/gated-merge operations are
+available; automatic parallel team scheduling is not provided.
 
 ```text
 task CREATED -> ASSIGNED -> RUNNING -> DONE
@@ -60,9 +61,8 @@ handoff writes.
 ## Distribution Boundary
 
 The npm launcher is the user-facing entrypoint and starts the bundled Python
-daemon on the host. Docker is reserved for optional later services such as a
-vector backend or dashboard; it is not required for file watching and local
-agent wrapping.
+daemon on the host. The optional Compose profile can run a local vector
+service; it is not required for file watching and local agent wrapping.
 
 ## Context Checkpoints
 

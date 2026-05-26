@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.1 - Alpha
+
+- Completed bounded semantic retrieval acceptance: refresh, event attribution,
+  task/recency ranking, exact fallback and output budgets.
+- Added task-bound Git worktree commands with recorded test and review gates
+  before merge.
+- Added explicit Control Center controls for team editing, provider tests,
+  workflow plan/execute actions and compact resume packets.
+- Added macOS launchd and Linux systemd user-service definitions alongside the
+  existing Windows startup path.
+- Added optional Docker Compose local vector-service profile without replacing
+  host-local agent execution.
+
 ## 0.2.0 - Alpha
 
 - Added opt-in sequential Continuum Teams execution with bounded per-role context packets.

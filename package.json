@@ -1,6 +1,6 @@
 {
   "name": "continuum-agent-memory",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Local shared memory and opt-in sequential orchestration for AI coding agents.",
   "license": "MIT",
   "bin": {
@@ -12,6 +12,7 @@
     "continuum/*.py",
     "continuum/ui/",
     "docs/",
+    "docker-compose.yml",
     "examples/**/*.md",
     "examples/**/*.py",
     "README.md",

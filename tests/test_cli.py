@@ -5,8 +5,10 @@ import argparse
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 from continuum.cli import down, injected_resume_args, main, pid_is_running, up
+from continuum.providers import ProviderError, ProviderManager
 
 
 class CliTest(unittest.TestCase):
@@ -178,6 +180,46 @@ class CliTest(unittest.TestCase):
         merged = injected_resume_args("gemini", ["--prompt", "other"], prompt)
         self.assertIn(prompt, merged[1])
         self.assertIn("other", merged[1])
+
+    def test_semantic_retrieval_falls_back_to_exact_search_when_ollama_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            output = StringIO()
+            import sys
+
+            previous = sys.argv
+            try:
+                sys.argv = ["continuum", "init", "--project", str(project)]
+                self.assertEqual(main(), 0)
+                from continuum.core import MemoryStore
+
+                MemoryStore(project).event("decision", {"summary": "auth retry behavior"})
+                with patch.object(ProviderManager, "embed", side_effect=ProviderError("connection refused")):
+                    with redirect_stdout(output):
+                        sys.argv = ["continuum", "memory", "retrieve", "--project", str(project), "auth", "--semantic"]
+                        self.assertEqual(main(), 0)
+            finally:
+                sys.argv = previous
+            self.assertIn("Falling back to exact local search", output.getvalue())
+            self.assertIn("auth retry behavior", output.getvalue())
+
+    def test_memory_refresh_embeds_recent_events_with_event_ids(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            import sys
+
+            previous = sys.argv
+            try:
+                sys.argv = ["continuum", "init", "--project", str(project)]
+                self.assertEqual(main(), 0)
+                with patch.object(ProviderManager, "embed", return_value=("embed", [1.0, 0.0])):
+                    sys.argv = ["continuum", "memory", "refresh", "--project", str(project), "--limit", "1"]
+                    self.assertEqual(main(), 0)
+            finally:
+                sys.argv = previous
+            from continuum.core import MemoryStore
+
+            self.assertTrue(MemoryStore(project).semantic_search([1.0, 0.0])[0]["memory_id"].startswith("M"))
 
 
 if __name__ == "__main__":

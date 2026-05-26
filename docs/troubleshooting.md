@@ -18,4 +18,5 @@ Common actions:
 | OpenRouter key missing on PowerShell | `$env:OPENROUTER_API_KEY="<key>"; continuum providers test openrouter` |
 | MCP not configured | Add a stdio server command: `continuum mcp serve --project "<path>"` |
 
-Control Center is read-only. Use CLI commands for all repairs and state changes.
+Control Center exposes explicit workflow/team/provider actions. Use CLI
+commands for low-level repairs, service management and audit-friendly scripts.

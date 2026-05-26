@@ -274,11 +274,11 @@ class MemoryStore:
             return []
         connection = self.connect()
         rows = connection.execute(
-            "SELECT created_at, kind, payload FROM events ORDER BY id DESC LIMIT ?", (limit,)
+            "SELECT id, created_at, kind, payload FROM events ORDER BY id DESC LIMIT ?", (limit,)
         ).fetchall()
         connection.close()
         return [
-            {"created_at": row[0], "kind": row[1], "payload": json.loads(row[2])}
+            {"id": row[0], "created_at": row[1], "kind": row[2], "payload": json.loads(row[3])}
             for row in reversed(rows)
         ]
 
@@ -634,7 +634,7 @@ class MemoryStore:
             for row in reversed(rows)
         ]
 
-    def semantic_search(self, vector: list[float], limit: int = 8) -> list[dict[str, Any]]:
+    def semantic_search(self, vector: list[float], limit: int = 8, task_hint: str = "") -> list[dict[str, Any]]:
         if not vector:
             return []
         connection = self.connect()
@@ -654,8 +654,21 @@ class MemoryStore:
             denominator = query_norm * math.sqrt(sum(value * value for value in candidate))
             if not denominator:
                 continue
-            score = sum(left * right for left, right in zip(vector, candidate)) / denominator
-            ranked.append({"memory_key": row[0], "created_at": row[1], "provider": row[2], "model": row[3], "score": round(score, 6), "preview": row[5]})
+            similarity = sum(left * right for left, right in zip(vector, candidate)) / denominator
+            try:
+                age_days = max((dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(row[1])).total_seconds() / 86400, 0.0)
+            except ValueError:
+                age_days = 365.0
+            recency_boost = 0.08 / (1.0 + age_days)
+            task_boost = 0.05 if task_hint and task_hint.lower() in row[5].lower() else 0.0
+            score = similarity + recency_boost + task_boost
+            memory_id = row[0][2:] if row[0].startswith("M:") else None
+            ranked.append({
+                "memory_key": row[0], "memory_id": f"M{memory_id}" if memory_id else None,
+                "source": f"event:{memory_id}" if memory_id else row[0],
+                "created_at": row[1], "provider": row[2], "model": row[3],
+                "similarity": round(similarity, 6), "score": round(score, 6), "preview": row[5],
+            })
         return sorted(ranked, key=lambda item: item["score"], reverse=True)[:limit]
 
     def context_packet(

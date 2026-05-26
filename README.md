@@ -37,7 +37,7 @@ of sessions launched outside Continuum.
 
 ## Status
 
-This repository is a `v0.2.0` alpha focused on context continuity and safe,
+This repository is a `v0.2.1` alpha focused on context continuity and safe,
 explicit sequential provider orchestration.
 
 Shipped in `v0.1`:
@@ -56,17 +56,18 @@ Shipped in `v0.1`:
 - `continuum context build` and `continuum message` expose bounded role packets and result messages.
 - `continuum memory retrieve --semantic` ranks locally stored embedding previews.
 - `Continuum Teams` JSON presets for planning and opt-in sequential `--execute` workflows.
-- **Continuum Control Center**, a read-only local developer-console UI over real project state.
+- **Continuum Control Center**, an explicit local control surface for teams, provider checks and workflow actions.
 - Optional Obsidian mirroring with one small folder per project.
-- Windows `continuum autostart install` for sign-in startup.
+- Native service definitions for Windows, macOS and Linux login startup.
+- Task-bound Git worktrees with test/review merge gates.
+- Optional Docker Compose vector-service profile.
 
 Not implemented yet:
 
 - Fully interactive PTY-aware wrappers across operating systems.
 - Detection or injection into CLI sessions launched outside Continuum.
-- Parallel write workers and Git worktree isolation.
-- macOS/Linux background service installers.
-- Optional Docker mode.
+- Full PTY-aware agent terminal adapters.
+- Automatic parallel team scheduling across worktrees.
 
 ## Installation Strategy
 
@@ -257,15 +258,20 @@ This prevents project history from consuming context unnecessarily.
 | `continuum providers test ollama` | Check a local Ollama endpoint |
 | `continuum model ask openrouter "Review plan"` | Make a text-only model call |
 | `continuum memory embed ollama` | Embed compact current context locally |
-| `continuum memory retrieve "auth" --semantic` | Rank local embedded memory for a targeted query |
+| `continuum memory refresh ollama` | Refresh recent event embeddings locally |
+| `continuum memory retrieve "auth" --semantic` | Rank local embedded memory with exact fallback |
 | `continuum context build coder --mode compact` | Produce bounded role-specific context |
 | `continuum message send explorer coder "auth route is relevant"` | Store a bounded role result |
 | `continuum team init default_dev_team` | Create an editable JSON starter team |
 | `continuum team run default_dev_team "Fix auth"` | Create a routed task plan |
 | `continuum team run default_dev_team "Fix auth" --execute --allow-file src/auth.ts` | Run an explicitly authorized sequential workflow |
+| `continuum worktree create T0001` | Create isolated Git work for a task |
+| `continuum worktree test-result T0001 --pass --note "tests passed"` | Record the merge test gate |
+| `continuum worktree review T0001 --approve --note "reviewed"` | Record the merge review gate |
+| `continuum service install` | Write native login startup configuration |
 | `continuum route explain "Fix auth"` | Explain selected team workflow |
 | `continuum ui --open` | Open the local Control Center web console |
-| `continuum autostart install` | Start the daemon at Windows sign-in |
+| `continuum autostart install` | Compatibility alias for native service setup |
 
 For commands that pass arguments to an agent, put Continuum options before the
 agent name:
@@ -355,8 +361,8 @@ Task status is structured (`CREATED`, `ASSIGNED`, `RUNNING`, `REVIEWING`,
 be claimed by a different active task; finalizing a task releases its claims.
 
 Sequential Teams execution and stored-embedding ranking are explicitly opt-in.
-PTY-backed wrappers, external session detection and isolated Git worktree
-merging are not shipped in `v0.2`.
+Task worktree creation and gated merge are shipped; automatic parallel team
+scheduling, PTY-backed wrappers and external session detection are not.
 
 ## Providers
 
@@ -433,8 +439,8 @@ Run a local UI against the current project:
 continuum ui --project . --open
 ```
 
-The Control Center is served only on `127.0.0.1` by default and is read-only.
-Commands remain the main interface for configuration and mutations. It shows:
+The Control Center is served only on `127.0.0.1` by default. Commands remain
+the canonical interface, while the UI exposes explicit audited actions. It shows:
 
 - Overview with daemon state, project, team, providers and latest handoff.
 - Projects with Git/memory/Obsidian paths.
@@ -444,8 +450,9 @@ Commands remain the main interface for configuration and mutations. It shows:
 - Runs and Handoffs backed by structured tasks and bounded Markdown.
 - Settings showing local storage and context budgets.
 
-It cannot create tasks, start daemons, test providers or write handoffs.
-It is intentionally not a transcript dump or decorative analytics dashboard.
+It can create/edit teams, test providers, plan or explicitly execute a
+workflow, and build compact resume context. It is intentionally not a
+transcript dump or decorative analytics dashboard.
 Raw logs remain behind deliberate retrieval paths.
 
 ## Safety And Privacy
@@ -481,6 +488,9 @@ checkpoints for important work.
 - [Providers](docs/providers.md)
 - [Teams](docs/teams.md)
 - [Control Center](docs/control-center.md)
+- [Task Worktrees](docs/worktrees.md)
+- [Native Services](docs/services.md)
+- [Optional Docker Mode](docs/docker.md)
 - [Roadmap](docs/roadmap.md)
 - [Contributing](CONTRIBUTING.md)
 

@@ -57,6 +57,7 @@ packet and writes a bounded result message for the next role.
 - Ollama and OpenRouter cannot be configured as file editors or claim files.
 - Automatically executed write roles require explicit `--allow-file` claims.
 - Writable execution stops when existing or new dirty paths are outside claims.
-- Parallel write execution and Git worktree isolation remain future work.
+- Automatic parallel routing remains future work; use explicit task worktrees
+  and recorded review/test gates when isolating writers.
 
 `continuum team run` remains non-executing unless `--execute` is supplied.

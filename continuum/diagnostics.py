@@ -15,6 +15,7 @@ from . import __version__
 from .core import MemoryStore
 from .mcp_server import handle_request
 from .providers import ProviderError, ProviderManager
+from .services import ServiceError, ServiceManager
 from .teams import TeamManager
 
 FINAL_TASK_STATES = {"DONE", "FAILED"}
@@ -147,6 +148,17 @@ def _mcp_config_check(agent: str, candidates: list[Path], project: Path) -> dict
 def run_doctor(store: MemoryStore, package_root: Path | None = None) -> list[dict[str, str]]:
     root = package_root or Path(__file__).resolve().parents[1]
     checks: list[dict[str, str]] = []
+    docker_compose = root / "docker-compose.yml"
+    if docker_compose.exists():
+        docker = shutil.which("docker")
+        checks.append(
+            check(
+                "Optional Docker mode",
+                "PASS" if docker else "INFO",
+                "docker-compose.yml available; host daemon remains default." if docker else "Compose profile is available; Docker is not installed.",
+                "Install Docker only if using `docker compose --profile vector up -d`." if not docker else "",
+            )
+        )
     node = shutil.which("node")
     entrypoint = root / "bin" / "continuum.js"
     if node and entrypoint.exists():
@@ -196,6 +208,22 @@ def run_doctor(store: MemoryStore, package_root: Path | None = None) -> list[dic
 
     state, pid = daemon_state(store)
     checks.append(check("Daemon process", "PASS" if state == "running" else "FAIL", f"{state}; PID {pid}" if pid else state, f'Run `continuum up --project "{store.project}"`.' if state != "running" else ""))
+    try:
+        try:
+            service_home = Path.home()
+        except RuntimeError:
+            service_home = Path(os.environ.get("USERPROFILE") or os.environ.get("HOME") or store.project)
+        service = ServiceManager(store, home=service_home).status()
+        checks.append(
+            check(
+                "Native service definition",
+                "PASS" if service["installed"] else "INFO",
+                str(service["path"]),
+                f'Run `continuum service install --project "{store.project}"`.' if not service["installed"] else "",
+            )
+        )
+    except ServiceError as error:
+        checks.append(check("Native service definition", "INFO", str(error)))
     if store.notes_dir:
         mirror_ok = store.notes_dir.exists()
         checks.append(check("Obsidian mirror path", "PASS" if mirror_ok else "FAIL", str(store.notes_dir), f'Run `continuum init --project "{store.project}" --vault "{store.vault_dir}"`.' if not mirror_ok else ""))

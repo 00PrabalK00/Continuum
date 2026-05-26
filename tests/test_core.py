@@ -144,6 +144,18 @@ class MemoryStoreTest(unittest.TestCase):
 
             self.assertEqual(store.semantic_search([1.0]), [])
 
+    def test_semantic_search_returns_event_attribution_and_task_weighting(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "app")
+            store.initialize(1000, 0.8)
+            store.store_embedding("M:12", "ollama", "embed", [1.0, 0.0], "authentication callback finding")
+            store.store_embedding("M:13", "ollama", "embed", [1.0, 0.0], "unrelated finding")
+
+            results = store.semantic_search([1.0, 0.0], task_hint="authentication")
+
+            self.assertEqual(results[0]["memory_id"], "M12")
+            self.assertEqual(results[0]["source"], "event:12")
+
 
 if __name__ == "__main__":
     unittest.main()
