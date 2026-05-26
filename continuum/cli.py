@@ -500,11 +500,11 @@ def memory_refresh(args: argparse.Namespace) -> int:
         source = f"{event['kind']}: {payload}"
         if not source.strip():
             continue
-        model, vector = manager.embed("ollama", source, args.model)
+        model, vector = manager.embed(args.provider, source, args.model)
         key = f"M:{event['id']}"
-        store.store_embedding(key, "ollama", model, vector, source)
+        store.store_embedding(key, args.provider, model, vector, source)
         stored += 1
-    print(f"Refreshed {stored} memory embedding(s) via ollama.")
+    print(f"Refreshed {stored} memory embedding(s) via {args.provider}.")
     return 0
 
 

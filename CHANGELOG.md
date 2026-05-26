@@ -12,6 +12,8 @@
   existing Windows startup path.
 - Added optional Docker Compose local vector-service profile without replacing
   host-local agent execution.
+- Pinned worktree test and review gates to the merge candidate commit and
+  rejected unsafe team configuration filenames in Control Center.
 
 ## 0.2.0 - Alpha
 

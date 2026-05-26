@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import os
+import re
 import subprocess
 import threading
 import webbrowser
@@ -149,6 +150,8 @@ class ControlCenter:
         return {"team": preset, "path": str(path)}
 
     def save_team(self, name: str, config: dict[str, Any]) -> dict[str, Any]:
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", name):
+            raise TeamError("Team name must contain only letters, numbers, underscores and hyphens.")
         manager = TeamManager(self.store)
         manager.validate(config)
         manager.directory.mkdir(parents=True, exist_ok=True)
@@ -247,7 +250,7 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
                 self.send_json(self.server.app.resume_context(str(payload.get("role", "coder")), str(payload.get("mode", "compact"))))
             else:
                 self.send_json({"error": "Unknown action endpoint."}, HTTPStatus.NOT_FOUND)
-        except (json.JSONDecodeError, OrchestrationError, ProviderError, TeamError, ValueError) as error:
+        except (json.JSONDecodeError, OSError, OrchestrationError, ProviderError, TeamError, ValueError) as error:
             self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
 
 

@@ -121,6 +121,28 @@ class ControlCenterTest(unittest.TestCase):
                 server.server_close()
                 thread.join(timeout=2)
 
+    def test_team_save_endpoint_rejects_path_traversal_name(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            app = ControlCenter(Path(temporary) / "project")
+            app.store.initialize(1000, 0.8)
+            server = ControlCenterServer(("127.0.0.1", 0), app)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/teams/save",
+                data=json.dumps({"name": "../outside", "config": {"agents": {}, "routing": {}}}).encode("utf-8"),
+                headers={"Content-Type": "application/json"}, method="POST",
+            )
+            try:
+                with self.assertRaises(urllib.error.HTTPError) as context:
+                    urllib.request.urlopen(request)
+                self.assertEqual(context.exception.code, 400)
+                self.assertFalse((app.store.state_dir / "outside.json").exists())
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
 
 if __name__ == "__main__":
     unittest.main()

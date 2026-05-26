@@ -51,6 +51,31 @@ class WorktreeManagerTest(unittest.TestCase):
         with self.assertRaisesRegex(WorktreeError, "review approval"):
             self.manager.merge(self.task["task_id"])
 
+    def test_merge_rejects_commit_added_after_recorded_gates(self):
+        record = self.manager.create(self.task["task_id"])
+        worktree = Path(record["path"])
+        self.manager.record_tests(self.task["task_id"], True, "tests pass")
+        self.manager.record_review(self.task["task_id"], True, "approved")
+        (worktree / "new.py").write_text("changed = True\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=worktree, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "-c", "user.name=Continuum Test", "-c", "user.email=test@example.invalid", "commit", "-m", "late change"],
+            cwd=worktree, capture_output=True, check=True,
+        )
+
+        with self.assertRaisesRegex(WorktreeError, "changed after"):
+            self.manager.merge(self.task["task_id"])
+
+    def test_merge_rejects_uncommitted_changes_after_recorded_gates(self):
+        record = self.manager.create(self.task["task_id"])
+        worktree = Path(record["path"])
+        self.manager.record_tests(self.task["task_id"], True, "tests pass")
+        self.manager.record_review(self.task["task_id"], True, "approved")
+        (worktree / "app.py").write_text("value = 3\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(WorktreeError, "uncommitted changes"):
+            self.manager.merge(self.task["task_id"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -47,7 +47,7 @@ class WorktreeManager:
         if task_ref.upper() in metadata:
             raise WorktreeError(f"Worktree already exists for {task_ref.upper()}.")
         self._git("-C", str(self.store.project), "rev-parse", "--is-inside-work-tree")
-        branch = f"continuum/{task_ref.upper().lower()}"
+        branch = f"continuum/{task_ref.lower()}"
         path = self.root / task_ref.upper()
         path.parent.mkdir(parents=True, exist_ok=True)
         self._git("-C", str(self.store.project), "worktree", "add", "-b", branch, str(path), "HEAD")
@@ -56,6 +56,7 @@ class WorktreeManager:
             "created_at": utc_now(), "status": "ACTIVE", "test_result": None,
             "completion_note": None, "rollback": f"git branch -D {branch}",
             "review_status": None, "review_note": None,
+            "test_sha": None, "review_sha": None,
         }
         metadata[task_ref.upper()] = record
         self._write(metadata)
@@ -87,6 +88,7 @@ class WorktreeManager:
         record = self._require(task_ref)
         record["test_result"] = "PASS" if passed else "FAIL"
         record["completion_note"] = note
+        record["test_sha"] = self._git("-C", str(record["path"]), "rev-parse", "HEAD")
         metadata[task_ref.upper()] = record
         self._write(metadata)
         self.store.event("worktree_tests", {"task_id": task_ref.upper(), "result": record["test_result"], "summary": note})
@@ -97,6 +99,7 @@ class WorktreeManager:
         record = self._require(task_ref)
         record["review_status"] = "APPROVED" if approved else "CHANGES_REQUESTED"
         record["review_note"] = note
+        record["review_sha"] = self._git("-C", str(record["path"]), "rev-parse", "HEAD")
         metadata[task_ref.upper()] = record
         self._write(metadata)
         self.store.event("worktree_review", {"task_id": task_ref.upper(), "result": record["review_status"], "summary": note})
@@ -113,6 +116,13 @@ class WorktreeManager:
             raise WorktreeError(
                 f"Cannot merge {task_ref.upper()} before review approval. Run `continuum worktree review {task_ref.upper()} --approve --note \"<review>\"`."
             )
+        head_sha = self._git("-C", str(record["path"]), "rev-parse", "HEAD")
+        if record.get("test_sha") != head_sha or record.get("review_sha") != head_sha:
+            raise WorktreeError(
+                f"Cannot merge {task_ref.upper()}: the worktree changed after its test or review gate. Record both gates again for commit {head_sha}."
+            )
+        if self._git("-C", str(record["path"]), "status", "--porcelain"):
+            raise WorktreeError(f"Cannot merge {task_ref.upper()}: the isolated worktree has uncommitted changes.")
         if self._git("-C", str(self.store.project), "status", "--porcelain"):
             raise WorktreeError("Main working tree is dirty. Commit or stash it before merging a task worktree.")
         self._git("-C", str(self.store.project), "merge", "--no-ff", record["branch"], "-m", f"Merge {task_ref.upper()} worktree")
