@@ -36,6 +36,7 @@ from .control_center import serve_control_center
 from .diagnostics import project_status, run_doctor
 from .external_sessions import ExternalSessionError, ExternalSessionManager
 from .terminal import TerminalUnavailable, run_terminal_process, terminal_backend
+from .adapters import terminal_adapter, terminal_adapter_capabilities
 
 AGENTS = ("claude", "gemini", "codex")
 
@@ -315,20 +316,26 @@ def run_interactive_agent(args: argparse.Namespace, resumed: bool = False, injec
     agent_args = list(args.agent_args)
     if agent_args and agent_args[0] == "--":
         agent_args.pop(0)
-    if injected_context:
-        agent_args = injected_resume_args(args.agent, agent_args, injected_context)
+    adapter = terminal_adapter(args.agent, store.project)
+    agent_args = adapter.prepare_args(agent_args, injected_context)
     session_id = dt.datetime.now().strftime("%Y%m%d-%H%M%S") + f"-{args.agent}-terminal"
     log_file = store.state_dir / "session_logs" / f"{session_id}.log"
     action = "resume" if resumed else "run"
     backend = terminal_backend()
     store.event(
         "agent_start",
-        {"summary": f"{action} {args.agent} interactive terminal", "session": session_id, "terminal": backend},
+        {
+            "summary": f"{action} {args.agent} interactive terminal",
+            "session": session_id,
+            "terminal": backend,
+            "adapter": adapter.name,
+        },
     )
     if resumed:
         print(f"Resume context: {store.state_dir / 'latest_handoff.md'}")
         print("Bounded Continuum context injected as the agent's initial prompt.")
     print(f"Interactive terminal backend: {backend}")
+    print(f"Interactive adapter: {adapter.name}")
     print(f"Recording output: {log_file}")
     tokens = 0
     triggered = False
@@ -344,6 +351,8 @@ def run_interactive_agent(args: argparse.Namespace, resumed: bool = False, injec
                 tokens += estimate_tokens(chunk)
                 tail.extend(chunk.splitlines(keepends=True))
                 tail = tail[-MAX_SESSION_EXCERPT_LINES:]
+                for event in adapter.feed(chunk):
+                    store.event("terminal_adapter_status", event.payload(args.agent, adapter.name))
                 if not triggered and tokens >= int(limit * threshold):
                     triggered = True
                     store.event("context_checkpoint", {"summary": f"Estimated tokens: {tokens}"})
@@ -368,11 +377,18 @@ def run_interactive_agent(args: argparse.Namespace, resumed: bool = False, injec
         "session": session_id,
         "agent": args.agent,
         "terminal": backend,
+        "adapter": adapter.name,
+        "adapter_phase": adapter.state.phase,
+        "approval_prompts": adapter.state.approval_prompts,
+        "input_prompts": adapter.state.input_prompts,
         "estimated_tokens": tokens,
         "checkpoint_triggered": triggered,
         "returncode": returncode,
     }
+    completed = adapter.finish(returncode)
+    usage["adapter_phase"] = adapter.state.phase
     write_text(store.state_dir / "token_usage.json", json.dumps(usage, indent=2) + "\n")
+    store.event("terminal_adapter_status", completed.payload(args.agent, adapter.name))
     store.event(
         "agent_exit",
         {"summary": f"{args.agent} interactive terminal exited with {returncode}", "returncode": returncode},
@@ -384,6 +400,16 @@ def run_interactive_agent(args: argparse.Namespace, resumed: bool = False, injec
     )
     store.write_handoff(*task)
     return returncode
+
+
+def adapters_list(args: argparse.Namespace) -> int:
+    for adapter in terminal_adapter_capabilities(Path(args.project)):
+        print(f"{adapter['agent']}: {adapter['adapter']}")
+        print(f"  Terminal: {adapter['terminal']}")
+        print(f"  Context: {adapter['context']}")
+        print(f"  Approval: {adapter['approval']}")
+        print(f"  Cancellation: {adapter['cancel']}")
+    return 0
 
 
 def run(args: argparse.Namespace) -> int:
@@ -933,6 +959,11 @@ def parser() -> argparse.ArgumentParser:
     detach_session = session_commands.add_parser("detach", parents=[common], help="Stop tracking one attached external session.")
     detach_session.add_argument("session_id")
     detach_session.set_defaults(func=session_detach)
+
+    adapters = commands.add_parser("adapters", help="Inspect supported interactive terminal adapter behavior.")
+    adapter_commands = adapters.add_subparsers(dest="adapter_command", required=True)
+    list_adapters = adapter_commands.add_parser("list", parents=[common], help="List interactive agent adapter capabilities.")
+    list_adapters.set_defaults(func=adapters_list)
 
     tasks = commands.add_parser("task", help="Manage routed work and exclusive file claims.")
     task_commands = tasks.add_subparsers(dest="task_command", required=True)

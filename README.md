@@ -99,12 +99,16 @@ Run an agent in a live interactive terminal for prompts, full-screen tools,
 interrupts and streamed input/output:
 
 ```bash
+continuum adapters list
 continuum run --interactive codex
 continuum resume --interactive claude compact
 ```
 
 On Windows, Python installs `pywinpty` with Continuum to provide the ConPTY
 backend. On macOS and Linux, Continuum uses the native PTY backend.
+Interactive sessions use dedicated Claude Code, Codex and Gemini CLI adapter
+profiles for startup, bounded context injection and visible status tracking.
+Adapters report approval prompts but never approve them automatically.
 
 Write an explicit handoff before switching agents:
 

@@ -234,7 +234,20 @@ class CliTest(unittest.TestCase):
                 self.assertEqual(main(["run", "--project", str(project), "--interactive", "codex"]), 0)
             usage = (project / ".continuum" / "token_usage.json").read_text(encoding="utf-8")
             self.assertIn('"terminal": "pty"', usage)
+            self.assertIn('"adapter": "codex_interactive"', usage)
+            self.assertIn('"adapter_phase": "EXITED"', usage)
             self.assertIn("Interactive terminal backend: pty", output.getvalue())
+            self.assertIn("Interactive adapter: codex_interactive", output.getvalue())
+
+    def test_adapters_list_describes_bounded_interactive_behavior(self):
+        output = StringIO()
+        with redirect_stdout(output):
+            self.assertEqual(main(["adapters", "list"]), 0)
+        rendered = output.getvalue()
+        self.assertIn("claude: claude_interactive", rendered)
+        self.assertIn("codex: codex_interactive", rendered)
+        self.assertIn("gemini: gemini_interactive", rendered)
+        self.assertIn("never auto-approves", rendered)
 
     def test_interactive_terminal_missing_backend_prints_specific_action(self):
         with tempfile.TemporaryDirectory() as temporary:
