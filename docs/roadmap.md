@@ -7,7 +7,7 @@ v0.1 proves Continuum can preserve context across agents.
 v0.2 proves Continuum can automatically orchestrate agents.
 ```
 
-## Implemented Through v0.2.2
+## Implemented Through v0.3.0
 
 - Local project initialization and compact Markdown handoffs
 - SQLite and JSONL event history
@@ -34,18 +34,21 @@ v0.2 proves Continuum can automatically orchestrate agents.
 - Optional Docker Compose vector-service profile
 - Interactive `continuum shell` control surface with color-coded targets,
   optional motion and project-scoped slash commands
+- Explicit live interactive agent sessions through `continuum run --interactive`
+  and `continuum resume --interactive`, backed by PTY on macOS/Linux and
+  `pywinpty` on Windows
 
 ## v0.2 Issues
 
 ### [#2 PTY-Aware Agent Wrappers](https://github.com/00PrabalK00/Continuum/issues/2)
 
-Create tested adapters for interactive Codex, Claude Code and Gemini CLI
-behavior on Windows, macOS and Linux.
+The cross-platform terminal base layer shipped in v0.3.0. Create dedicated
+adapters for interactive Codex, Claude Code and Gemini CLI behavior on
+Windows, macOS and Linux.
 
-The implementation must support live stdin/output, confirmation prompts,
-interrupts, terminal resize behavior and real PTY/ConPTY operation. The
-shipped interactive shell is a command console over current wrappers, not a
-substitute for these adapters.
+Remaining adapter work must normalize provider-specific prompts, approvals,
+cancellation and recovery above the live stdin/output, interrupt, resize and
+PTY/ConPTY primitives now available.
 
 ### External CLI Session Integration
 

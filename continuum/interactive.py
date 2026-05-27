@@ -83,7 +83,7 @@ class InteractiveShell:
     def banner(self) -> None:
         self.write(self.paint("Continuum Interactive Shell", BOLD))
         self.write(f"Project: {self.project}")
-        self.write("Type /help for commands. Agent sessions launched here use the current wrapped runner; PTY attach is not enabled.")
+        self.write("Type /help for commands. Use /terminal or /resume-terminal for live PTY/ConPTY agent sessions.")
         self.terminals()
 
     def execute(self, line: str) -> int:
@@ -153,12 +153,21 @@ class InteractiveShell:
         if command in {"run", "launch"}:
             agent, passthrough = self._agent_and_rest(rest)
             return ["run", *self.common(), agent, *passthrough]
+        if command in {"terminal", "pty"}:
+            agent, passthrough = self._agent_and_rest(rest)
+            return ["run", *self.common(), "--interactive", agent, *passthrough]
         if command in {"resume", "continue"}:
             agent, passthrough = self._agent_and_rest(rest)
             mode = "compact"
             if passthrough and passthrough[0] in {"compact", "normal", "deep"}:
                 mode, passthrough = passthrough[0], passthrough[1:]
             return ["resume", *self.common(), agent, mode, *passthrough]
+        if command in {"resume-terminal", "resume-pty"}:
+            agent, passthrough = self._agent_and_rest(rest)
+            mode = "compact"
+            if passthrough and passthrough[0] in {"compact", "normal", "deep"}:
+                mode, passthrough = passthrough[0], passthrough[1:]
+            return ["resume", *self.common(), "--interactive", agent, mode, *passthrough]
         if command == "memory":
             if rest and rest[0] in {"embed", "retrieve", "refresh"}:
                 return self.nested("memory", rest)
@@ -247,8 +256,10 @@ class InteractiveShell:
   /up | /down | /logs           Control or inspect the memory daemon.
   /handoff task | next step     Record a continuation checkpoint.
   /agent claude|codex|gemini   Choose the default agent terminal color/target.
-  /run [agent] [args]           Launch a currently supported wrapped session.
+  /run [agent] [args]           Launch a captured-output agent session.
+  /terminal [agent] [args]      Launch a live PTY/ConPTY agent terminal.
   /resume [agent] [mode]       Inject context and continue (compact/normal/deep).
+  /resume-terminal [agent]     Inject context into a live terminal session.
   /search words                 Exact local memory search.
   /memory words [--semantic]   Retrieve bounded memory for a query.
   /providers <subcommand>      Configure or test provider backends.
@@ -266,7 +277,8 @@ class InteractiveShell:
   /clear                       Redraw the shell.
   /quit                        Exit.
 
-This shell controls existing Continuum actions. It does not yet attach to
-external terminal sessions or provide PTY/ConPTY-backed interactive adapters."""
+This shell controls existing Continuum actions. Live terminal sessions must
+be launched through Continuum; attaching to externally launched sessions is
+not supported."""
         )
         return 0
