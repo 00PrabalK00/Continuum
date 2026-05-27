@@ -2,174 +2,63 @@
   <img src="continuum/ui/logo.svg" alt="Continuum logo" width="152">
 </p>
 
-<h1 align="center">Continuum</h1>
+# Continuum
 
-<p align="center"><strong>Continuum is a local coordination layer for AI coding teams.</strong></p>
+Local shared memory and controlled workflows for AI coding agents.
 
-It gives Claude Code, Codex, Gemini CLI, Ollama and OpenRouter shared memory,
-task ownership, file-claim safety and opt-in sequential team workflows.
+## Requirements
 
-```text
-Claude Code       Codex CLI       Gemini CLI
-      \               |               /
-       \              |              /
-        +-------- Continuum --------+
-                    |
-          .continuum local memory
-                    |
-         optional Obsidian notes
-```
+- Python 3.9 or newer.
+- Git for task worktrees.
+- One or more optional agent CLIs: `claude`, `codex`, `gemini`.
+- Optional: Ollama for local embeddings and summaries.
+- Optional: an OpenRouter API key for hosted model calls.
+- Optional: an Obsidian vault folder for readable mirrored handoffs.
 
-Continuum does not replace an agent. It is the shared memory and task-planning
-layer: it preserves what changed, assigns scoped work, rejects conflicting
-file claims and carries compact context to the next worker.
+## Install
 
-## Release Promise
-
-```text
-v0.1 proves Continuum can preserve context across agents.
-v0.2 proves Continuum can automatically orchestrate agents.
-```
-
-Version `0.2` adds opt-in sequential team execution over configured provider
-adapters. It does not claim unattended parallel agents or automatic detection
-of sessions launched outside Continuum.
-
-## Status
-
-This repository is a `v0.2.1` alpha focused on context continuity and safe,
-explicit sequential provider orchestration.
-
-Shipped in `v0.1`:
-
-- `continuum init` creates compact shared-memory guidance for supported agents.
-- `continuum daemon` watches local file changes and refreshes the handoff.
-- `continuum run` records an agent session and creates bounded notes.
-- `continuum resume` injects compact, normal or deep bounded context into a launched agent.
-- `continuum handoff` records the current task and exact next action.
-- `continuum status` reports daemon, storage, provider, task, claim and mirror state.
-- `continuum doctor` diagnoses installation and configured integrations with specific fixes.
-- `continuum search` searches recorded local event memory.
-- `continuum mcp serve` exposes progressive, budgeted memory tools to MCP-compatible agents.
-- `continuum task` creates routed tasks and exclusive file claims for controlled workers.
-- Ollama and OpenRouter model backends for text-only memory/reasoning calls.
-- `continuum context build` and `continuum message` expose bounded role packets and result messages.
-- `continuum memory retrieve --semantic` ranks locally stored embedding previews.
-- `Continuum Teams` JSON presets for planning and opt-in sequential `--execute` workflows.
-- **Continuum Control Center**, an explicit local control surface for teams, provider checks and workflow actions.
-- Optional Obsidian mirroring with one small folder per project.
-- Native service definitions for Windows, macOS and Linux login startup.
-- Task-bound Git worktrees with test/review merge gates.
-- Optional Docker Compose vector-service profile.
-
-Not implemented yet:
-
-- Fully interactive PTY-aware wrappers across operating systems.
-- Detection or injection into CLI sessions launched outside Continuum.
-- Full PTY-aware agent terminal adapters.
-- Automatic parallel team scheduling across worktrees.
-
-## Installation Strategy
-
-The product direction is:
-
-```text
-npm front door -> host-local daemon -> MCP tools -> optional Obsidian mirror
-                                      -> optional Docker services later
-```
-
-Docker is not required for normal use because the daemon must see local files
-and run local agent CLIs. The initial npm package bundles the Python core and
-requires Python 3.9 or newer on the host. A native packaged daemon is a later
-distribution improvement.
-
-## Try From Source
-
-Requires Python 3.9 or newer.
+From the repository:
 
 ```bash
-git clone <your-continuum-repository-url>
-cd continuum
+git clone https://github.com/00PrabalK00/Continuum.git
+cd Continuum
 python -m pip install -e .
-```
-
-Or exercise the npm front door locally:
-
-```bash
-npm link
 continuum --version
 ```
 
-The intended npm install experience is:
+Run through the npm front door from GitHub without installing globally:
 
 ```bash
-npx -y continuum-agent-memory@latest init
-npx -y continuum-agent-memory@latest up
-npx -y continuum-agent-memory@latest ui --open
+npx -y github:00PrabalK00/Continuum init
+npx -y github:00PrabalK00/Continuum doctor
+npx -y github:00PrabalK00/Continuum up
+npx -y github:00PrabalK00/Continuum ui --open
 ```
 
-Until the npm publication issue is complete, run from GitHub without a global install:
+## Initialize A Project
+
+Run these commands inside the project whose context you want Continuum to
+preserve:
 
 ```bash
-npx -y github:00PrabalK00/Continuum --version
-```
-
-GitHub Actions now runs install smoke coverage for Windows, macOS and Linux.
-The public milestone is tracked in [issue #8](https://github.com/00PrabalK00/Continuum/issues/8):
-fresh-machine setup in under two minutes.
-
-## Context Continuity Demo
-
-```bash
-cd examples/multi-agent-handoff
 continuum init
+continuum doctor
 continuum up
-continuum run claude
-continuum handoff --task "Add greeting validation" --next-step "Inspect Claude's edit and continue implementation."
-continuum resume gemini compact
-continuum handoff --task "Add greeting validation" --next-step "Run tests and finish the patch."
-continuum resume codex compact
-continuum ui --open
+continuum status
 ```
 
-This is the continuity proof: Claude starts work, Gemini and Codex receive compact
-handoffs instead of a full transcript, and Control Center shows the local
-memory and run state. See [docs/demo.md](docs/demo.md) for a recording script.
-
-Team planning is deterministic and does not execute agents unless explicitly requested:
-
-```bash
-continuum providers add codex
-continuum route explain "Fix failing auth test"
-continuum team run default_dev_team "Fix failing auth test"
-```
-
-`team run` creates planned controlled tasks by default. Execution is explicit:
-
-```bash
-continuum providers add gemini_cli
-continuum providers add claude_code
-continuum providers add codex
-continuum providers add ollama
-continuum providers add openrouter
-continuum team run default_dev_team "Fix failing auth test" --execute --allow-file src/auth.ts --allow-file tests/auth.test.ts
-```
-
-Model steps are text-only. Writing steps run sequentially and must stay inside
-their explicitly claimed files.
-
-## Quickstart From Source
-
-Inside a project:
+Mirror compact notes into Obsidian:
 
 ```bash
 continuum init --vault "/path/to/your/Obsidian Vault/Agents"
-continuum team init default_dev_team
-continuum doctor
-continuum up
 ```
 
-In another terminal, run an installed agent:
+Continuum creates project-local state in `.continuum/`. Keep that directory
+out of source control.
+
+## Record And Resume Agent Work
+
+Run an agent through Continuum:
 
 ```bash
 continuum run codex
@@ -177,112 +66,161 @@ continuum run claude
 continuum run gemini
 ```
 
-Configure model backends and inspect routing:
+Write an explicit handoff before switching agents:
 
 ```bash
+continuum handoff \
+  --task "Fix authentication retry behavior" \
+  --next-step "Run the failing API test and fix the first assertion."
+```
+
+Resume with bounded context injected into another agent:
+
+```bash
+continuum resume gemini compact
+continuum resume codex normal
+```
+
+Resume modes are `compact`, `normal` and `deep`. Prefer `compact` unless a
+specific debugging task needs more retrieved context.
+
+## Inspect State And Memory
+
+```bash
+continuum status
+continuum doctor
+continuum search "authentication callback"
+continuum memory retrieve "authentication callback" --semantic
+continuum memory refresh ollama
+continuum logs
+```
+
+Semantic memory commands require a configured and running Ollama embedding
+model. Exact local search remains available without it.
+
+## Configure Providers
+
+List and test configured providers:
+
+```bash
+continuum providers list
 continuum providers add ollama
 continuum providers test ollama
 continuum providers add openrouter
 continuum providers test openrouter
-continuum model ask ollama "Summarize the latest handoff in three bullets."
-continuum route explain "fix failing auth test"
-continuum ui --open
 ```
 
-Before switching agents, record an explicit handoff:
+Set up Ollama:
 
 ```bash
-continuum handoff \
-  --task "Implement authentication retry behavior" \
-  --next-step "Run the failing API test and fix the first assertion."
-
-continuum resume gemini
+ollama pull llama3.1:8b
+ollama pull nomic-embed-text
+ollama serve
+continuum providers test ollama
 ```
 
-On Windows, start the daemon automatically after sign-in:
-
-```powershell
-continuum autostart install --vault "C:\Users\me\Documents\Obsidian Vault\Agents"
-```
-
-## What It Writes
-
-Each project stores raw local runtime data in:
-
-```text
-.continuum/
-  events.jsonl
-  events.sqlite3
-  current.md
-  current_state.md
-  latest_handoff.md
-  session_logs/
-```
-
-When an Obsidian folder is configured, only compact notes are mirrored:
-
-```text
-Agents/
-  Memory Index.md
-  Projects/
-    my-project-a1b2c3d4/
-      Current State.md
-      Latest Handoff.md
-      Sessions/
-```
-
-Agents start from `current.md`, not full logs. They retrieve current state,
-handoffs, memories or raw logs only when required.
-This prevents project history from consuming context unnecessarily.
-
-## Commands
-
-| Command | Purpose |
-| --- | --- |
-| `continuum init` | Initialize memory and agent instruction files |
-| `continuum up` | Start the project daemon in the background |
-| `continuum down` | Stop the project daemon |
-| `continuum logs` | Read background daemon output |
-| `continuum daemon` | Run the watcher in the foreground |
-| `continuum run codex` | Run an agent through session recording |
-| `continuum resume gemini compact` | Continue with the smallest context budget |
-| `continuum handoff` | Write current task and next action explicitly |
-| `continuum status` | Report daemon, storage, MCP, provider, task, claim and mirror state |
-| `continuum doctor` | Run deterministic checks with specific remediation actions |
-| `continuum search "retry"` | Search local event history |
-| `continuum mcp serve` | Serve project memory tools over MCP stdio |
-| `continuum task create "Fix auth"` | Create a controlled task |
-| `continuum task claim T0001 codex src/auth.ts` | Exclusively claim a file |
-| `continuum task complete T0001 --summary "Fixed"` | Complete work and release claims |
-| `continuum providers list` | List CLI agents and model backends |
-| `continuum providers test ollama` | Check a local Ollama endpoint |
-| `continuum model ask openrouter "Review plan"` | Make a text-only model call |
-| `continuum memory embed ollama` | Embed compact current context locally |
-| `continuum memory refresh ollama` | Refresh recent event embeddings locally |
-| `continuum memory retrieve "auth" --semantic` | Rank local embedded memory with exact fallback |
-| `continuum context build coder --mode compact` | Produce bounded role-specific context |
-| `continuum message send explorer coder "auth route is relevant"` | Store a bounded role result |
-| `continuum team init default_dev_team` | Create an editable JSON starter team |
-| `continuum team run default_dev_team "Fix auth"` | Create a routed task plan |
-| `continuum team run default_dev_team "Fix auth" --execute --allow-file src/auth.ts` | Run an explicitly authorized sequential workflow |
-| `continuum worktree create T0001` | Create isolated Git work for a task |
-| `continuum worktree test-result T0001 --pass --note "tests passed"` | Record the merge test gate |
-| `continuum worktree review T0001 --approve --note "reviewed"` | Record the merge review gate |
-| `continuum service install` | Write native login startup configuration |
-| `continuum route explain "Fix auth"` | Explain selected team workflow |
-| `continuum ui --open` | Open the local Control Center web console |
-| `continuum autostart install` | Compatibility alias for native service setup |
-
-For commands that pass arguments to an agent, put Continuum options before the
-agent name:
+Set up OpenRouter:
 
 ```bash
-continuum run --project . gemini -- --approval-mode plan -p "Review this diff."
+export OPENROUTER_API_KEY=your_key_here
+continuum providers add openrouter
+continuum providers test openrouter
+continuum model ask openrouter "Review the current handoff."
 ```
 
-## MCP
+Ollama and OpenRouter are model providers. They cannot claim project files as
+editing agents.
 
-Continuum exposes project-scoped progressive retrieval tools:
+## Plan Or Run A Team
+
+Create an editable starter team:
+
+```bash
+continuum team init default_dev_team
+continuum team show default_dev_team
+continuum route explain "Fix failing auth test"
+```
+
+Create controlled tasks without launching providers:
+
+```bash
+continuum team run default_dev_team "Fix failing auth test"
+```
+
+Run enabled providers sequentially with explicit writable file paths:
+
+```bash
+continuum team run default_dev_team "Fix failing auth test" \
+  --execute \
+  --allow-file src/auth.ts \
+  --allow-file tests/auth.test.ts
+```
+
+Starter presets:
+
+```text
+default_dev_team
+local_only
+review_heavy
+fast_bugfix
+research_then_code
+```
+
+## Manage Tasks And File Claims
+
+```bash
+continuum task create "Fix auth callback" --mode sequential
+continuum task assign T0001 codex
+continuum task claim T0001 codex src/auth/callback.ts src/auth/session.ts
+continuum task complete T0001 --summary "Validation fixed; tests pass."
+```
+
+Only one active task can claim a file at a time. Completing a task releases
+its claims.
+
+## Use Git Worktrees
+
+Create isolated work for a task:
+
+```bash
+continuum worktree create T0001
+continuum worktree list
+continuum worktree diff T0001
+```
+
+Before merging, record passing tests and approval for the exact worktree
+commit:
+
+```bash
+continuum worktree test-result T0001 --pass --note "python -m unittest"
+continuum worktree review T0001 --approve --note "reviewed"
+continuum worktree merge T0001
+```
+
+Discard an isolated task branch:
+
+```bash
+continuum worktree discard T0001
+```
+
+## Connect MCP Agents
+
+Start the project-scoped MCP stdio server:
+
+```bash
+continuum mcp serve --project /path/to/my-project
+```
+
+Equivalent MCP configuration:
+
+```json
+{
+  "command": "continuum",
+  "args": ["mcp", "serve", "--project", "/path/to/my-project"]
+}
+```
+
+Available memory and task tools include:
 
 ```text
 get_startup_context
@@ -301,198 +239,86 @@ claim_task_files
 complete_task
 ```
 
-Configure an MCP-compatible agent with a stdio server command equivalent to:
-
-```json
-{
-  "command": "continuum",
-  "args": ["mcp", "serve", "--project", "/path/to/my-project"]
-}
-```
-
-Each server is scoped to one project, so an agent does not receive unrelated
-project history by default.
-
-## Context Budgets
-
-Automatic context is deliberately small:
-
-| Layer | Default budget |
-| --- | ---: |
-| Startup `current.md` | 800 tokens |
-| Latest handoff | 1,200 tokens |
-| Default retrieved memory response | 2,000 tokens |
-| Raw log response | 1,000 tokens |
-| Deep resume cap | 6,000 tokens |
-
-The SQLite event history can grow; automatic prompt context does not grow with
-it. The compaction algorithm is intentionally simple and stable:
-
-1. Store full event history locally, outside automatic prompts.
-2. Write delta-based `current.md` and `latest_handoff.md` within fixed budgets.
-3. Inject compact state into resumed sessions and orchestrated steps while reporting estimated token count.
-4. Retrieve exact event matches first; request local semantic ranking only for a targeted query.
-5. Expand raw logs or individual memory events only on demand.
-
-This bounds repeated input cost without relying on an unverified summarization
-model. Semantic ranking over stored Ollama embeddings is opt-in and returns
-compact previews rather than raw logs.
-
-## Compact Speech
-
-The generated agent guidance asks agents to keep routine updates factual and
-brief: completed action, next action, blocker. This reduces output overhead;
-the context-budget and retrieval model is what prevents growing input cost.
-
-## Controlled Tasks
-
-Continuum models workers as scoped executors rather than agents talking to
-each other freely:
-
-```bash
-continuum task create "Fix auth callback" --mode sequential
-continuum task assign T0001 codex
-continuum task claim T0001 codex src/auth/callback.ts src/auth/session.ts
-continuum task complete T0001 --summary "Validation fixed; tests pass."
-```
-
-Task status is structured (`CREATED`, `ASSIGNED`, `RUNNING`, `REVIEWING`,
-`TESTING`, `DONE`, `BLOCKED`, `FAILED`, `NEEDS_USER`). A claimed file cannot
-be claimed by a different active task; finalizing a task releases its claims.
-
-Sequential Teams execution and stored-embedding ranking are explicitly opt-in.
-Task worktree creation and gated merge are shipped; automatic parallel team
-scheduling, PTY-backed wrappers and external session detection are not.
-
-## Providers
-
-Continuum has two provider classes:
-
-| Type | Providers | Permission boundary |
-| --- | --- | --- |
-| Agent workers | Claude Code, Gemini CLI, Codex | May edit/run commands through their adapters |
-| Model backends | Ollama, OpenRouter | Text/embedding work only by default |
-
-`Ollama` uses its local OpenAI-compatible endpoints for chat and embeddings.
-It is intended for private summaries, compression and embeddings:
-
-```bash
-ollama pull llama3.1:8b
-ollama pull nomic-embed-text
-continuum providers add ollama
-continuum providers test ollama
-continuum memory embed ollama
-continuum memory retrieve "authentication callback" --semantic
-```
-
-`OpenRouter` uses its OpenAI-compatible hosted API for optional planning,
-review and fallback:
-
-```bash
-export OPENROUTER_API_KEY=your_key_here
-continuum providers add openrouter
-continuum providers test openrouter
-continuum model ask openrouter "Review the current handoff."
-```
-
-Provider configuration lives in `.continuum/providers.json`. `continuum init`
-writes disabled starter entries only; enable each provider explicitly with
-`continuum providers add <provider>`.
-
-## Continuum Teams
-
-**Configure your own AI engineering team.**
-
-```bash
-continuum team init default_dev_team
-continuum team show default_dev_team
-continuum team run default_dev_team "Fix login crash with tests"
-```
-
-Presets are editable starter configurations, created only when requested:
-
-```text
-default_dev_team
-local_only
-review_heavy
-fast_bugfix
-research_then_code
-```
-
-The default development starter routes a bug fix as:
-
-```text
-Gemini exploration -> OpenRouter reasoning -> Claude coding -> Codex tests -> Ollama memory
-```
-
-Team definitions are JSON files under `.continuum/teams/`. Continuum does not
-select a team during `init`. `team run` validates permissions and creates
-planned controlled tasks by default. `team run --execute` invokes enabled
-providers sequentially with bounded context packets. Model roles cannot claim
-files, and writing steps require explicit `--allow-file` paths.
-
-## Continuum Control Center
-
-Run a local UI against the current project:
+## Open Control Center
 
 ```bash
 continuum ui --project . --open
 ```
 
-The Control Center is served only on `127.0.0.1` by default. Commands remain
-the canonical interface, while the UI exposes explicit audited actions. It shows:
+The local UI displays current state and exposes explicit actions for team
+editing, provider tests, workflow planning/execution and resume context.
+Commands remain the primary interface.
 
-- Overview with daemon state, project, team, providers and latest handoff.
-- Projects with Git/memory/Obsidian paths.
-- Teams with configured roles and terminal command references.
-- Providers with configured status and terminal health-check references.
-- Memory with compact startup state and exact event search.
-- Runs and Handoffs backed by structured tasks and bounded Markdown.
-- Settings showing local storage and context budgets.
+## Start At Sign-In
 
-It can create/edit teams, test providers, plan or explicitly execute a
-workflow, and build compact resume context. It is intentionally not a
-transcript dump or decorative analytics dashboard.
-Raw logs remain behind deliberate retrieval paths.
+```bash
+continuum service install
+continuum service status
+continuum service remove
+```
 
-## Safety And Privacy
+On Windows, the compatibility alias is also available:
 
-Continuum is local-first. Files, SQLite events and optional Obsidian notes stay
-on your computer. Session logging may contain prompts, responses, command
-output or secrets printed by an agent. Keep `.continuum/` out of Git and
-review notes before publishing them.
+```powershell
+continuum autostart install --vault "C:\Users\me\Documents\Obsidian Vault\Agents"
+```
 
-Model providers (`ollama`, `openrouter`) cannot be assigned as file editors by
-team validation. Provider keys are read from environment variables and are not
-written to events, notes or Obsidian.
+## Optional Docker Service
 
-## Current Wrapper Boundary
+Continuum runs on the host. The Docker Compose file is only for its optional
+vector-service profile:
 
-`continuum run` captures subprocess output and estimates checkpoint usage from
-captured text. Provider CLIs do not expose uniform exact context usage, so the
-80 percent threshold is an estimate. Some full-screen interactive agent modes
-also require future PTY-specific adapters; use explicit `continuum handoff`
-checkpoints for important work.
+```bash
+docker compose --profile vector up -d
+```
+
+## Stored Files
+
+Project-local state:
+
+```text
+.continuum/
+  events.jsonl
+  events.sqlite3
+  current.md
+  current_state.md
+  latest_handoff.md
+  session_logs/
+```
+
+Optional Obsidian mirror:
+
+```text
+Agents/
+  Projects/
+    my-project-a1b2c3d4/
+      Current State.md
+      Latest Handoff.md
+      Sessions/
+```
+
+## Security Notes
+
+- Keep `.continuum/` out of Git.
+- Do not publish session logs without reviewing them for secrets.
+- Provider keys are read from environment variables; do not put keys in notes.
+- Writing team steps require explicit file permissions.
+- Use `continuum handoff` before ending important interactive sessions.
 
 ## Documentation
 
-- [Architecture](docs/architecture.md)
-- [Quickstart](docs/quickstart.md)
 - [Getting Started](docs/getting-started.md)
-- [v0.1 Demo Script](docs/demo.md)
-- [Tasks and Claims](docs/tasks-and-claims.md)
-- [Memory Model](docs/memory-model.md)
-- [Troubleshooting](docs/troubleshooting.md)
-- [MCP Integration](docs/mcp.md)
+- [Quickstart](docs/quickstart.md)
 - [MCP Setup](docs/mcp-setup.md)
 - [Providers](docs/providers.md)
 - [Teams](docs/teams.md)
-- [Control Center](docs/control-center.md)
+- [Tasks And Claims](docs/tasks-and-claims.md)
 - [Task Worktrees](docs/worktrees.md)
 - [Native Services](docs/services.md)
 - [Optional Docker Mode](docs/docker.md)
-- [Roadmap](docs/roadmap.md)
-- [Contributing](CONTRIBUTING.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Release Notes](docs/releases/README.md)
+- [Changelog](CHANGELOG.md)
 
 ## License
 
