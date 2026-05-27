@@ -82,9 +82,8 @@ project:
 ```
 
 Agent targets have distinct terminal colors in the shell. Color and short
-action animations can be disabled per session. `/run` and `/resume` use the
-current wrapped-session runner; interactive PTY/ConPTY attachment is not yet
-available.
+action animations can be disabled per session. Use `/terminal` or
+`/resume-terminal` for live PTY/ConPTY sessions.
 
 ## Record And Resume Agent Work
 
@@ -95,6 +94,17 @@ continuum run codex
 continuum run claude
 continuum run gemini
 ```
+
+Run an agent in a live interactive terminal for prompts, full-screen tools,
+interrupts and streamed input/output:
+
+```bash
+continuum run --interactive codex
+continuum resume --interactive claude compact
+```
+
+On Windows, Python installs `pywinpty` with Continuum to provide the ConPTY
+backend. On macOS and Linux, Continuum uses the native PTY backend.
 
 Write an explicit handoff before switching agents:
 

@@ -42,7 +42,9 @@ Change defaults for the current console:
 /logs
 /handoff <current task> | <next exact step>
 /run [claude|codex|gemini] [agent arguments]
+/terminal [claude|codex|gemini] [agent arguments]
 /resume [claude|codex|gemini] [compact|normal|deep] [agent arguments]
+/resume-terminal [claude|codex|gemini] [compact|normal|deep] [agent arguments]
 /search <query>
 /memory <query> [--semantic]
 /providers <list|add|test> ...
@@ -62,10 +64,17 @@ Change defaults for the current console:
 `/mcp` prints the dedicated MCP server command because an MCP stdio server
 should not take over the interactive console process.
 
-## Current Terminal Boundary
+## Live Terminal Sessions
 
-`/run` and `/resume` invoke Continuum's current captured-output session
-wrapper. The interactive shell itself does not provide PTY/ConPTY-backed
-terminal emulation, attach to externally launched CLI sessions or
-automatically schedule parallel agent worktrees. Those require agent-specific
-and operating-system-specific terminal adapters.
+`/run` and `/resume` retain captured-output behavior. Use `/terminal` and
+`/resume-terminal` to launch an agent through a real terminal:
+
+```text
+/terminal claude
+/resume-terminal codex compact
+```
+
+The terminal backend is native PTY on macOS/Linux and `pywinpty` on Windows.
+Continuum records the streamed terminal transcript and preserves checkpoint
+handoff behavior. It does not attach to externally launched CLI sessions or
+automatically schedule parallel agent worktrees.

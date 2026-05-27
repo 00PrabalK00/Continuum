@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0 - Alpha
+
+- Added real interactive `run` and `resume` sessions backed by PTY on
+  macOS/Linux and `pywinpty` on Windows.
+- Added `/terminal` and `/resume-terminal` slash routes while preserving
+  captured-output session commands.
+- Preserved session logging, token checkpoint estimation and compact handoff
+  generation for interactive sessions.
+
 ## 0.2.3 - Alpha
 
 - Replaced the prior SVG mark with the supplied navy-and-teal transparent PNG

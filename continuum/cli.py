@@ -34,6 +34,7 @@ from .teams import PRESETS, TeamError, TeamManager
 from .worktrees import WorktreeError, WorktreeManager
 from .control_center import serve_control_center
 from .diagnostics import project_status, run_doctor
+from .terminal import TerminalUnavailable, run_terminal_process, terminal_backend
 
 AGENTS = ("claude", "gemini", "codex")
 
@@ -213,7 +214,10 @@ def injected_resume_args(agent: str, passthrough: list[str], prompt: str) -> lis
 def run_agent(args: argparse.Namespace, resumed: bool = False, injected_context: str | None = None) -> int:
     store = store_from(args)
     if not store.config_file.exists():
-        store.initialize(args.context_limit, args.threshold)
+        store.initialize(
+            args.context_limit or DEFAULT_CONTEXT_LIMIT,
+            args.threshold if args.threshold is not None else DEFAULT_THRESHOLD,
+        )
     config = store.read_config()
     limit = args.context_limit or int(config.get("context_limit", DEFAULT_CONTEXT_LIMIT))
     threshold = args.threshold if args.threshold is not None else float(
@@ -286,8 +290,94 @@ def run_agent(args: argparse.Namespace, resumed: bool = False, injected_context:
     return returncode
 
 
+def run_interactive_agent(args: argparse.Namespace, resumed: bool = False, injected_context: str | None = None) -> int:
+    store = store_from(args)
+    if not store.config_file.exists():
+        store.initialize(
+            args.context_limit or DEFAULT_CONTEXT_LIMIT,
+            args.threshold if args.threshold is not None else DEFAULT_THRESHOLD,
+        )
+    config = store.read_config()
+    limit = args.context_limit or int(config.get("context_limit", DEFAULT_CONTEXT_LIMIT))
+    threshold = args.threshold if args.threshold is not None else float(
+        config.get("checkpoint_threshold", DEFAULT_THRESHOLD)
+    )
+    agent_args = list(args.agent_args)
+    if agent_args and agent_args[0] == "--":
+        agent_args.pop(0)
+    if injected_context:
+        agent_args = injected_resume_args(args.agent, agent_args, injected_context)
+    session_id = dt.datetime.now().strftime("%Y%m%d-%H%M%S") + f"-{args.agent}-terminal"
+    log_file = store.state_dir / "session_logs" / f"{session_id}.log"
+    action = "resume" if resumed else "run"
+    backend = terminal_backend()
+    store.event(
+        "agent_start",
+        {"summary": f"{action} {args.agent} interactive terminal", "session": session_id, "terminal": backend},
+    )
+    if resumed:
+        print(f"Resume context: {store.state_dir / 'latest_handoff.md'}")
+        print("Bounded Continuum context injected as the agent's initial prompt.")
+    print(f"Interactive terminal backend: {backend}")
+    print(f"Recording output: {log_file}")
+    tokens = 0
+    triggered = False
+    tail: list[str] = []
+    try:
+        command = agent_command(args.agent, agent_args)
+        with log_file.open("w", encoding="utf-8") as output:
+            def capture(chunk: str) -> None:
+                nonlocal tokens, triggered, tail
+                print(chunk, end="", flush=True)
+                output.write(chunk)
+                output.flush()
+                tokens += estimate_tokens(chunk)
+                tail.extend(chunk.splitlines(keepends=True))
+                tail = tail[-MAX_SESSION_EXCERPT_LINES:]
+                if not triggered and tokens >= int(limit * threshold):
+                    triggered = True
+                    store.event("context_checkpoint", {"summary": f"Estimated tokens: {tokens}"})
+                    store.write_handoff(
+                        f"`{args.agent}` reached its estimated context checkpoint in an interactive terminal.",
+                        f"Resume with another agent and inspect `{log_file.name}` if needed.",
+                    )
+
+            returncode = run_terminal_process(
+                command,
+                cwd=store.project,
+                env=os.environ.copy(),
+                on_output=capture,
+                input_stream=sys.stdin,
+            )
+    except (OSError, TerminalUnavailable) as error:
+        store.event("error", {"summary": str(error), "returncode": 1})
+        store.write_handoff("Interactive agent terminal failed to launch.", "Apply the reported fix and rerun the agent.")
+        print(str(error), file=sys.stderr)
+        return 1
+    usage = {
+        "session": session_id,
+        "agent": args.agent,
+        "terminal": backend,
+        "estimated_tokens": tokens,
+        "checkpoint_triggered": triggered,
+        "returncode": returncode,
+    }
+    write_text(store.state_dir / "token_usage.json", json.dumps(usage, indent=2) + "\n")
+    store.event(
+        "agent_exit",
+        {"summary": f"{args.agent} interactive terminal exited with {returncode}", "returncode": returncode},
+    )
+    store.write_session_note(session_id, args.agent, returncode, tokens, tail)
+    task = store.latest_task() or (
+        f"Interactive `{args.agent}` session `{session_id}` completed.",
+        "Review the terminal output and record the next action.",
+    )
+    store.write_handoff(*task)
+    return returncode
+
+
 def run(args: argparse.Namespace) -> int:
-    return run_agent(args)
+    return run_interactive_agent(args) if args.interactive else run_agent(args)
 
 
 def resume(args: argparse.Namespace) -> int:
@@ -305,7 +395,11 @@ def resume(args: argparse.Namespace) -> int:
         + context
     )
     store.event("context_injected", {"agent": args.agent, "mode": args.mode, "summary": f"Injected {estimate_tokens(prompt)} estimated tokens."})
-    return run_agent(args, resumed=True, injected_context=prompt)
+    return (
+        run_interactive_agent(args, resumed=True, injected_context=prompt)
+        if args.interactive
+        else run_agent(args, resumed=True, injected_context=prompt)
+    )
 
 
 def status(args: argparse.Namespace) -> int:
@@ -714,6 +808,13 @@ def parser() -> argparse.ArgumentParser:
             command.add_argument("mode", choices=["compact", "normal", "deep"], nargs="?", default="compact")
         command.add_argument("--context-limit", type=int)
         command.add_argument("--threshold", type=float)
+        command.add_argument(
+            "--interactive",
+            "--pty",
+            dest="interactive",
+            action="store_true",
+            help="Run the agent in a real interactive PTY/ConPTY terminal.",
+        )
         command.add_argument("agent_args", nargs=argparse.REMAINDER)
         command.set_defaults(func=handler)
 

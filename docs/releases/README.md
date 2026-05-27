@@ -2,6 +2,7 @@
 
 | Version | Notes |
 | --- | --- |
+| `v0.3.0` | [Live interactive terminal foundation](v0.3.0.md) |
 | `v0.2.3` | [Transparent logo refresh](v0.2.3.md) |
 | `v0.2.2` | [Interactive CLI surface](v0.2.2.md) |
 | `v0.2.1` | [Issue acceptance and safety hardening](v0.2.1.md) |

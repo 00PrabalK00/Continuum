@@ -2,7 +2,7 @@ import tempfile
 import time
 import unittest
 import argparse
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
@@ -220,6 +220,42 @@ class CliTest(unittest.TestCase):
             from continuum.core import MemoryStore
 
             self.assertTrue(MemoryStore(project).semantic_search([1.0, 0.0])[0]["memory_id"].startswith("M"))
+
+    def test_interactive_run_records_terminal_session(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            output = StringIO()
+            with (
+                patch("continuum.cli.agent_command", return_value=["agent"]),
+                patch("continuum.cli.terminal_backend", return_value="pty"),
+                patch("continuum.cli.run_terminal_process", side_effect=lambda *args, **kwargs: kwargs["on_output"]("ready\r\n") or 0),
+                redirect_stdout(output),
+            ):
+                self.assertEqual(main(["run", "--project", str(project), "--interactive", "codex"]), 0)
+            usage = (project / ".continuum" / "token_usage.json").read_text(encoding="utf-8")
+            self.assertIn('"terminal": "pty"', usage)
+            self.assertIn("Interactive terminal backend: pty", output.getvalue())
+
+    def test_interactive_terminal_missing_backend_prints_specific_action(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            errors = StringIO()
+            from continuum.terminal import TerminalUnavailable
+
+            with (
+                patch("continuum.cli.agent_command", return_value=["agent"]),
+                patch("continuum.cli.terminal_backend", return_value="unavailable"),
+                patch(
+                    "continuum.cli.run_terminal_process",
+                    side_effect=TerminalUnavailable(
+                        "Interactive terminal mode on Windows requires pywinpty. "
+                        "Run `py -m pip install pywinpty`, then retry with `--interactive`."
+                    ),
+                ),
+                redirect_stderr(errors),
+            ):
+                self.assertEqual(main(["run", "--project", str(project), "--interactive", "codex"]), 1)
+            self.assertIn("py -m pip install pywinpty", errors.getvalue())
 
 
 if __name__ == "__main__":

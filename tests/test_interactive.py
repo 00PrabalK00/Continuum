@@ -29,6 +29,18 @@ class InteractiveShellTest(unittest.TestCase):
             self.assertEqual(calls[0], ["resume", "--project", str(Path(temporary).resolve()), "gemini", "normal"])
             self.assertIn("\033[34mgemini", shell.prompt())
 
+    def test_terminal_routes_to_interactive_pty_modes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            calls = []
+            shell = InteractiveShell(Path(temporary), None, dispatch=lambda argv: calls.append(argv) or 0)
+
+            self.assertEqual(shell.execute("/terminal codex --model strong"), 0)
+            self.assertEqual(shell.execute("/resume-terminal gemini normal"), 0)
+
+            project = str(Path(temporary).resolve())
+            self.assertEqual(calls[0], ["run", "--project", project, "--interactive", "codex", "--model", "strong"])
+            self.assertEqual(calls[1], ["resume", "--project", project, "--interactive", "gemini", "normal"])
+
     def test_slash_commands_scope_project_and_preserve_semantic_flag(self):
         with tempfile.TemporaryDirectory() as temporary:
             calls = []
