@@ -198,6 +198,8 @@ class InteractiveShell:
         if command == "mcp":
             self.write(f"Run in a dedicated terminal: continuum mcp serve --project \"{self.project}\"")
             return []
+        if command == "adapters":
+            return ["adapters", "list", *self.common()]
         return None
 
     def _agent_and_rest(self, values: list[str]) -> tuple[str, list[str]]:
@@ -275,13 +277,14 @@ class InteractiveShell:
   /ui                           Open Control Center (occupies this shell).
   /mcp                          Print the MCP server launch command.
   /terminals                    Show color-coded terminal/provider options.
+  /adapters                     Show interactive Claude/Codex/Gemini adapter behavior.
   /color on|off|auto           Toggle ANSI color for this shell.
   /motion on|off|auto          Toggle short action animations for this shell.
   /clear                       Redraw the shell.
   /quit                        Exit.
 
-This shell controls existing Continuum actions. Live terminal sessions must
-be launched through Continuum; attaching to externally launched sessions is
-not supported."""
+This shell controls existing Continuum actions. Full live terminal capture
+requires a session launched through Continuum. Existing sessions can be
+bridged cooperatively with `continuum session attach` and bounded context."""
         )
         return 0

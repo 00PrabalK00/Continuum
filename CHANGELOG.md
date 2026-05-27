@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.0 - Alpha
+
+- Added dedicated Claude Code, Codex and Gemini CLI interactive terminal
+  adapters above the existing PTY/ConPTY transport.
+- Added provider-specific bounded context injection, Codex project scoping and
+  persisted visible terminal phase/approval tracking.
+- Added `continuum adapters list` so users can inspect supported behavior and
+  the explicit no-auto-approval safety boundary.
+
 ## 0.4.0 - Alpha
 
 - Added cross-platform detection and explicit bridging of manually launched
