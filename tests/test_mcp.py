@@ -35,6 +35,7 @@ class McpServerTest(unittest.TestCase):
             self.assertIn("claim_task_files", names)
             self.assertIn("get_context_packet", names)
             self.assertIn("post_agent_message", names)
+            self.assertIn("get_external_sessions", names)
             self.assertIn("Handoff written", written["result"]["content"][0]["text"])
 
     def test_mcp_task_claim_and_complete(self):
@@ -128,6 +129,27 @@ class McpServerTest(unittest.TestCase):
 
             response = json.loads(result.getvalue())
             self.assertEqual(response["result"]["serverInfo"]["name"], "continuum")
+
+    def test_mcp_reads_attached_external_session_context_packet(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "project")
+            store.initialize(1000, 0.8)
+            session = store.register_external_session(20, 1.0, "gemini", str(store.project), "gemini")
+            store.publish_external_session_context(session["session_id"], "compact")
+
+            listed = handle_request(
+                store,
+                {"jsonrpc": "2.0", "id": 8, "method": "tools/call", "params": {"name": "get_external_sessions", "arguments": {}}},
+            )
+            packet = handle_request(
+                store,
+                {"jsonrpc": "2.0", "id": 9, "method": "tools/call", "params": {
+                    "name": "get_external_session_context", "arguments": {"session_id": "S0001"}
+                }},
+            )
+
+            self.assertIn("S0001 ATTACHED gemini", listed["result"]["content"][0]["text"])
+            self.assertIn("External Session Context", packet["result"]["content"][0]["text"])
 
 
 if __name__ == "__main__":

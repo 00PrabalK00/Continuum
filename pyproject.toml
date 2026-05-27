@@ -4,13 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "continuum-agent-memory"
-version = "0.3.0"
+version = "0.4.0"
 description = "Local shared memory and opt-in sequential orchestration for AI coding agents."
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
 authors = [{name = "Continuum contributors"}]
 dependencies = [
+  "psutil>=5.9",
   "pywinpty>=2.0.15; platform_system == 'Windows'",
 ]
 keywords = ["ai", "agents", "codex", "claude", "gemini", "ollama", "openrouter", "obsidian", "memory"]

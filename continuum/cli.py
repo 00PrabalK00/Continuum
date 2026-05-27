@@ -34,6 +34,7 @@ from .teams import PRESETS, TeamError, TeamManager
 from .worktrees import WorktreeError, WorktreeManager
 from .control_center import serve_control_center
 from .diagnostics import project_status, run_doctor
+from .external_sessions import ExternalSessionError, ExternalSessionManager
 from .terminal import TerminalUnavailable, run_terminal_process, terminal_backend
 
 AGENTS = ("claude", "gemini", "codex")
@@ -74,8 +75,17 @@ def daemon(args: argparse.Namespace) -> int:
         store.initialize(DEFAULT_CONTEXT_LIMIT, DEFAULT_THRESHOLD)
     store.event("daemon_started", {"summary": f"Watching {store.project}"})
     print(f"Continuum watching {store.project}. Press Ctrl+C to stop.")
+    external = ExternalSessionManager(store)
+    external_warning_printed = False
     try:
         while True:
+            try:
+                for session in external.auto_register():
+                    print(f"{utc_now()}: attached external {session['agent']} session {session['session_id']} (PID {session['pid']})")
+            except ExternalSessionError as error:
+                if not external_warning_printed:
+                    print(f"{utc_now()}: external agent detection disabled ({error})")
+                    external_warning_printed = True
             changes = store.poll_changes()
             if changes:
                 task = store.latest_task() or (
@@ -419,6 +429,7 @@ def status(args: argparse.Namespace) -> int:
     print(f"Embedding count: {result['embedding_count']}")
     print(f"Workflow count: {result['workflow_count']}")
     print(f"Message count: {result['message_count']}")
+    print(f"Attached external sessions: {result['external_sessions']}")
     print(f"Latest handoff path: {result['handoff_path']}")
     print(f"Latest handoff mirror path: {result['mirror_path']}")
     if args.events:
@@ -506,6 +517,76 @@ def task_status(args: argparse.Namespace) -> int:
 
 def task_complete(args: argparse.Namespace) -> int:
     print_task(store_from(args).set_task_status(args.task_id, "DONE", args.summary))
+    return 0
+
+
+def print_external_session(session: dict[str, object]) -> None:
+    print(f"{session['session_id']} {session['status']} {session['agent']} PID={session['pid']}")
+    print(f"  cwd: {session.get('cwd') or 'unavailable'}")
+    if session.get("context_path"):
+        print(f"  context: {session['context_path']}")
+
+
+def session_detect(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    sessions = ExternalSessionManager(store).detect(args.all)
+    for session in sessions:
+        match = "project-match" if session["project_match"] else "other-project"
+        print(f"PID={session['pid']} {session['agent']} {match} cwd={session.get('cwd') or 'unavailable'}")
+    if not sessions:
+        print("No supported live agent sessions detected for this scope.")
+        if not args.all:
+            print("Next action: run `continuum session detect --all` to inspect agents started from other directories.")
+    return 0
+
+
+def session_attach(args: argparse.Namespace) -> int:
+    result = ExternalSessionManager(store_from(args)).attach(args.pid, args.mode, args.allow_other_project)
+    session = result["session"]
+    packet = result["packet"]
+    print_external_session(session)
+    print(f"Context packet published: {packet['path']}")
+    print(f"Estimated context: {packet['estimated_tokens']} tokens ({packet['mode']})")
+    print("Integration mode: cooperative MCP/context packet.")
+    print("In the existing agent terminal, enter:")
+    print(f'Read "{packet["path"]}" and continue from its Continuum context. Use Continuum MCP for targeted retrieval.')
+    print("Continuum cannot retroactively capture or type into a terminal process it did not start.")
+    return 0
+
+
+def session_list(args: argparse.Namespace) -> int:
+    sessions = ExternalSessionManager(store_from(args)).refresh()
+    for session in sessions:
+        print_external_session(session)
+    if not sessions:
+        print("No external sessions attached.")
+    return 0
+
+
+def session_refresh(args: argparse.Namespace) -> int:
+    sessions = ExternalSessionManager(store_from(args)).refresh()
+    running = sum(1 for session in sessions if session["status"] == "ATTACHED")
+    print(f"Refreshed {len(sessions)} external session(s); {running} attached.")
+    return 0
+
+
+def session_inject(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    ExternalSessionManager(store).refresh()
+    packet = store.publish_external_session_context(args.session_id, args.mode)
+    session = packet["session"]
+    print(f"Published bounded context for {session['session_id']} ({session['agent']}, PID={session['pid']}).")
+    print(f"Context packet: {packet['path']}")
+    print(f"Estimated context: {packet['estimated_tokens']} tokens ({packet['mode']})")
+    print("Delivery requires the attached session to read the packet directly or through Continuum MCP.")
+    print(f'Existing terminal instruction: Read "{packet["path"]}" and continue from this context.')
+    return 0
+
+
+def session_detach(args: argparse.Namespace) -> int:
+    session = ExternalSessionManager(store_from(args)).detach(args.session_id)
+    print(f"{session['session_id']} DETACHED {session['agent']} PID={session['pid']}")
+    print("Continuum will no longer treat this external process as attached.")
     return 0
 
 
@@ -831,6 +912,28 @@ def parser() -> argparse.ArgumentParser:
     find.add_argument("--limit", type=int, default=10)
     find.set_defaults(func=search)
 
+    sessions = commands.add_parser("session", help="Detect and bridge agent CLIs launched outside Continuum.")
+    session_commands = sessions.add_subparsers(dest="session_command", required=True)
+    detect_session = session_commands.add_parser("detect", parents=[common], help="Detect supported live external agent CLIs.")
+    detect_session.add_argument("--all", action="store_true", help="Include supported agents whose working directory is outside this project.")
+    detect_session.set_defaults(func=session_detect)
+    attach_session = session_commands.add_parser("attach", parents=[common], help="Register a live external agent with shared memory.")
+    attach_session.add_argument("pid", type=int)
+    attach_session.add_argument("--mode", choices=["compact", "normal", "deep"], default="compact")
+    attach_session.add_argument("--allow-other-project", action="store_true")
+    attach_session.set_defaults(func=session_attach)
+    list_sessions = session_commands.add_parser("list", parents=[common], help="List attached external sessions and liveness.")
+    list_sessions.set_defaults(func=session_list)
+    refresh_sessions = session_commands.add_parser("refresh", parents=[common], help="Refresh external session liveness.")
+    refresh_sessions.set_defaults(func=session_refresh)
+    inject_session = session_commands.add_parser("inject", parents=[common], help="Publish bounded context for an attached external session.")
+    inject_session.add_argument("session_id")
+    inject_session.add_argument("--mode", choices=["compact", "normal", "deep"], default="compact")
+    inject_session.set_defaults(func=session_inject)
+    detach_session = session_commands.add_parser("detach", parents=[common], help="Stop tracking one attached external session.")
+    detach_session.add_argument("session_id")
+    detach_session.set_defaults(func=session_detach)
+
     tasks = commands.add_parser("task", help="Manage routed work and exclusive file claims.")
     task_commands = tasks.add_subparsers(dest="task_command", required=True)
     create = task_commands.add_parser("create", parents=[common], help="Create a controlled agent task.")
@@ -1033,7 +1136,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("--context-limit must be positive")
     try:
         return int(args.func(args))
-    except (ProviderError, ServiceError, TeamError, WorktreeError, ValueError) as error:
+    except (ExternalSessionError, ProviderError, ServiceError, TeamError, WorktreeError, ValueError) as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1
 

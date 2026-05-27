@@ -156,6 +156,18 @@ class MemoryStoreTest(unittest.TestCase):
             self.assertEqual(results[0]["memory_id"], "M12")
             self.assertEqual(results[0]["source"], "event:12")
 
+    def test_external_session_context_is_persisted_and_bounded(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "app")
+            store.initialize(1000, 0.8)
+            session = store.register_external_session(88, 12.5, "codex", str(store.project), "codex")
+
+            packet = store.publish_external_session_context(session["session_id"], "compact")
+
+            self.assertEqual(session["session_id"], "S0001")
+            self.assertLessEqual(packet["estimated_tokens"], 1_000)
+            self.assertTrue(Path(packet["path"]).exists())
+
 
 if __name__ == "__main__":
     unittest.main()

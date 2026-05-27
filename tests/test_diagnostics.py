@@ -17,6 +17,7 @@ class DiagnosticsTest(unittest.TestCase):
             task = store.create_task("Patch auth")
             store.claim_files(task["task_id"], "codex", ["auth.py"])
             store.store_embedding("M1", "ollama", "embed", [0.1], "memory")
+            store.register_external_session(22, 1.0, "codex", str(store.project), "codex")
 
             result = project_status(store)
 
@@ -24,6 +25,7 @@ class DiagnosticsTest(unittest.TestCase):
             self.assertEqual(result["running_tasks"], 1)
             self.assertEqual(result["claimed_files"], 1)
             self.assertEqual(result["embedding_count"], 1)
+            self.assertEqual(result["external_sessions"], 1)
 
     def test_doctor_reports_missing_openrouter_key_with_action(self):
         with tempfile.TemporaryDirectory() as temporary:

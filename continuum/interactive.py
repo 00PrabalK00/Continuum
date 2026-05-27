@@ -179,6 +179,8 @@ class InteractiveShell:
             return ["memory", "retrieve", *self.common(), query, *semantic]
         if command in {"task", "providers", "model", "team", "worktree", "message", "context"}:
             return self.nested(command, rest)
+        if command in {"session", "sessions"}:
+            return self.nested("session", rest or ["list"])
         if command == "route":
             if not rest:
                 self.write("Usage: /route <request>")
@@ -267,6 +269,7 @@ class InteractiveShell:
   /team <subcommand>           Create, inspect or run a team workflow.
   /plan request                 Plan with default_dev_team.
   /task <subcommand>           Manage controlled tasks and file claims.
+  /session <subcommand>        Detect or bridge externally launched agents.
   /worktree <subcommand>       Manage task-isolated Git worktrees.
   /route request               Explain selected routing for a request.
   /ui                           Open Control Center (occupies this shell).

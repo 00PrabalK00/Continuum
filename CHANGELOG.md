@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0 - Alpha
+
+- Added cross-platform detection and explicit bridging of manually launched
+  Claude Code, Codex and Gemini CLI processes.
+- Added daemon auto-registration for matching project sessions plus bounded
+  external context packets retrievable through MCP.
+- Added persistent external session identity/liveness tracking and explicit
+  project-binding safeguards.
+
 ## 0.3.0 - Alpha
 
 - Added real interactive `run` and `resume` sessions backed by PTY on
