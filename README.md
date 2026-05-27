@@ -124,6 +124,28 @@ continuum resume codex normal
 Resume modes are `compact`, `normal` and `deep`. Prefer `compact` unless a
 specific debugging task needs more retrieved context.
 
+## Bridge An Existing Agent Session
+
+If Claude Code, Codex or Gemini CLI was started manually in this project,
+the running daemon detects it and publishes a compact context packet. Inspect
+or bridge sessions explicitly:
+
+```bash
+continuum session detect
+continuum session list
+continuum session attach 12345
+continuum session inject S0001 --mode compact
+continuum session detach S0001
+```
+
+Use `continuum session detect --all` to see agents started from another
+directory. Attaching one to this project requires the explicit
+`--allow-other-project` option.
+
+For a session Continuum did not launch, it can publish memory and MCP context,
+track liveness and observe project file changes. It cannot retroactively read
+that terminal's earlier output or silently type into that terminal.
+
 ## Inspect State And Memory
 
 ```bash
@@ -349,6 +371,7 @@ Agents/
 
 - [Getting Started](docs/getting-started.md)
 - [Interactive CLI](docs/interactive-shell.md)
+- [External Sessions](docs/external-sessions.md)
 - [Quickstart](docs/quickstart.md)
 - [MCP Setup](docs/mcp-setup.md)
 - [Providers](docs/providers.md)

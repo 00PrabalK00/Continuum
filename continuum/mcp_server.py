@@ -7,9 +7,10 @@ import sys
 from pathlib import Path
 from typing import IO, Any
 
+from . import __version__
 from .core import CONTEXT_BUDGETS, MemoryStore, compact_text
 
-SERVER_INFO = {"name": "continuum", "version": "0.2.0"}
+SERVER_INFO = {"name": "continuum", "version": __version__}
 PROTOCOL_VERSION = "2025-03-26"
 
 
@@ -150,6 +151,20 @@ def tool_definitions() -> list[dict[str, Any]]:
                 "required": ["task_id", "summary"],
             },
         },
+        {
+            "name": "get_external_sessions",
+            "description": "List manually launched agent sessions explicitly attached to this project.",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "get_external_session_context",
+            "description": "Read the bounded context packet prepared for one attached external session.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"session_id": {"type": "string"}},
+                "required": ["session_id"],
+            },
+        },
     ]
 
 
@@ -240,6 +255,19 @@ def call_tool(store: MemoryStore, name: str, arguments: dict[str, Any]) -> dict[
             str(arguments.get("task_id", "")), "DONE", str(arguments.get("summary", ""))
         )
         text = f"{completed['task_id']} DONE; file claims released."
+    elif name == "get_external_sessions":
+        sessions = store.list_external_sessions(20)
+        text = "\n".join(
+            f"{item['session_id']} {item['status']} {item['agent']} PID={item['pid']}" for item in sessions
+        ) or "No attached external sessions."
+    elif name == "get_external_session_context":
+        session = store.get_external_session(str(arguments.get("session_id", "")))
+        if not session:
+            text = "External session not found."
+        elif not session.get("context_path") or not Path(str(session["context_path"])).exists():
+            text = "No context packet published for this external session."
+        else:
+            text = read_note(Path(str(session["context_path"])))
     else:
         raise ValueError(f"Unknown tool: {name}")
     return {"content": [{"type": "text", "text": text}]}

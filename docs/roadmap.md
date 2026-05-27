@@ -7,7 +7,7 @@ v0.1 proves Continuum can preserve context across agents.
 v0.2 proves Continuum can automatically orchestrate agents.
 ```
 
-## Implemented Through v0.3.0
+## Implemented Through v0.4.0
 
 - Local project initialization and compact Markdown handoffs
 - SQLite and JSONL event history
@@ -37,6 +37,9 @@ v0.2 proves Continuum can automatically orchestrate agents.
 - Explicit live interactive agent sessions through `continuum run --interactive`
   and `continuum resume --interactive`, backed by PTY on macOS/Linux and
   `pywinpty` on Windows
+- Safe external-session bridging for manually launched Claude Code, Codex and
+  Gemini CLI processes through detection, tracked attachment, bounded context
+  packets and MCP retrieval
 
 ## v0.2 Issues
 
@@ -52,11 +55,10 @@ PTY/ConPTY primitives now available.
 
 ### External CLI Session Integration
 
-Investigate detectable and safe integration points for Claude Code, Codex and
-Gemini sessions started outside Continuum. Context injection or attachment is
-only acceptable when the provider and operating system expose a controlled,
-auditable mechanism; Continuum must not silently manipulate arbitrary terminal
-processes.
+Detection, tracked attachment and cooperative bounded context publication ship
+in v0.4.0. Further provider-native delivery can be added only where the
+provider exposes a controlled, auditable session API; Continuum must not
+silently manipulate arbitrary terminal processes.
 
 ### Agent-Specific Terminal Adapters
 

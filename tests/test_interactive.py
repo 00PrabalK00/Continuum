@@ -41,6 +41,14 @@ class InteractiveShellTest(unittest.TestCase):
             self.assertEqual(calls[0], ["run", "--project", project, "--interactive", "codex", "--model", "strong"])
             self.assertEqual(calls[1], ["resume", "--project", project, "--interactive", "gemini", "normal"])
 
+    def test_session_route_defaults_to_attached_session_list(self):
+        calls = []
+        shell = InteractiveShell(Path("."), None, dispatch=lambda argv: calls.append(argv) or 0)
+
+        self.assertEqual(shell.execute("/sessions"), 0)
+
+        self.assertEqual(calls[0][0:2], ["session", "list"])
+
     def test_slash_commands_scope_project_and_preserve_semantic_flag(self):
         with tempfile.TemporaryDirectory() as temporary:
             calls = []

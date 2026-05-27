@@ -257,6 +257,26 @@ class CliTest(unittest.TestCase):
                 self.assertEqual(main(["run", "--project", str(project), "--interactive", "codex"]), 1)
             self.assertIn("py -m pip install pywinpty", errors.getvalue())
 
+    def test_session_commands_show_detected_and_published_external_context(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            output = StringIO()
+            attached = {
+                "session": {"session_id": "S0001", "status": "ATTACHED", "agent": "claude", "pid": 42, "cwd": str(project)},
+                "packet": {"path": str(project / ".continuum" / "external_sessions" / "S0001" / "context.md"), "estimated_tokens": 70, "mode": "compact"},
+            }
+            with (
+                patch("continuum.cli.ExternalSessionManager.detect", return_value=[{"pid": 42, "agent": "claude", "project_match": True, "cwd": str(project)}]),
+                patch("continuum.cli.ExternalSessionManager.attach", return_value=attached),
+                redirect_stdout(output),
+            ):
+                self.assertEqual(main(["session", "detect", "--project", str(project)]), 0)
+                self.assertEqual(main(["session", "attach", "--project", str(project), "42"]), 0)
+            rendered = output.getvalue()
+            self.assertIn("PID=42 claude project-match", rendered)
+            self.assertIn("Context packet published:", rendered)
+            self.assertIn("cannot retroactively capture or type", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()

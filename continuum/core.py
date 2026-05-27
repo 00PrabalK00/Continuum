@@ -254,6 +254,23 @@ class MemoryStore:
                 FOREIGN KEY(task_id) REFERENCES tasks(id)
             )"""
         )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS external_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                pid INTEGER NOT NULL,
+                process_created_at REAL NOT NULL,
+                agent TEXT NOT NULL,
+                status TEXT NOT NULL,
+                cwd TEXT,
+                command_line TEXT NOT NULL,
+                integration TEXT NOT NULL,
+                context_mode TEXT,
+                context_path TEXT,
+                UNIQUE(pid, process_created_at)
+            )"""
+        )
         connection.commit()
         return connection
 
@@ -470,6 +487,161 @@ class MemoryStore:
         except (OSError, json.JSONDecodeError):
             return False
         return config.get("providers", {}).get(provider, {}).get("kind") == "model"
+
+    @staticmethod
+    def external_session_ref(session_id: int) -> str:
+        return f"S{session_id:04d}"
+
+    @staticmethod
+    def parse_external_session_ref(value: str) -> int:
+        normalized = value.strip().upper()
+        if normalized.startswith("S"):
+            normalized = normalized[1:]
+        if not normalized.isdigit():
+            raise ValueError(f"Invalid external session id: {value}")
+        return int(normalized)
+
+    def register_external_session(
+        self,
+        pid: int,
+        process_created_at: float,
+        agent: str,
+        cwd: str | None,
+        command_line: str,
+    ) -> dict[str, Any]:
+        now = utc_now()
+        connection = self.connect()
+        row = connection.execute(
+            "SELECT id FROM external_sessions WHERE pid = ? AND process_created_at = ?",
+            (pid, process_created_at),
+        ).fetchone()
+        if row:
+            session_id = int(row[0])
+            connection.execute(
+                """UPDATE external_sessions SET updated_at = ?, status = ?, agent = ?, cwd = ?,
+                   command_line = ? WHERE id = ?""",
+                (now, "ATTACHED", agent, cwd, compact_text(command_line, 600), session_id),
+            )
+        else:
+            cursor = connection.execute(
+                """INSERT INTO external_sessions(created_at, updated_at, pid, process_created_at, agent,
+                   status, cwd, command_line, integration) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    now,
+                    now,
+                    pid,
+                    process_created_at,
+                    agent,
+                    "ATTACHED",
+                    cwd,
+                    compact_text(command_line, 600),
+                    "cooperative_mcp",
+                ),
+            )
+            session_id = int(cursor.lastrowid)
+        connection.commit()
+        connection.close()
+        reference = self.external_session_ref(session_id)
+        self.event(
+            "external_session_attached",
+            {"session_id": reference, "pid": pid, "agent": agent, "integration": "cooperative_mcp"},
+        )
+        return self.get_external_session(reference) or {}
+
+    def get_external_session(self, session_ref: str) -> dict[str, Any] | None:
+        connection = self.connect()
+        row = connection.execute(
+            """SELECT id, created_at, updated_at, pid, process_created_at, agent, status, cwd,
+               command_line, integration, context_mode, context_path
+               FROM external_sessions WHERE id = ?""",
+            (self.parse_external_session_ref(session_ref),),
+        ).fetchone()
+        connection.close()
+        if not row:
+            return None
+        return {
+            "session_id": self.external_session_ref(row[0]),
+            "created_at": row[1],
+            "updated_at": row[2],
+            "pid": row[3],
+            "process_created_at": row[4],
+            "agent": row[5],
+            "status": row[6],
+            "cwd": row[7],
+            "command_line": row[8],
+            "integration": row[9],
+            "context_mode": row[10],
+            "context_path": row[11],
+        }
+
+    def find_external_session(self, pid: int, process_created_at: float) -> dict[str, Any] | None:
+        connection = self.connect()
+        row = connection.execute(
+            "SELECT id FROM external_sessions WHERE pid = ? AND process_created_at = ?",
+            (pid, process_created_at),
+        ).fetchone()
+        connection.close()
+        return self.get_external_session(self.external_session_ref(int(row[0]))) if row else None
+
+    def list_external_sessions(self, limit: int = 50) -> list[dict[str, Any]]:
+        connection = self.connect()
+        rows = connection.execute("SELECT id FROM external_sessions ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        connection.close()
+        return [
+            session
+            for row in rows
+            if (session := self.get_external_session(self.external_session_ref(int(row[0])))) is not None
+        ]
+
+    def update_external_session_status(self, session_ref: str, status: str) -> dict[str, Any]:
+        if status not in {"ATTACHED", "STOPPED", "DETACHED"}:
+            raise ValueError(f"Invalid external session status: {status}")
+        connection = self.connect()
+        connection.execute(
+            "UPDATE external_sessions SET updated_at = ?, status = ? WHERE id = ?",
+            (utc_now(), status, self.parse_external_session_ref(session_ref)),
+        )
+        connection.commit()
+        connection.close()
+        return self.get_external_session(session_ref) or {}
+
+    def publish_external_session_context(self, session_ref: str, mode: str = "compact") -> dict[str, Any]:
+        session = self.get_external_session(session_ref)
+        if not session:
+            raise ValueError(f"Unknown external session: {session_ref}")
+        if mode not in {"compact", "normal", "deep"}:
+            raise ValueError(f"Invalid context mode: {mode}")
+        context = self.resume_context(mode)
+        instruction = (
+            "Read this Continuum context packet before acting. Continue existing work from the current state. "
+            "Use the Continuum MCP tools for targeted memory retrieval and write a handoff before stopping."
+        )
+        path = self.state_dir / "external_sessions" / session["session_id"] / "context.md"
+        content = (
+            f"# External Session Context\n\nSession: `{session['session_id']}`\nAgent: `{session['agent']}`\n"
+            f"PID: `{session['pid']}`\nMode: `{mode}`\nGenerated: {utc_now()}\n\n"
+            f"## Instruction\n\n{instruction}\n\n## Bounded Context\n\n{context}\n"
+        )
+        write_text(path, content)
+        connection = self.connect()
+        connection.execute(
+            "UPDATE external_sessions SET updated_at = ?, context_mode = ?, context_path = ? WHERE id = ?",
+            (utc_now(), mode, str(path), self.parse_external_session_ref(session_ref)),
+        )
+        connection.commit()
+        connection.close()
+        self.event(
+            "external_context_published",
+            {"session_id": session_ref.upper(), "agent": session["agent"], "mode": mode, "path": str(path)},
+        )
+        return {
+            "session": self.get_external_session(session_ref),
+            "path": str(path),
+            "mode": mode,
+            "estimated_tokens": estimate_tokens(content),
+            "instruction": instruction,
+            "context": content,
+        }
 
     def store_embedding(self, memory_key: str, provider: str, model: str, vector: list[float], source: str) -> None:
         connection = self.connect()

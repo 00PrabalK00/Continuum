@@ -87,6 +87,7 @@ def project_status(store: MemoryStore) -> dict[str, Any]:
     embedding_count = 0
     workflow_count = 0
     message_count = 0
+    external_sessions = 0
     if store.db_file.exists():
         try:
             migration = store.connect()
@@ -96,6 +97,9 @@ def project_status(store: MemoryStore) -> dict[str, Any]:
             embedding_count = int(connection.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0])
             workflow_count = int(connection.execute("SELECT COUNT(*) FROM workflows").fetchone()[0])
             message_count = int(connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0])
+            external_sessions = int(
+                connection.execute("SELECT COUNT(*) FROM external_sessions WHERE status = 'ATTACHED'").fetchone()[0]
+            )
             connection.close()
             sqlite_status = "ready"
             tasks = store.list_tasks(limit=500)
@@ -123,6 +127,7 @@ def project_status(store: MemoryStore) -> dict[str, Any]:
         "embedding_count": embedding_count,
         "workflow_count": workflow_count,
         "message_count": message_count,
+        "external_sessions": external_sessions,
         "handoff_path": str(handoff) if handoff.exists() else "missing",
         "mirror_path": str(mirror) if mirror and mirror.exists() else ("disabled" if not mirror else "missing"),
     }
@@ -148,6 +153,15 @@ def _mcp_config_check(agent: str, candidates: list[Path], project: Path) -> dict
 def run_doctor(store: MemoryStore, package_root: Path | None = None) -> list[dict[str, str]]:
     root = package_root or Path(__file__).resolve().parents[1]
     checks: list[dict[str, str]] = []
+    psutil_available = importlib.util.find_spec("psutil") is not None
+    checks.append(
+        check(
+            "External session detector",
+            "PASS" if psutil_available else "FAIL",
+            "psutil is installed for cross-platform agent discovery." if psutil_available else "psutil is unavailable.",
+            "Run `python -m pip install psutil`, then retry `continuum doctor`." if not psutil_available else "",
+        )
+    )
     docker_compose = root / "docker-compose.yml"
     if docker_compose.exists():
         docker = shutil.which("docker")
