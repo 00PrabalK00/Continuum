@@ -56,6 +56,36 @@ continuum init --vault "/path/to/your/Obsidian Vault/Agents"
 Continuum creates project-local state in `.continuum/`. Keep that directory
 out of source control.
 
+## Open The Interactive CLI
+
+```bash
+continuum shell
+continuum shell --agent gemini --color always --animation on
+```
+
+The shell uses slash commands and automatically scopes actions to the current
+project:
+
+```text
+/status
+/doctor
+/terminals
+/agent claude
+/handoff Fix authentication retry | Run the failing API test.
+/resume codex compact
+/memory authentication callback --semantic
+/team run default_dev_team "Fix failing auth test"
+/worktree list
+/color off
+/motion off
+/quit
+```
+
+Agent targets have distinct terminal colors in the shell. Color and short
+action animations can be disabled per session. `/run` and `/resume` use the
+current wrapped-session runner; interactive PTY/ConPTY attachment is not yet
+available.
+
 ## Record And Resume Agent Work
 
 Run an agent through Continuum:
@@ -308,6 +338,7 @@ Agents/
 ## Documentation
 
 - [Getting Started](docs/getting-started.md)
+- [Interactive CLI](docs/interactive-shell.md)
 - [Quickstart](docs/quickstart.md)
 - [MCP Setup](docs/mcp-setup.md)
 - [Providers](docs/providers.md)

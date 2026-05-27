@@ -655,6 +655,26 @@ def autostart(args: argparse.Namespace) -> int:
     return service(args)
 
 
+def interactive_shell(args: argparse.Namespace) -> int:
+    from .interactive import InteractiveShell
+
+    def dispatch(argv: list[str]) -> int:
+        try:
+            return main(argv)
+        except SystemExit as error:
+            return int(error.code) if isinstance(error.code, int) else 1
+
+    shell = InteractiveShell(
+        Path(args.project),
+        Path(args.vault) if args.vault else None,
+        dispatch=dispatch,
+        color=args.color,
+        animation=args.animation,
+        selected_agent=args.agent,
+    )
+    return shell.run()
+
+
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="continuum", description="Local context continuity for AI coding agents.")
     root.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -896,11 +916,16 @@ def parser() -> argparse.ArgumentParser:
             args.open_browser,
         )
     )
+    shell = commands.add_parser("shell", parents=[common], help="Open the interactive slash-command console.")
+    shell.add_argument("--agent", choices=AGENTS, default="codex")
+    shell.add_argument("--color", choices=["auto", "always", "never"], default="auto")
+    shell.add_argument("--animation", choices=["auto", "on", "off"], default="auto")
+    shell.set_defaults(func=interactive_shell)
     return root
 
 
-def main() -> int:
-    args = parser().parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = parser().parse_args(argv)
     if getattr(args, "threshold", None) is not None and not 0 < args.threshold <= 1:
         raise SystemExit("--threshold must be greater than 0 and at most 1")
     if getattr(args, "context_limit", None) is not None and args.context_limit <= 0:
