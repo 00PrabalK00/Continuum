@@ -186,6 +186,7 @@ def _run_posix(
     input_fd = stream.fileno() if scripted_input is None and hasattr(stream, "fileno") else None
     old_mode = None
     prior_winch = None
+    exited_at: float | None = None
     try:
         if scripted_input is not None:
             os.write(master, scripted_input.encode())
@@ -221,6 +222,11 @@ def _run_posix(
                 if not value:
                     break
                 os.write(master, value)
+            if process.poll() is not None:
+                if exited_at is None:
+                    exited_at = time.monotonic()
+                elif master not in ready and time.monotonic() - exited_at >= 0.2:
+                    break
     except KeyboardInterrupt:
         process.send_signal(signal.SIGINT)
     finally:
