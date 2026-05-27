@@ -7,7 +7,7 @@ v0.1 proves Continuum can preserve context across agents.
 v0.2 proves Continuum can automatically orchestrate agents.
 ```
 
-## Implemented Through v0.2
+## Implemented Through v0.2.2
 
 - Local project initialization and compact Markdown handoffs
 - SQLite and JSONL event history
@@ -32,6 +32,8 @@ v0.2 proves Continuum can automatically orchestrate agents.
 - File claim enforcement for model providers at storage and MCP boundaries
 - Task worktrees with diff metadata and required test/review gates
 - Optional Docker Compose vector-service profile
+- Interactive `continuum shell` control surface with color-coded targets,
+  optional motion and project-scoped slash commands
 
 ## v0.2 Issues
 
@@ -39,6 +41,32 @@ v0.2 proves Continuum can automatically orchestrate agents.
 
 Create tested adapters for interactive Codex, Claude Code and Gemini CLI
 behavior on Windows, macOS and Linux.
+
+The implementation must support live stdin/output, confirmation prompts,
+interrupts, terminal resize behavior and real PTY/ConPTY operation. The
+shipped interactive shell is a command console over current wrappers, not a
+substitute for these adapters.
+
+### External CLI Session Integration
+
+Investigate detectable and safe integration points for Claude Code, Codex and
+Gemini sessions started outside Continuum. Context injection or attachment is
+only acceptable when the provider and operating system expose a controlled,
+auditable mechanism; Continuum must not silently manipulate arbitrary terminal
+processes.
+
+### Agent-Specific Terminal Adapters
+
+Build dedicated adapters after the PTY base layer is validated. Adapters must
+own prompt injection, streamed output normalization, cancellation, prompt or
+approval handling and failure recording for each supported CLI.
+
+### Parallel Team Scheduling
+
+Extend the existing gated worktree primitives into automatic parallel
+scheduling only after task dependency, file ownership, review and merge-risk
+rules are deterministic. Each writer requires a separate worktree and the
+same explicit test/review merge gates used today.
 
 ### Sequential Recovery
 

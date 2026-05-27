@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.2 - Alpha
+
+- Added `continuum shell`, a project-scoped interactive slash-command console.
+- Added color-coded Claude, Codex, Gemini, Ollama and OpenRouter terminal/provider
+  labels with per-session color and motion toggles.
+- Added slash aliases for health, handoff/resume, memory, providers, teams,
+  controlled tasks, worktrees, services, MCP guidance and Control Center.
+- Kept terminal capability claims explicit: wrapped sessions remain non-PTY
+  until platform-specific terminal adapters are implemented.
+
 ## 0.2.1 - Alpha
 
 - Completed bounded semantic retrieval acceptance: refresh, event attribution,
