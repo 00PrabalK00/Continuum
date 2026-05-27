@@ -50,9 +50,9 @@ class ControlCenterTest(unittest.TestCase):
                     html = response.read().decode("utf-8")
                 with urllib.request.urlopen(url + "/api/overview") as response:
                     payload = json.loads(response.read().decode("utf-8"))
-                with urllib.request.urlopen(url + "/logo.svg") as response:
+                with urllib.request.urlopen(url + "/logo.png") as response:
                     logo_type = response.headers.get_content_type()
-                    logo = response.read().decode("utf-8")
+                    logo = response.read()
             finally:
                 server.shutdown()
                 server.server_close()
@@ -60,9 +60,10 @@ class ControlCenterTest(unittest.TestCase):
 
             self.assertIn("Continuum Control Center", html)
             self.assertIn('class="active" data-view="teams"', html)
-            self.assertIn('src="/logo.svg"', html)
-            self.assertEqual(logo_type, "image/svg+xml")
-            self.assertIn("<svg", logo)
+            self.assertIn('src="/logo.png"', html)
+            self.assertEqual(logo_type, "image/png")
+            self.assertEqual(logo[:8], b"\x89PNG\r\n\x1a\n")
+            self.assertEqual(logo[25], 6)  # PNG color type 6 is RGBA.
             self.assertEqual(payload["project"]["name"], "project")
 
     def test_http_server_allows_explicit_team_creation_and_workflow_planning(self):
