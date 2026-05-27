@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.3 - Alpha
+
+- Replaced the prior SVG mark with the supplied navy-and-teal transparent PNG
+  logo in README and Control Center branding.
+
 ## 0.2.2 - Alpha
 
 - Added `continuum shell`, a project-scoped interactive slash-command console.

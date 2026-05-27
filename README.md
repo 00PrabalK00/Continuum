@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="continuum/ui/logo.svg" alt="Continuum logo" width="152">
+  <img src="continuum/ui/logo.png" alt="Continuum logo" width="240">
 </p>
 
 # Continuum

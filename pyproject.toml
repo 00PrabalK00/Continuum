@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "continuum-agent-memory"
-version = "0.2.2"
+version = "0.2.3"
 description = "Local shared memory and opt-in sequential orchestration for AI coding agents."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -27,7 +27,7 @@ continuum = "continuum.cli:main"
 include = ["continuum*"]
 
 [tool.setuptools.package-data]
-continuum = ["ui/*.html", "ui/*.css", "ui/*.js", "ui/*.svg"]
+continuum = ["ui/*.html", "ui/*.css", "ui/*.js", "ui/*.png"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

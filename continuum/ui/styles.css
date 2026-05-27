@@ -51,7 +51,7 @@ button:hover { border-color: #3b4f68; background: var(--surface-2); }
 .brand { display: flex; align-items: center; gap: 12px; padding: 0 8px 28px; }
 .brand strong { display: block; font-size: 16px; }
 .brand span:not(.mark) { color: var(--muted); font-size: 12px; }
-.mark { width: 30px; height: 30px; display: block; }
+.mark { width: 38px; height: 30px; display: block; object-fit: contain; }
 nav { display: grid; gap: 4px; }
 nav button {
   border: 0;
