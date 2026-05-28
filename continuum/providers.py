@@ -84,15 +84,39 @@ class ProviderManager:
             raise ProviderError(f"Provider is not configured: {name}")
         return value
 
-    @staticmethod
-    def _json_request(url: str, payload: dict[str, Any] | None, headers: dict[str, str], timeout: int = 15) -> dict[str, Any]:
+    def _json_request(
+        self,
+        url: str,
+        payload: dict[str, Any] | None,
+        headers: dict[str, str],
+        timeout: int = 15,
+        *,
+        provider_name: str | None = None,
+    ) -> dict[str, Any]:
         data = json.dumps(payload).encode("utf-8") if payload is not None else None
         request = urllib.request.Request(url, data=data, headers=headers, method="POST" if data else "GET")
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 return json.loads(response.read().decode("utf-8"))
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
-            raise ProviderError(f"Provider request failed: {error}") from error
+        except urllib.error.HTTPError as error:
+            if provider_name == "openrouter" and error.code == 401:
+                raise ProviderError(
+                    "OpenRouter rejected the API key with HTTP 401. "
+                    "Set a valid key with `$env:OPENROUTER_API_KEY=\"sk-or-...\"`, then run "
+                    "`continuum providers test openrouter`."
+                ) from error
+            raise ProviderError(f"Provider request failed with HTTP {error.code}: {error.reason}") from error
+        except (urllib.error.URLError, TimeoutError) as error:
+            reason = getattr(error, "reason", error)
+            if provider_name == "ollama":
+                raise ProviderError(
+                    "Ollama API is not reachable at http://localhost:11434. "
+                    "Run `ollama serve`, then `ollama pull llama3.1:8b`, then "
+                    "`continuum providers test ollama`."
+                ) from error
+            raise ProviderError(f"Provider request failed: {reason}") from error
+        except json.JSONDecodeError as error:
+            raise ProviderError("Provider returned invalid JSON. Retry the request or test the provider connection.") from error
 
     def _headers(self, name: str, provider: dict[str, Any]) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -117,13 +141,25 @@ class ProviderManager:
             path = shutil.which(command)
             return f"available: {path}" if path else f"not found on PATH: {command}"
         headers = self._headers(name, provider)
-        response = self._json_request(provider["base_url"].rstrip("/") + "/models", None, headers, timeout=5)
+        response = self._json_request(
+            provider["base_url"].rstrip("/") + "/models",
+            None,
+            headers,
+            timeout=5,
+            provider_name=name,
+        )
         models = response.get("data", [])
         return f"connected: {len(models)} model(s) visible"
 
     def models(self, name: str) -> list[str]:
         provider = self.provider(name)
-        response = self._json_request(provider["base_url"].rstrip("/") + "/models", None, self._headers(name, provider), timeout=5)
+        response = self._json_request(
+            provider["base_url"].rstrip("/") + "/models",
+            None,
+            self._headers(name, provider),
+            timeout=5,
+            provider_name=name,
+        )
         return [str(item.get("id")) for item in response.get("data", []) if item.get("id")]
 
     def ask(self, name: str, prompt: str, model: str | None = None) -> str:
@@ -141,6 +177,7 @@ class ProviderManager:
                 "max_tokens": 800,
             },
             self._headers(name, provider),
+            provider_name=name,
         )
         try:
             return str(result["choices"][0]["message"]["content"])
@@ -156,6 +193,7 @@ class ProviderManager:
             provider["base_url"].rstrip("/") + "/embeddings",
             {"model": selected_model, "input": compact_text(text, 24_000)},
             self._headers(name, provider),
+            provider_name=name,
         )
         try:
             return str(selected_model), [float(item) for item in result["data"][0]["embedding"]]

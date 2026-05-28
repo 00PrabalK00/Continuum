@@ -93,7 +93,8 @@ command can also be run as a slash command, for example `/status --events`,
 `/run --interactive codex` or `/task list`; the shell injects the current
 project automatically unless you pass `--project` yourself. `/switch <agent>
 [mode]` changes the active agent target and immediately resumes it with the
-latest compact context.
+latest compact context. Bracketed paste input is stored in full and displayed
+as a compact `{n chars}` receipt before the command runs.
 
 ## Record And Resume Agent Work
 
@@ -183,6 +184,22 @@ continuum providers list
 continuum providers add ollama
 continuum providers test ollama
 continuum providers add openrouter
+continuum providers test openrouter
+```
+
+If `model ask` fails, run the matching provider test first. Ollama errors
+usually mean the local API is not running:
+
+```bash
+ollama serve
+ollama pull llama3.1:8b
+continuum providers test ollama
+```
+
+OpenRouter `401` errors mean the API key is missing or invalid:
+
+```powershell
+$env:OPENROUTER_API_KEY="sk-or-..."
 continuum providers test openrouter
 ```
 

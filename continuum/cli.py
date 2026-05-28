@@ -647,8 +647,11 @@ def providers_test(args: argparse.Namespace) -> int:
 
 def model_ask(args: argparse.Namespace) -> int:
     store = store_from(args)
-    answer = ProviderManager(store.state_dir).ask(args.provider, args.prompt, args.model)
-    store.event("model_ask", {"provider": args.provider, "model": args.model, "summary": args.prompt[:120]})
+    prompt = " ".join(args.prompt).strip() if isinstance(args.prompt, list) else str(args.prompt)
+    if not prompt:
+        raise ProviderError("Prompt is empty. Example: `continuum model ask ollama \"summarize this handoff\"`.")
+    answer = ProviderManager(store.state_dir).ask(args.provider, prompt, args.model)
+    store.event("model_ask", {"provider": args.provider, "model": args.model, "summary": prompt[:120]})
     print(answer)
     return 0
 
@@ -1118,7 +1121,7 @@ def parser() -> argparse.ArgumentParser:
     model_commands = model.add_subparsers(dest="model_command", required=True)
     ask = model_commands.add_parser("ask", parents=[common], help="Ask Ollama or OpenRouter a text-only question.")
     ask.add_argument("provider", choices=["ollama", "openrouter"])
-    ask.add_argument("prompt")
+    ask.add_argument("prompt", nargs="+")
     ask.add_argument("--model")
     ask.set_defaults(func=model_ask)
 

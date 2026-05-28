@@ -238,6 +238,34 @@ class CliTest(unittest.TestCase):
             self.assertIn("Falling back to exact local search", output.getvalue())
             self.assertIn("auth retry behavior", output.getvalue())
 
+    def test_model_ask_accepts_unquoted_multi_word_prompt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            output = StringIO()
+            previous = sys.argv
+            try:
+                with patch.object(ProviderManager, "ask", return_value="ok") as ask:
+                    with redirect_stdout(output):
+                        sys.argv = [
+                            "continuum",
+                            "model",
+                            "ask",
+                            "--project",
+                            str(project),
+                            "ollama",
+                            "summarize",
+                            "this",
+                            "large",
+                            "paste",
+                        ]
+                        self.assertEqual(main(), 0)
+            finally:
+                sys.argv = previous
+
+            ask.assert_called_once()
+            self.assertEqual(ask.call_args.args[1], "summarize this large paste")
+            self.assertIn("ok", output.getvalue())
+
     def test_memory_refresh_embeds_recent_events_with_event_ids(self):
         with tempfile.TemporaryDirectory() as temporary:
             project = Path(temporary) / "repo"

@@ -1,4 +1,5 @@
 import tempfile
+import urllib.error
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -44,6 +45,28 @@ class ProviderManagerTest(unittest.TestCase):
             with patch.dict("os.environ", {}, clear=True):
                 with self.assertRaisesRegex(ProviderError, "OPENROUTER_API_KEY"):
                     manager.test("openrouter")
+
+    def test_openrouter_unauthorized_has_fix_command(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            manager = ProviderManager(Path(temporary))
+            manager.add("openrouter")
+            with patch.dict("os.environ", {"OPENROUTER_API_KEY": "bad"}), patch(
+                "continuum.providers.urllib.request.urlopen",
+                side_effect=urllib.error.HTTPError("url", 401, "Unauthorized", {}, None),
+            ):
+                with self.assertRaisesRegex(ProviderError, "continuum providers test openrouter"):
+                    manager.test("openrouter")
+
+    def test_ollama_connection_refused_has_fix_command(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            manager = ProviderManager(Path(temporary))
+            manager.add("ollama")
+            with patch(
+                "continuum.providers.urllib.request.urlopen",
+                side_effect=urllib.error.URLError(ConnectionRefusedError("refused")),
+            ):
+                with self.assertRaisesRegex(ProviderError, "ollama serve"):
+                    manager.ask("ollama", "say ok")
 
     def test_embedding_is_persisted_as_structured_memory(self):
         with tempfile.TemporaryDirectory() as temporary:

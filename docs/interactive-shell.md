@@ -74,6 +74,10 @@ compact`. Exact CLI-style forms such as `/run --interactive codex` and
 `/route explain "fix auth"` are also supported. If you pass `--project`
 yourself, the shell preserves it.
 
+Bracketed paste input is ingested with paste elision. The shell stores the
+full pasted content internally, shows a compact `{n chars}` receipt and then
+dispatches the command with the full text preserved.
+
 `/switch gemini normal` changes the selected agent and dispatches
 `continuum resume --project <project> gemini normal`, so the next CLI receives
 the latest bounded Continuum context automatically.

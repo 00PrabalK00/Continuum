@@ -21,6 +21,8 @@ AGENT_COLORS = {
 RESET = "\033[0m"
 BOLD = "1"
 DIM = "2"
+PASTE_START = "\x1b[200~"
+PASTE_END = "\x1b[201~"
 TOP_LEVEL_COMMON_COMMANDS = {
     "init",
     "daemon",
@@ -82,6 +84,7 @@ class InteractiveShell:
         self.color_enabled = color == "always" or (color == "auto" and self.output.isatty() and not os.getenv("NO_COLOR"))
         self.animation_enabled = animation == "on" or (animation == "auto" and self.output.isatty())
         self.running = True
+        self.last_paste: str | None = None
 
     def paint(self, text: str, code: str) -> str:
         return f"\033[{code}m{text}{RESET}" if self.color_enabled else text
@@ -120,8 +123,14 @@ class InteractiveShell:
         self.terminals()
 
     def execute(self, line: str) -> int:
+        line, paste_chars = self.ingest_bracketed_paste(line)
+        if paste_chars:
+            self.write(f"Bracketed paste received: {{{paste_chars} chars}}")
         if not line.startswith("/"):
-            self.write("Use slash commands in this shell. Run /help for available actions.")
+            if paste_chars:
+                self.write("Stored pasted text as the latest paste. Use a slash command to act on it.")
+            else:
+                self.write("Use slash commands in this shell. Run /help for available actions.")
             return 1
         try:
             parts = shlex.split(line[1:])
@@ -152,6 +161,32 @@ class InteractiveShell:
             return 1
         self.pulse(f"Running /{command}")
         return self.dispatch(argv)
+
+    def ingest_bracketed_paste(self, line: str) -> tuple[str, int]:
+        if PASTE_START not in line:
+            return line, 0
+        output: list[str] = []
+        pasted: list[str] = []
+        index = 0
+        while index < len(line):
+            start = line.find(PASTE_START, index)
+            if start == -1:
+                output.append(line[index:])
+                break
+            output.append(line[index:start])
+            content_start = start + len(PASTE_START)
+            end = line.find(PASTE_END, content_start)
+            if end == -1:
+                pasted_text = line[content_start:]
+                index = len(line)
+            else:
+                pasted_text = line[content_start:end]
+                index = end + len(PASTE_END)
+            pasted.append(pasted_text)
+            output.append(pasted_text)
+        paste_text = "".join(pasted)
+        self.last_paste = paste_text
+        return "".join(output), len(paste_text)
 
     def common(self) -> list[str]:
         args = ["--project", str(self.project)]
@@ -395,6 +430,8 @@ class InteractiveShell:
 
 Any current Continuum CLI command can also be entered as a slash command; the
 shell injects the active project unless `--project` is already supplied.
+Bracketed paste input is stored in full and shown as a compact `{n chars}`
+receipt before the command runs.
 
 This shell controls existing Continuum actions. Full live terminal capture
 requires a session launched through Continuum. Existing sessions can be

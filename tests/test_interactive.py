@@ -71,6 +71,19 @@ class InteractiveShellTest(unittest.TestCase):
         self.assertIn("/status [--events]", rendered)
         self.assertEqual(calls, [])
 
+    def test_bracketed_paste_is_elided_but_dispatched_in_full(self):
+        output = StringIO()
+        calls = []
+        shell = InteractiveShell(Path("."), None, dispatch=lambda argv: calls.append(argv) or 0, output=output)
+
+        pasted = "summarize " + ("large text " * 80)
+        self.assertEqual(shell.execute(f"/model ask ollama \x1b[200~{pasted}\x1b[201~"), 0)
+
+        rendered = output.getvalue()
+        self.assertIn(f"{{{len(pasted)} chars}}", rendered)
+        self.assertEqual(shell.last_paste, pasted)
+        self.assertIn(pasted.rstrip(), " ".join(calls[0]))
+
     def test_terminal_routes_to_interactive_pty_modes(self):
         with tempfile.TemporaryDirectory() as temporary:
             calls = []

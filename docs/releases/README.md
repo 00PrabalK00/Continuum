@@ -2,6 +2,7 @@
 
 | Version | Notes |
 | --- | --- |
+| `v0.7.2` | [Model CLI usability and paste ingestion](v0.7.2.md) |
 | `v0.7.1` | [Shell slash command parity and switch](v0.7.1.md) |
 | `v0.7.0` | [Hierarchical Model Delegation](v0.7.0.md) |
 | `v0.6.3` | [Docker UI deployment support](v0.6.3.md) |

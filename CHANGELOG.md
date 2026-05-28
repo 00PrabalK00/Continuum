@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.2 - Alpha
+
+- Made `model ask` accept unquoted multi-word prompts for pasted text.
+- Added provider-specific fix commands for unreachable Ollama and OpenRouter
+  HTTP 401 failures.
+- Added bracketed paste ingestion with compact `{n chars}` receipts in the
+  interactive shell while preserving the full pasted command text.
+
 ## 0.7.1 - Alpha
 
 - Added `/switch <agent> [mode]` in `continuum shell` to change agents and
