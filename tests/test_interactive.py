@@ -29,6 +29,35 @@ class InteractiveShellTest(unittest.TestCase):
             self.assertEqual(calls[0], ["resume", "--project", str(Path(temporary).resolve()), "gemini", "normal"])
             self.assertIn("\033[34mgemini", shell.prompt())
 
+    def test_switch_selects_agent_and_resumes_with_context(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            calls = []
+            output = StringIO()
+            shell = InteractiveShell(
+                Path(temporary),
+                None,
+                dispatch=lambda argv: calls.append(argv) or 0,
+                color="always",
+                animation="off",
+                output=output,
+            )
+
+            self.assertEqual(shell.execute("/switch claude deep --model claude-opus-4-1-20250805"), 0)
+
+            self.assertEqual(
+                calls[0],
+                [
+                    "resume",
+                    "--project",
+                    str(Path(temporary).resolve()),
+                    "claude",
+                    "deep",
+                    "--model",
+                    "claude-opus-4-1-20250805",
+                ],
+            )
+            self.assertIn("\033[35mclaude", shell.prompt())
+
     def test_terminal_routes_to_interactive_pty_modes(self):
         with tempfile.TemporaryDirectory() as temporary:
             calls = []
@@ -101,6 +130,49 @@ class InteractiveShellTest(unittest.TestCase):
                 ["memory", "retrieve", "--project", expected_project, "auth callback", "--semantic"],
             )
             self.assertEqual(calls[2], ["task", "create", "--project", expected_project, "Fix auth"])
+
+    def test_any_cli_command_can_be_used_as_slash_command_with_project_injected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            calls = []
+            project = Path(temporary)
+            shell = InteractiveShell(project, None, dispatch=lambda argv: calls.append(argv) or 0, animation="off")
+
+            self.assertEqual(shell.execute('/handoff --task "Fix auth" --next-step "Run tests"'), 0)
+            self.assertEqual(shell.execute('/instruct --planner claude-opus-4-1-20250805 --executor codex --goal "Fix tests"'), 0)
+            self.assertEqual(shell.execute("/mcp serve"), 0)
+            self.assertEqual(shell.execute("/adapters list"), 0)
+            self.assertEqual(shell.execute("/context build coder --mode compact"), 0)
+            self.assertEqual(shell.execute("/run --interactive codex"), 0)
+            self.assertEqual(shell.execute("/resume --interactive gemini normal"), 0)
+            self.assertEqual(shell.execute('/route explain "fix auth"'), 0)
+            self.assertEqual(shell.execute("/ui --open"), 0)
+
+            expected_project = str(project.resolve())
+            self.assertEqual(
+                calls[0],
+                ["handoff", "--project", expected_project, "--task", "Fix auth", "--next-step", "Run tests"],
+            )
+            self.assertEqual(
+                calls[1],
+                [
+                    "instruct",
+                    "--project",
+                    expected_project,
+                    "--planner",
+                    "claude-opus-4-1-20250805",
+                    "--executor",
+                    "codex",
+                    "--goal",
+                    "Fix tests",
+                ],
+            )
+            self.assertEqual(calls[2], ["mcp", "--project", expected_project, "serve"])
+            self.assertEqual(calls[3], ["adapters", "list", "--project", expected_project])
+            self.assertEqual(calls[4], ["context", "build", "--project", expected_project, "coder", "--mode", "compact"])
+            self.assertEqual(calls[5], ["run", "--project", expected_project, "--interactive", "codex"])
+            self.assertEqual(calls[6], ["resume", "--project", expected_project, "--interactive", "gemini", "normal"])
+            self.assertEqual(calls[7], ["route", "explain", "--project", expected_project, "fix auth"])
+            self.assertEqual(calls[8], ["ui", "--project", expected_project, "--open"])
 
     def test_terminal_legend_and_mcp_guidance_do_not_launch_processes(self):
         output = StringIO()

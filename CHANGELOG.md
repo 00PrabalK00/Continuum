@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.1 - Alpha
+
+- Added `/switch <agent> [mode]` in `continuum shell` to change agents and
+  immediately resume with bounded Continuum context injected.
+- Made exact CLI-style slash commands dispatchable from the shell, including
+  `/mcp serve`, `/adapters list`, `/context build ...`, `/handoff --task ...`
+  and `/instruct --planner ...`.
+- Documented that slash commands automatically inject the active project unless
+  the user supplies `--project`.
+
 ## 0.7.0 - Alpha
 
 - Added Hierarchical Model Delegation through `continuum instruct`.

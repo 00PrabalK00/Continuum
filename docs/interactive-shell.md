@@ -44,6 +44,7 @@ Change defaults for the current console:
 /run [claude|codex|gemini] [agent arguments]
 /terminal [claude|codex|gemini] [agent arguments]
 /resume [claude|codex|gemini] [compact|normal|deep] [agent arguments]
+/switch <claude|codex|gemini> [compact|normal|deep] [agent arguments]
 /resume-terminal [claude|codex|gemini] [compact|normal|deep] [agent arguments]
 /search <query>
 /memory <query> [--semantic]
@@ -57,13 +58,26 @@ Change defaults for the current console:
 /route <request>
 /service <install|status|remove>
 /ui
-/mcp
+/mcp [serve]
 /clear
 /quit
 ```
 
-`/mcp` prints the dedicated MCP server command because an MCP stdio server
-should not take over the interactive console process.
+Any current `continuum` command can be used as a slash command. The shell
+injects the active `--project` and optional `--vault` into known command
+positions, so `/context build coder --mode compact` maps to the same scoped
+CLI action as `continuum context build --project <project> coder --mode
+compact`. Exact CLI-style forms such as `/run --interactive codex` and
+`/route explain "fix auth"` are also supported. If you pass `--project`
+yourself, the shell preserves it.
+
+`/switch gemini normal` changes the selected agent and dispatches
+`continuum resume --project <project> gemini normal`, so the next CLI receives
+the latest bounded Continuum context automatically.
+
+Plain `/mcp` prints the dedicated MCP server command because an MCP stdio
+server should not take over the interactive console process. `/mcp serve`
+dispatches the actual project-scoped server command.
 
 ## Live Terminal Sessions
 

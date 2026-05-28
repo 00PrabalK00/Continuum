@@ -2,6 +2,7 @@
 
 | Version | Notes |
 | --- | --- |
+| `v0.7.1` | [Shell slash command parity and switch](v0.7.1.md) |
 | `v0.7.0` | [Hierarchical Model Delegation](v0.7.0.md) |
 | `v0.6.3` | [Docker UI deployment support](v0.6.3.md) |
 | `v0.6.2` | [macOS PTY receipt path normalization](v0.6.2.md) |

@@ -21,6 +21,39 @@ AGENT_COLORS = {
 RESET = "\033[0m"
 BOLD = "1"
 DIM = "2"
+TOP_LEVEL_COMMON_COMMANDS = {
+    "init",
+    "daemon",
+    "up",
+    "down",
+    "logs",
+    "handoff",
+    "run",
+    "resume",
+    "status",
+    "doctor",
+    "search",
+    "service",
+    "autostart",
+    "mcp",
+    "ui",
+    "shell",
+    "instruct",
+}
+NESTED_COMMON_COMMANDS = {
+    "session",
+    "adapters",
+    "task",
+    "providers",
+    "model",
+    "memory",
+    "context",
+    "message",
+    "team",
+    "worktree",
+    "route",
+}
+ALIASES = {"sessions": "session"}
 
 
 class InteractiveShell:
@@ -141,6 +174,8 @@ class InteractiveShell:
                 return []
             return ["search", *self.common(), " ".join(rest)]
         if command == "handoff":
+            if rest and rest[0].startswith("--"):
+                return self.raw_continuum_command(command, rest)
             if "|" not in rest:
                 self.write('Usage: /handoff <current task> | <next exact step>')
                 return []
@@ -151,17 +186,23 @@ class InteractiveShell:
                 return []
             return ["handoff", *self.common(), "--task", task, "--next-step", next_step]
         if command in {"run", "launch"}:
+            if rest and rest[0].startswith("--"):
+                return self.raw_continuum_command("run", rest)
             agent, passthrough = self._agent_and_rest(rest)
             return ["run", *self.common(), agent, *passthrough]
         if command in {"terminal", "pty"}:
             agent, passthrough = self._agent_and_rest(rest)
             return ["run", *self.common(), "--interactive", agent, *passthrough]
         if command in {"resume", "continue"}:
+            if rest and rest[0].startswith("--"):
+                return self.raw_continuum_command("resume", rest)
             agent, passthrough = self._agent_and_rest(rest)
             mode = "compact"
             if passthrough and passthrough[0] in {"compact", "normal", "deep"}:
                 mode, passthrough = passthrough[0], passthrough[1:]
             return ["resume", *self.common(), agent, mode, *passthrough]
+        if command == "switch":
+            return self.switch_agent(rest)
         if command in {"resume-terminal", "resume-pty"}:
             agent, passthrough = self._agent_and_rest(rest)
             mode = "compact"
@@ -182,6 +223,8 @@ class InteractiveShell:
         if command in {"session", "sessions"}:
             return self.nested("session", rest or ["list"])
         if command == "route":
+            if rest and rest[0] == "explain":
+                return self.raw_continuum_command(command, rest)
             if not rest:
                 self.write("Usage: /route <request>")
                 return []
@@ -192,17 +235,41 @@ class InteractiveShell:
                 return []
             return ["team", "run", *self.common(), "default_dev_team", " ".join(rest)]
         if command == "instruct":
+            if rest and rest[0].startswith("--"):
+                return self.raw_continuum_command(command, rest)
             return self.instruct(rest)
         if command == "service":
             return ["service", *self.common(), *(rest or ["status"])]
         if command == "ui":
+            if rest:
+                return self.raw_continuum_command(command, rest)
             return ["ui", *self.common(), "--open", *rest]
         if command == "mcp":
+            if rest:
+                return self.raw_continuum_command(command, rest)
             self.write(f"Run in a dedicated terminal: continuum mcp serve --project \"{self.project}\"")
             return []
         if command == "adapters":
+            if rest:
+                return self.raw_continuum_command(command, rest)
             return ["adapters", "list", *self.common()]
+        return self.raw_continuum_command(command, rest)
+
+    def raw_continuum_command(self, command: str, rest: list[str]) -> list[str] | None:
+        command = ALIASES.get(command, command)
+        if command in TOP_LEVEL_COMMON_COMMANDS:
+            return self.inject_common([command, *rest], 1)
+        if command in NESTED_COMMON_COMMANDS:
+            if not rest:
+                self.write(f"Usage: /{command} <subcommand> [arguments]")
+                return []
+            return self.inject_common([command, *rest], 2)
         return None
+
+    def inject_common(self, argv: list[str], index: int) -> list[str]:
+        if "--project" in argv or any(item.startswith("--project=") for item in argv):
+            return argv
+        return [*argv[:index], *self.common(), *argv[index:]]
 
     def instruct(self, values: list[str]) -> list[str]:
         options: dict[str, str] = {}
@@ -230,6 +297,17 @@ class InteractiveShell:
                 if item:
                     argv.extend(["--scope", item])
         return argv
+
+    def switch_agent(self, values: list[str]) -> list[str]:
+        if not values or values[0] not in {"claude", "codex", "gemini"}:
+            self.write("Usage: /switch claude|codex|gemini [compact|normal|deep] [agent args]")
+            return []
+        agent, passthrough = values[0], values[1:]
+        mode = "compact"
+        if passthrough and passthrough[0] in {"compact", "normal", "deep"}:
+            mode, passthrough = passthrough[0], passthrough[1:]
+        self.agent = agent
+        return ["resume", *self.common(), agent, mode, *passthrough]
 
     def _agent_and_rest(self, values: list[str]) -> tuple[str, list[str]]:
         if values and values[0] in {"claude", "codex", "gemini"}:
@@ -292,6 +370,7 @@ class InteractiveShell:
   /run [agent] [args]           Launch a captured-output agent session.
   /terminal [agent] [args]      Launch a live PTY/ConPTY agent terminal.
   /resume [agent] [mode]       Inject context and continue (compact/normal/deep).
+  /switch agent [mode]          Select an agent and resume with context injected.
   /resume-terminal [agent]     Inject context into a live terminal session.
   /search words                 Exact local memory search.
   /memory words [--semantic]   Retrieve bounded memory for a query.
@@ -312,6 +391,9 @@ class InteractiveShell:
   /motion on|off|auto          Toggle short action animations for this shell.
   /clear                       Redraw the shell.
   /quit                        Exit.
+
+Any current Continuum CLI command can also be entered as a slash command; the
+shell injects the active project unless `--project` is already supplied.
 
 This shell controls existing Continuum actions. Full live terminal capture
 requires a session launched through Continuum. Existing sessions can be

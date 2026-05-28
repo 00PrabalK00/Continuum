@@ -71,9 +71,12 @@ project:
 /doctor
 /terminals
 /agent claude
+/switch gemini normal
 /handoff Fix authentication retry | Run the failing API test.
 /resume codex compact
 /memory authentication callback --semantic
+/context build coder --mode compact
+/mcp serve
 /team run default_dev_team "Fix failing auth test"
 /instruct planner=claude-opus-4-1-20250805 executor=codex mode=checkpoint goal="Implement deterministic PTY receipts"
 /worktree list
@@ -84,7 +87,12 @@ project:
 
 Agent targets have distinct terminal colors in the shell. Color and short
 action animations can be disabled per session. Use `/terminal` or
-`/resume-terminal` for live PTY/ConPTY sessions.
+`/resume-terminal` for live PTY/ConPTY sessions. Any current `continuum`
+command can also be run as a slash command, for example `/status --events`,
+`/run --interactive codex` or `/task list`; the shell injects the current
+project automatically unless you pass `--project` yourself. `/switch <agent>
+[mode]` changes the active agent target and immediately resumes it with the
+latest compact context.
 
 ## Record And Resume Agent Work
 
