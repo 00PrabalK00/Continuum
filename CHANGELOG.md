@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.2 - Alpha
+
+- Fixed the PTY input receipt acceptance test on macOS by comparing resolved
+  working directories instead of raw `/var` and `/private/var` path strings.
+
 ## 0.6.1 - Alpha
 
 - Added a PTY/ConPTY acceptance test that proves scripted input was consumed
