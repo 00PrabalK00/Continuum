@@ -252,10 +252,11 @@ def run_agent(args: argparse.Namespace, resumed: bool = False, injected_context:
     tail: list[str] = []
     try:
         command = agent_command(args.agent, agent_args)
+        cwd = Path(getattr(args, "cwd", store.project))
         with log_file.open("w", encoding="utf-8") as output:
             process = subprocess.Popen(
                 command,
-                cwd=str(store.project),
+                cwd=str(cwd),
                 stdin=None,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -363,7 +364,7 @@ def run_interactive_agent(args: argparse.Namespace, resumed: bool = False, injec
 
             returncode = run_terminal_process(
                 command,
-                cwd=store.project,
+                cwd=Path(getattr(args, "cwd", store.project)),
                 env=os.environ.copy(),
                 on_output=capture,
                 input_stream=sys.stdin,
@@ -803,6 +804,50 @@ def worktree_create(args: argparse.Namespace) -> int:
     return 0
 
 
+def worktree_schedule(args: argparse.Namespace) -> int:
+    schedule = WorktreeManager(store_from(args)).schedule(
+        args.objective,
+        args.lane or [],
+        args.depends_on or [],
+        args.context_mode,
+    )
+    print(f"Schedule planned: {schedule['schedule_id']}")
+    print(f"Objective: {schedule['objective']}")
+    print("Parallel worktrees:")
+    for lane in schedule["lanes"]:
+        print(f"  {lane['task_id']} {lane['role']} -> {lane['agent']}")
+        print(f"    worktree: {lane['path']}")
+        print(f"    branch: {lane['branch']}")
+        print(f"    owns: {', '.join(lane.get('owned_paths', [])) or 'none'}")
+        print(f"    context: {lane['context_path']}")
+        print(f"    resume: continuum worktree resume {lane['task_id']} {lane['agent']} {schedule['context_mode']}")
+    print("Automatic parallel provider launching is not enabled. Start each lane explicitly with its resume command.")
+    return 0
+
+
+def worktree_schedules(args: argparse.Namespace) -> int:
+    records = WorktreeManager(store_from(args)).schedules()
+    for item in records:
+        print(f"{item['schedule_id']} {item['status']} lanes={len(item['lanes'])} {item['objective']}")
+    if not records:
+        print("No worktree schedules.")
+    return 0
+
+
+def worktree_schedule_status(args: argparse.Namespace) -> int:
+    schedule = WorktreeManager(store_from(args)).schedule_status(args.schedule_id)
+    print(f"{schedule['schedule_id']} {schedule['status']}: {schedule['objective']}")
+    for lane in schedule["lanes"]:
+        gates = f"tests={lane.get('test_result') or '-'} review={lane.get('review_status') or '-'}"
+        deps = ",".join(lane.get("dependencies", [])) or "none"
+        print(
+            f"  {lane['task_id']} {lane.get('task_status', '-')} {lane['role']} "
+            f"{lane['agent']} deps={deps} {gates} merge_ready={lane.get('merge_ready')}"
+        )
+        print(f"    {lane['branch']} {lane['path']}")
+    return 0
+
+
 def worktree_list(args: argparse.Namespace) -> int:
     records = WorktreeManager(store_from(args)).list()
     for item in records:
@@ -810,6 +855,34 @@ def worktree_list(args: argparse.Namespace) -> int:
     if not records:
         print("No worktrees.")
     return 0
+
+
+def worktree_resume(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    manager = WorktreeManager(store)
+    record = manager.diff(args.task_id)
+    context_path = record.get("context_path")
+    context_text = Path(context_path).read_text(encoding="utf-8") if context_path and Path(context_path).exists() else ""
+    packet = store.context_packet(record.get("role", args.agent), record.get("objective", ""), args.mode)
+    prompt = (
+        "Read this Continuum parallel worktree packet before acting. "
+        "Work only inside the assigned worktree and edit only owned paths.\n\n"
+        + (context_text or packet["text"])
+    )
+    args.cwd = Path(record["path"])
+    args.agent_args = []
+    args.context_limit = None
+    args.threshold = None
+    print(f"Task: {record['task_id']} role={record.get('role', '-')} agent={args.agent}")
+    print(f"Worktree: {record['path']}")
+    print(f"Branch: {record['branch']}")
+    print(f"Owned paths: {', '.join(record.get('owned_paths', [])) or 'none'}")
+    print(f"Estimated context: {estimate_tokens(prompt)} tokens")
+    return (
+        run_interactive_agent(args, resumed=True, injected_context=prompt)
+        if args.interactive
+        else run_agent(args, resumed=True, injected_context=prompt)
+    )
 
 
 def worktree_diff(args: argparse.Namespace) -> int:
@@ -1088,6 +1161,21 @@ def parser() -> argparse.ArgumentParser:
 
     worktrees = commands.add_parser("worktree", help="Manage task-isolated Git worktrees.")
     worktree_commands = worktrees.add_subparsers(dest="worktree_command", required=True)
+    schedule_worktrees = worktree_commands.add_parser("schedule", parents=[common], help="Plan parallel task worktrees for one objective.")
+    schedule_worktrees.add_argument("objective")
+    schedule_worktrees.add_argument(
+        "--lane",
+        action="append",
+        help="Parallel lane as role:agent:path1,path2. Repeat for each lane. If omitted, Continuum infers safe lanes from existing repo folders.",
+    )
+    schedule_worktrees.add_argument("--depends-on", action="append", default=[], help="Dependency as role:depends_on_role; repeat as needed.")
+    schedule_worktrees.add_argument("--context-mode", choices=["compact", "normal", "deep"], default="compact")
+    schedule_worktrees.set_defaults(func=worktree_schedule)
+    list_schedules = worktree_commands.add_parser("schedules", parents=[common], help="List parallel worktree schedules.")
+    list_schedules.set_defaults(func=worktree_schedules)
+    status_schedule = worktree_commands.add_parser("schedule-status", parents=[common], help="Show lane, gate and merge readiness for a schedule.")
+    status_schedule.add_argument("schedule_id")
+    status_schedule.set_defaults(func=worktree_schedule_status)
     create_worktree = worktree_commands.add_parser("create", parents=[common], help="Create a task-bound worktree and branch.")
     create_worktree.add_argument("task_id")
     create_worktree.set_defaults(func=worktree_create)
@@ -1096,6 +1184,12 @@ def parser() -> argparse.ArgumentParser:
     diff_worktree = worktree_commands.add_parser("diff", parents=[common], help="Show changed paths and diff summary for a worktree.")
     diff_worktree.add_argument("task_id")
     diff_worktree.set_defaults(func=worktree_diff)
+    resume_worktree = worktree_commands.add_parser("resume", parents=[common], help="Resume an agent inside a task worktree with shared Continuum context.")
+    resume_worktree.add_argument("task_id")
+    resume_worktree.add_argument("agent", choices=AGENTS)
+    resume_worktree.add_argument("mode", choices=["compact", "normal", "deep"], nargs="?", default="compact")
+    resume_worktree.add_argument("--interactive", "--pty", dest="interactive", action="store_true")
+    resume_worktree.set_defaults(func=worktree_resume)
     test_worktree = worktree_commands.add_parser("test-result", parents=[common], help="Record the required test gate for merging.")
     test_worktree.add_argument("task_id")
     gate = test_worktree.add_mutually_exclusive_group(required=True)

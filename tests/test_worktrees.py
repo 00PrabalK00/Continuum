@@ -38,6 +38,43 @@ class WorktreeManagerTest(unittest.TestCase):
         discarded = self.manager.discard(self.task["task_id"], force=True)
         self.assertEqual(discarded["status"], "DISCARDED")
 
+    def test_schedule_creates_parallel_worktrees_with_context_packets(self):
+        (self.project / "src").mkdir()
+        (self.project / "tests").mkdir()
+        schedule = self.manager.schedule(
+            "split auth work",
+            ["backend:claude:src", "tests:codex:tests"],
+            ["tests:backend"],
+        )
+
+        self.assertEqual(schedule["schedule_id"], "P0001")
+        self.assertEqual(len(schedule["lanes"]), 2)
+        backend = next(lane for lane in schedule["lanes"] if lane["role"] == "backend")
+        tests = next(lane for lane in schedule["lanes"] if lane["role"] == "tests")
+        self.assertTrue(Path(backend["path"]).exists())
+        self.assertTrue(Path(tests["context_path"]).exists())
+        self.assertEqual(tests["dependencies"], ["backend"])
+        self.assertEqual(self.store.get_task(tests["task_id"])["status"], "RUNNING")
+
+    def test_schedule_rejects_overlapping_lane_ownership(self):
+        with self.assertRaisesRegex(WorktreeError, "overlaps"):
+            self.manager.schedule("unsafe split", ["backend:claude:src", "api:codex:src/api"])
+
+    def test_dependency_blocks_merge_until_dependency_lane_is_done(self):
+        (self.project / "src").mkdir()
+        (self.project / "tests").mkdir()
+        schedule = self.manager.schedule("split auth work", ["backend:claude:src", "tests:codex:tests"], ["tests:backend"])
+        tests = next(lane for lane in schedule["lanes"] if lane["role"] == "tests")
+        self.manager.record_tests(tests["task_id"], True, "tests pass")
+        self.manager.record_review(tests["task_id"], True, "approved")
+
+        with self.assertRaisesRegex(WorktreeError, "dependency"):
+            self.manager.merge(tests["task_id"])
+
+        status = self.manager.schedule_status(schedule["schedule_id"])
+        tests_status = next(lane for lane in status["lanes"] if lane["role"] == "tests")
+        self.assertFalse(tests_status["merge_ready"])
+
     def test_merge_requires_passing_test_gate(self):
         self.manager.create(self.task["task_id"])
 
