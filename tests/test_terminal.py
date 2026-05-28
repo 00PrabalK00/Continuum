@@ -121,12 +121,13 @@ sys.exit(0 if accepted else 23)
 
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", ResourceWarning)
+                kwargs = {"input_stream": ReadyInput(ready_seen, payload)} if os.name == "nt" else {"scripted_input": payload}
                 returncode = run_terminal_process(
                     [sys.executable, "-c", script],
                     cwd=Path(temporary),
                     env=env,
                     on_output=capture,
-                    input_stream=ReadyInput(ready_seen, payload),
+                    **kwargs,
                 )
         transcript = "".join(chunks)
         events = []
