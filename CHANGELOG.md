@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.3 - Alpha
+
+- Added optional Docker UI deployment support.
+- Fixed the Docker image build by copying `README.md` before `pip install .`,
+  matching the package metadata declared in `pyproject.toml`.
+- Added contributor credit for the Docker support PR.
+
 ## 0.6.2 - Alpha
 
 - Fixed the PTY input receipt acceptance test on macOS by comparing resolved

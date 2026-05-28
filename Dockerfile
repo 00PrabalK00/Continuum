@@ -10,6 +10,7 @@ RUN groupadd --gid 1000 continuum && \
 WORKDIR /app
 COPY continuum/ continuum/
 COPY pyproject.toml .
+COPY README.md .
 RUN pip install --no-cache-dir . && \
     rm -rf /root/.cache
 

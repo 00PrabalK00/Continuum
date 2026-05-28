@@ -2,6 +2,7 @@
 
 | Version | Notes |
 | --- | --- |
+| `v0.6.3` | [Docker UI deployment support](v0.6.3.md) |
 | `v0.6.2` | [macOS PTY receipt path normalization](v0.6.2.md) |
 | `v0.6.1` | [PTY input receipt acceptance](v0.6.1.md) |
 | `v0.6.0` | [Parallel worktree scheduling](v0.6.0.md) |
