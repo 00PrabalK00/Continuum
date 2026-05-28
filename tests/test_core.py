@@ -119,6 +119,34 @@ class MemoryStoreTest(unittest.TestCase):
             self.assertIn("Relevant auth finding", packet["text"])
             self.assertLessEqual(len(packet["text"]), 800 * 4)
 
+    def test_hierarchical_delegation_stores_graph_and_execution_packet(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "app")
+            store.initialize(1000, 0.8)
+
+            delegation = store.create_delegation(
+                "claude-opus-4-1-20250805",
+                "codex",
+                "Implement deterministic PTY input receipt validation",
+                mode="checkpoint",
+                scope=["continuum/terminal.py", "tests/test_terminal.py"],
+                review="each-step",
+            )
+
+            self.assertEqual(delegation["delegation_id"], "D0001")
+            self.assertEqual(delegation["graph"]["kind"], "hierarchical_model_delegation")
+            self.assertIn({"from": "agent:claude-opus-4-1-20250805", "to": f"packet:{delegation['task_id']}", "type": "plans"}, delegation["graph"]["edges"])
+            self.assertTrue((store.project / ".continuum" / "delegations" / "D0001" / "graph.json").exists())
+            packet = Path(delegation["packet_path"]).read_text(encoding="utf-8")
+            self.assertIn("Task ID:", packet)
+            self.assertIn("Reason This Task Exists", packet)
+            self.assertIn("Files Allowed To Edit", packet)
+            self.assertIn("When To Escalate Back To Big Model", packet)
+            self.assertIn("continuum/terminal.py", packet)
+            self.assertIn("tests/test_terminal.py", packet)
+            inbox = store.messages("codex")
+            self.assertEqual(inbox[0]["kind"], "execution_packet")
+
     def test_semantic_search_ranks_stored_embeddings(self):
         with tempfile.TemporaryDirectory() as temporary:
             store = MemoryStore(Path(temporary) / "app")

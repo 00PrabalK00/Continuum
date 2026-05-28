@@ -191,6 +191,8 @@ class InteractiveShell:
                 self.write("Usage: /plan <request>")
                 return []
             return ["team", "run", *self.common(), "default_dev_team", " ".join(rest)]
+        if command == "instruct":
+            return self.instruct(rest)
         if command == "service":
             return ["service", *self.common(), *(rest or ["status"])]
         if command == "ui":
@@ -201,6 +203,33 @@ class InteractiveShell:
         if command == "adapters":
             return ["adapters", "list", *self.common()]
         return None
+
+    def instruct(self, values: list[str]) -> list[str]:
+        options: dict[str, str] = {}
+        goal_parts: list[str] = []
+        for value in values:
+            if "=" in value:
+                key, item = value.split("=", 1)
+                if key in {"planner", "executor", "mode", "budget", "goal", "review", "tests", "handoff", "scope"}:
+                    options[key] = item
+                    continue
+            goal_parts.append(value)
+        goal = options.get("goal") or " ".join(goal_parts).strip()
+        planner = options.get("planner")
+        executor = options.get("executor")
+        if not planner or not executor or not goal:
+            self.write('Usage: /instruct planner=claude-opus-4-1-20250805 executor=codex mode=checkpoint goal="Implement PTY receipts"')
+            return []
+        argv = ["instruct", *self.common(), "--planner", planner, "--executor", executor, "--goal", goal]
+        for key in ("mode", "budget", "review", "tests", "handoff"):
+            if key in options:
+                argv.extend([f"--{key}", options[key]])
+        if "scope" in options:
+            for item in options["scope"].split(","):
+                item = item.strip()
+                if item:
+                    argv.extend(["--scope", item])
+        return argv
 
     def _agent_and_rest(self, values: list[str]) -> tuple[str, list[str]]:
         if values and values[0] in {"claude", "codex", "gemini"}:
@@ -270,6 +299,7 @@ class InteractiveShell:
   /model <subcommand>          Call a text-only model provider.
   /team <subcommand>           Create, inspect or run a team workflow.
   /plan request                 Plan with default_dev_team.
+  /instruct planner=claude-opus-4-1-20250805 executor=codex goal="..."  Create graph-backed delegation packet.
   /task <subcommand>           Manage controlled tasks and file claims.
   /session <subcommand>        Detect or bridge externally launched agents.
   /worktree <subcommand>       Manage task-isolated Git worktrees.

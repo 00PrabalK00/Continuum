@@ -1,5 +1,6 @@
 import tempfile
 import time
+import sys
 import unittest
 import argparse
 from contextlib import redirect_stderr, redirect_stdout
@@ -170,6 +171,40 @@ class CliTest(unittest.TestCase):
             self.assertIn("MSG0001", rendered)
             self.assertIn("Estimated context:", rendered)
             self.assertIn("check auth", rendered)
+
+    def test_instruct_command_creates_graph_backed_execution_packet(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            output = StringIO()
+            with redirect_stdout(output):
+                previous = sys.argv
+                try:
+                    sys.argv = ["continuum", "init", "--project", str(project)]
+                    self.assertEqual(main(), 0)
+                    sys.argv = [
+                        "continuum",
+                        "instruct",
+                        "--project",
+                        str(project),
+                        "--planner",
+                        "claude-opus-4-1-20250805",
+                        "--executor",
+                        "codex",
+                        "--mode",
+                        "checkpoint",
+                        "--scope",
+                        "continuum/terminal.py",
+                        "--goal",
+                        "Implement deterministic PTY receipt validation",
+                    ]
+                    self.assertEqual(main(), 0)
+                finally:
+                    sys.argv = previous
+            rendered = output.getvalue()
+            self.assertIn("Delegation planned: D0001", rendered)
+            self.assertIn("Executor: codex", rendered)
+            self.assertIn("Packet:", rendered)
+            self.assertTrue((project / ".continuum" / "delegations" / "D0001" / "graph.json").exists())
 
     def test_resume_injects_context_with_agent_specific_prompt_mode(self):
         prompt = "continue from handoff"

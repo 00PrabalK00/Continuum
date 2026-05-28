@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.0 - Alpha
+
+- Added Hierarchical Model Delegation through `continuum instruct`.
+- Added graph-backed delegation state and compact markdown execution packets.
+- Added slash-command support for `/instruct planner=... executor=... goal="..."`.
+
 ## 0.6.3 - Alpha
 
 - Added optional Docker UI deployment support.

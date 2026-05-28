@@ -75,6 +75,7 @@ project:
 /resume codex compact
 /memory authentication callback --semantic
 /team run default_dev_team "Fix failing auth test"
+/instruct planner=claude-opus-4-1-20250805 executor=codex mode=checkpoint goal="Implement deterministic PTY receipts"
 /worktree list
 /color off
 /motion off
@@ -221,6 +222,27 @@ continuum team run default_dev_team "Fix failing auth test" \
   --allow-file src/auth.ts \
   --allow-file tests/auth.test.ts
 ```
+
+## Delegate With Planner And Executor Models
+
+Use `instruct` when a stronger planner should create a bounded execution
+packet for a cheaper executor:
+
+```bash
+continuum instruct \
+  --planner claude-opus-4-1-20250805 \
+  --executor codex \
+  --mode checkpoint \
+  --scope continuum/terminal.py \
+  --scope tests/test_terminal.py \
+  --goal "Implement deterministic PTY input receipt validation"
+```
+
+Continuum stores a graph in `.continuum/delegations/<id>/graph.json` and
+generates a compact markdown packet for the executor. Use provider or agent
+names for executors such as `codex`, `claude` or `gemini`. Use provider model
+IDs for planner labels, for example `claude-opus-4-1-20250805`, `gemini-2.5-pro` or
+`codex-mini-latest`.
 
 Starter presets:
 

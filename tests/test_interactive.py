@@ -49,6 +49,38 @@ class InteractiveShellTest(unittest.TestCase):
 
         self.assertEqual(calls[0][0:2], ["session", "list"])
 
+    def test_instruct_slash_command_uses_key_value_contract_syntax(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            calls = []
+            shell = InteractiveShell(Path(temporary), None, dispatch=lambda argv: calls.append(argv) or 0)
+
+            self.assertEqual(
+                shell.execute('/instruct planner=claude-opus-4-1-20250805 executor=codex mode=checkpoint scope=continuum/terminal.py,tests/test_terminal.py goal="Implement PTY receipts"'),
+                0,
+            )
+
+            project = str(Path(temporary).resolve())
+            self.assertEqual(
+                calls[0],
+                [
+                    "instruct",
+                    "--project",
+                    project,
+                    "--planner",
+                    "claude-opus-4-1-20250805",
+                    "--executor",
+                    "codex",
+                    "--goal",
+                    "Implement PTY receipts",
+                    "--mode",
+                    "checkpoint",
+                    "--scope",
+                    "continuum/terminal.py",
+                    "--scope",
+                    "tests/test_terminal.py",
+                ],
+            )
+
     def test_slash_commands_scope_project_and_preserve_semantic_flag(self):
         with tempfile.TemporaryDirectory() as temporary:
             calls = []

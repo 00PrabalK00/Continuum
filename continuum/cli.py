@@ -718,6 +718,37 @@ def context_build(args: argparse.Namespace) -> int:
     return 0
 
 
+def instruct(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    if not store.config_file.exists():
+        store.initialize(DEFAULT_CONTEXT_LIMIT, DEFAULT_THRESHOLD)
+    result = store.create_delegation(
+        args.planner,
+        args.executor,
+        args.goal,
+        mode=args.mode,
+        budget=args.budget,
+        scope=args.scope,
+        review=args.review,
+        tests=args.tests,
+        handoff=args.handoff,
+    )
+    print(f"Delegation planned: {result['delegation_id']}")
+    print(f"Planner: {result['planner']}")
+    print(f"Executor: {result['executor']}")
+    print(f"Task: {result['task_id']}")
+    print(f"Mode: {result['mode']}")
+    print(f"Estimated packet: {result['estimated_tokens']} tokens")
+    print(f"Graph: {result['graph_path']}")
+    print(f"Packet: {result['packet_path']}")
+    print()
+    print("Next executor instruction:")
+    print(f"Read `{result['packet_path']}` and execute only `{result['task_id']}`.")
+    print(f"Use `continuum task claim {result['task_id']} <agent> <files...>` before editing.")
+    print("Escalate to the planner if the packet scope or constraints are insufficient.")
+    return 0
+
+
 def message_send(args: argparse.Namespace) -> int:
     message = store_from(args).send_message(
         args.sender, args.recipient, args.body, args.kind, args.workflow, args.task_id
@@ -1118,6 +1149,22 @@ def parser() -> argparse.ArgumentParser:
     build_context.add_argument("--mode", choices=["compact", "normal", "deep"], default="compact")
     build_context.add_argument("--workflow")
     build_context.set_defaults(func=context_build)
+
+    delegate = commands.add_parser(
+        "instruct",
+        parents=[common],
+        help="Create a graph-backed hierarchical delegation packet from a planner to an executor.",
+    )
+    delegate.add_argument("--planner", required=True, help="Planning model or role, for example claude-opus-4-1-20250805 or gemini-2.5-pro.")
+    delegate.add_argument("--executor", required=True, help="Executor agent or provider, for example codex, claude or gemini.")
+    delegate.add_argument("--goal", required=True, help="Objective to convert into a bounded execution packet.")
+    delegate.add_argument("--mode", choices=["direct", "checkpoint", "supervisor"], default="direct")
+    delegate.add_argument("--budget", choices=["low", "normal", "high"], default="normal")
+    delegate.add_argument("--scope", action="append", default=[], help="File path the executor may edit; repeat per file.")
+    delegate.add_argument("--review", choices=["on-failure", "each-step", "final"], default="on-failure")
+    delegate.add_argument("--tests", choices=["required", "best-effort", "none"], default="required")
+    delegate.add_argument("--handoff", choices=["strict", "normal"], default="strict")
+    delegate.set_defaults(func=instruct)
 
     messages = commands.add_parser("message", help="Exchange bounded workflow messages between agent roles.")
     message_commands = messages.add_subparsers(dest="message_command", required=True)

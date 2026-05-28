@@ -255,6 +255,17 @@ class MemoryStore:
             )"""
         )
         connection.execute(
+            """CREATE TABLE IF NOT EXISTS context_graphs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                status TEXT NOT NULL,
+                graph_json TEXT NOT NULL,
+                packet_markdown TEXT NOT NULL
+            )"""
+        )
+        connection.execute(
             """CREATE TABLE IF NOT EXISTS external_sessions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 created_at TEXT NOT NULL,
@@ -273,6 +284,212 @@ class MemoryStore:
         )
         connection.commit()
         return connection
+
+    @staticmethod
+    def delegation_ref(graph_id: int) -> str:
+        return f"D{graph_id:04d}"
+
+    @staticmethod
+    def parse_delegation_ref(value: str) -> int:
+        normalized = value.strip().upper()
+        if normalized.startswith("D"):
+            normalized = normalized[1:]
+        if not normalized.isdigit():
+            raise ValueError(f"Invalid delegation id: {value}")
+        return int(normalized)
+
+    def create_delegation(
+        self,
+        planner: str,
+        executor: str,
+        goal: str,
+        *,
+        mode: str = "direct",
+        budget: str = "normal",
+        scope: list[str] | None = None,
+        review: str = "on-failure",
+        tests: str = "required",
+        handoff: str = "strict",
+    ) -> dict[str, Any]:
+        if mode not in {"direct", "checkpoint", "supervisor"}:
+            raise ValueError(f"Invalid delegation mode: {mode}")
+        if budget not in {"low", "normal", "high"}:
+            raise ValueError(f"Invalid delegation budget: {budget}")
+        if review not in {"on-failure", "each-step", "final"}:
+            raise ValueError(f"Invalid review policy: {review}")
+        if tests not in {"required", "best-effort", "none"}:
+            raise ValueError(f"Invalid test policy: {tests}")
+        if handoff not in {"strict", "normal"}:
+            raise ValueError(f"Invalid handoff policy: {handoff}")
+
+        normalized_scope = []
+        for item in scope or []:
+            value = str(Path(item).as_posix())
+            while value.startswith("./"):
+                value = value[2:]
+            if value:
+                normalized_scope.append(value)
+        normalized_scope = sorted(set(normalized_scope))
+        task = self.create_task(f"Delegated execution: {goal}", "hierarchical")
+        task_id = task["task_id"]
+        self.assign_task(task_id, executor)
+
+        context = self.resume_context("compact") if (self.state_dir / "current.md").exists() else ""
+        decisions = [
+            compact_text(json.dumps(item["payload"], ensure_ascii=True), 240)
+            for item in self.recent_events(80)
+            if item["kind"] in {"decision", "delegation_decision", "workflow_created", "handoff"}
+        ][-5:]
+        allowed = ", ".join(f"`{item}`" for item in normalized_scope) if normalized_scope else "No files pre-approved. Inspect first, then claim explicit files before editing."
+        inspect = "Project files relevant to the goal; retrieve extra memory by exact query before opening raw logs."
+        packet = f"""# Hierarchical Execution Packet
+
+Task ID: `{task_id}`
+Role: `{executor}`
+Planner: `{planner}`
+Delegation mode: `{mode}`
+Budget: `{budget}`
+
+## Goal
+{compact_text(goal, 600)}
+
+## Reason This Task Exists
+The planner role is preserving architecture intent and constraints while the executor role performs one bounded implementation slice.
+
+## Files Allowed To Edit
+{allowed}
+
+## Files Only Allowed To Inspect
+{inspect}
+
+## Relevant Symbols
+- Not inferred automatically. Executor must identify symbols only inside the allowed scope or escalate.
+
+## Constraints
+- Follow the existing architecture and recorded Continuum decisions.
+- Do not redesign unrelated systems.
+- Keep context compact; retrieve targeted memory instead of asking for all history.
+- Model providers may reason, but only agent providers may claim or edit files.
+
+## Do Not Change
+- Files outside the allowed edit scope without escalating back to `{planner}`.
+- Public behavior unrelated to the goal.
+- Existing release/version history except through an explicit release task.
+
+## Expected Output
+- Patch summary.
+- Files changed.
+- Tests or checks run.
+- Remaining risks.
+- Exact next step if incomplete.
+
+## Acceptance Checks
+- Test policy: `{tests}`.
+- Handoff policy: `{handoff}`.
+- No file edits outside the packet scope.
+- Any new risk is recorded as a Continuum message or handoff.
+
+## Failure Conditions
+- Scope expansion is required.
+- Tests fail repeatedly.
+- Existing architecture decision conflicts with the implementation.
+- The executor cannot identify the relevant files safely.
+
+## When To Escalate Back To Big Model
+- Review policy: `{review}`.
+- Escalate before changing files outside the allowed list.
+- Escalate if a schema, workflow, provider boundary or safety rule must change.
+
+## Context Summary
+{compact_text(context, 1_200) or "No compact current state exists yet."}
+
+## Previous Decisions
+{chr(10).join(f"- {item}" for item in decisions) or "- No previous decisions retrieved for this packet."}
+"""
+        graph = {
+            "version": 1,
+            "kind": "hierarchical_model_delegation",
+            "status": "PLANNED",
+            "planner": planner,
+            "executor": executor,
+            "mode": mode,
+            "budget": budget,
+            "review": review,
+            "tests": tests,
+            "handoff": handoff,
+            "nodes": [
+                {"id": "objective", "type": "objective", "title": compact_text(goal, 240)},
+                {"id": task_id, "type": "task", "title": compact_text(goal, 240), "status": "ASSIGNED"},
+                {"id": f"packet:{task_id}", "type": "context_packet", "format": "markdown"},
+                {"id": f"agent:{planner}", "type": "planner"},
+                {"id": f"agent:{executor}", "type": "executor"},
+            ],
+            "edges": [
+                {"from": task_id, "to": "objective", "type": "implements"},
+                {"from": f"packet:{task_id}", "to": task_id, "type": "guides"},
+                {"from": f"agent:{planner}", "to": f"packet:{task_id}", "type": "plans"},
+                {"from": f"agent:{executor}", "to": task_id, "type": "executes"},
+            ],
+            "allowed_edit_files": normalized_scope,
+        }
+        now = utc_now()
+        connection = self.connect()
+        cursor = connection.execute(
+            """INSERT INTO context_graphs(created_at, updated_at, kind, status, graph_json, packet_markdown)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (now, now, "hierarchical_model_delegation", "PLANNED", json.dumps(graph, indent=2), compact_text(packet, CONTEXT_BUDGETS["normal"] * 4)),
+        )
+        connection.commit()
+        graph_id = int(cursor.lastrowid)
+        delegation_id = self.delegation_ref(graph_id)
+        graph["id"] = delegation_id
+        packet_path = self.state_dir / "delegations" / delegation_id / f"{task_id}.md"
+        graph_path = self.state_dir / "delegations" / delegation_id / "graph.json"
+        write_text(packet_path, packet)
+        write_text(graph_path, json.dumps(graph, indent=2) + "\n")
+        connection.execute(
+            "UPDATE context_graphs SET graph_json = ? WHERE id = ?",
+            (json.dumps(graph, indent=2), graph_id),
+        )
+        connection.commit()
+        connection.close()
+        self.send_message(planner, executor, packet, "execution_packet", task_ref=task_id)
+        self.event(
+            "delegation_planned",
+            {"delegation_id": delegation_id, "task_id": task_id, "planner": planner, "executor": executor, "packet": str(packet_path)},
+        )
+        return {
+            "delegation_id": delegation_id,
+            "task_id": task_id,
+            "planner": planner,
+            "executor": executor,
+            "mode": mode,
+            "packet_path": str(packet_path),
+            "graph_path": str(graph_path),
+            "estimated_tokens": estimate_tokens(packet),
+            "graph": graph,
+            "packet": packet,
+        }
+
+    def get_delegation(self, delegation_ref: str) -> dict[str, Any] | None:
+        graph_id = self.parse_delegation_ref(delegation_ref)
+        connection = self.connect()
+        row = connection.execute(
+            "SELECT id, created_at, updated_at, kind, status, graph_json, packet_markdown FROM context_graphs WHERE id = ?",
+            (graph_id,),
+        ).fetchone()
+        connection.close()
+        if not row:
+            return None
+        return {
+            "delegation_id": self.delegation_ref(row[0]),
+            "created_at": row[1],
+            "updated_at": row[2],
+            "kind": row[3],
+            "status": row[4],
+            "graph": json.loads(row[5]),
+            "packet": row[6],
+        }
 
     def event(self, kind: str, payload: dict[str, Any]) -> None:
         item = {"created_at": utc_now(), "kind": kind, "payload": payload}
