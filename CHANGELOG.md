@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.0 - Alpha
+
+- Added deterministic parallel worktree scheduling for large objectives.
+- Added lane ownership, dependency tracking, context packets and schedule
+  status for isolated multi-agent work.
+- Added `continuum worktree resume` so agents run inside their assigned
+  worktree while receiving shared root Continuum memory.
+
 ## 0.5.0 - Alpha
 
 - Added dedicated Claude Code, Codex and Gemini CLI interactive terminal

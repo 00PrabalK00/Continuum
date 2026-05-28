@@ -246,6 +246,36 @@ its claims.
 
 ## Use Git Worktrees
 
+Schedule multiple isolated lanes for one objective:
+
+```bash
+continuum worktree schedule "Build auth flow with tests and docs" \
+  --lane backend:claude:src/auth,src/api \
+  --lane tests:codex:tests \
+  --lane docs:gemini:docs \
+  --depends-on tests:backend
+```
+
+Continuum creates one task, branch, worktree and compact context packet per
+lane. File ownership is checked before scheduling; overlapping lanes are
+rejected. Start a lane inside its isolated worktree with shared Continuum
+memory:
+
+```bash
+continuum worktree resume T0001 claude compact
+continuum worktree resume T0002 codex compact --interactive
+```
+
+Track gates and merge readiness:
+
+```bash
+continuum worktree schedules
+continuum worktree schedule-status P0001
+```
+
+Parallel provider launching is still explicit: Continuum prepares safe lanes
+and context, then you start each agent lane deliberately.
+
 Create isolated work for a task:
 
 ```bash
@@ -382,6 +412,7 @@ Agents/
 - [Teams](docs/teams.md)
 - [Tasks And Claims](docs/tasks-and-claims.md)
 - [Task Worktrees](docs/worktrees.md)
+- [Parallel Worktrees](docs/parallel-worktrees.md)
 - [Native Services](docs/services.md)
 - [Optional Docker Mode](docs/docker.md)
 - [Troubleshooting](docs/troubleshooting.md)

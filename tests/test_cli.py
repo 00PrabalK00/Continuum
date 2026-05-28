@@ -249,6 +249,45 @@ class CliTest(unittest.TestCase):
         self.assertIn("gemini: gemini_interactive", rendered)
         self.assertIn("never auto-approves", rendered)
 
+    def test_worktree_resume_runs_agent_inside_isolated_worktree(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            import subprocess
+
+            project.mkdir()
+            subprocess.run(["git", "init"], cwd=project, capture_output=True, check=True)
+            (project / "src").mkdir()
+            (project / "src" / "app.py").write_text("value = 1\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=project, capture_output=True, check=True)
+            subprocess.run(
+                ["git", "-c", "user.name=Continuum Test", "-c", "user.email=test@example.invalid", "commit", "-m", "base"],
+                cwd=project,
+                capture_output=True,
+                check=True,
+            )
+            with redirect_stdout(StringIO()):
+                self.assertEqual(main(["init", "--project", str(project)]), 0)
+                self.assertEqual(
+                    main([
+                        "worktree", "schedule", "--project", str(project),
+                        "split work", "--lane", "backend:codex:src",
+                    ]),
+                    0,
+                )
+            captured = {}
+
+            def fake_run(args, resumed=False, injected_context=None):
+                captured["cwd"] = str(args.cwd)
+                captured["resumed"] = resumed
+                captured["context"] = injected_context
+                return 0
+
+            with patch("continuum.cli.run_agent", side_effect=fake_run):
+                self.assertEqual(main(["worktree", "resume", "--project", str(project), "T0001", "codex"]), 0)
+            self.assertIn(".continuum", captured["cwd"])
+            self.assertTrue(captured["resumed"])
+            self.assertIn("Parallel Worktree Context", captured["context"])
+
     def test_interactive_terminal_missing_backend_prints_specific_action(self):
         with tempfile.TemporaryDirectory() as temporary:
             project = Path(temporary) / "repo"

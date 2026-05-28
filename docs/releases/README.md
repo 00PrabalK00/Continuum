@@ -2,6 +2,7 @@
 
 | Version | Notes |
 | --- | --- |
+| `v0.6.0` | [Parallel worktree scheduling](v0.6.0.md) |
 | `v0.5.0` | [Interactive agent adapters](v0.5.0.md) |
 | `v0.4.0` | [External session bridge](v0.4.0.md) |
 | `v0.3.0` | [Live interactive terminal foundation](v0.3.0.md) |
