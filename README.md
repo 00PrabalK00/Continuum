@@ -359,10 +359,15 @@ On Windows, the compatibility alias is also available:
 continuum autostart install --vault "C:\Users\me\Documents\Obsidian Vault\Agents"
 ```
 
-## Optional Docker Service
+## Optional Docker Mode
 
-Continuum runs on the host. The Docker Compose file is only for its optional
-vector-service profile:
+Run the Control Center UI in Docker against a mounted project:
+
+```bash
+PROJECT_DIR=/path/to/project docker compose --profile ui up
+```
+
+Start the optional Qdrant vector-service profile:
 
 ```bash
 docker compose --profile vector up -d
