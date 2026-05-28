@@ -1,4 +1,16 @@
 services:
+  app:
+    build: .
+    volumes:
+      - ${PROJECT_DIR:?Set PROJECT_DIR to your project path}:/project
+    working_dir: /project
+    ports:
+      - "127.0.0.1:7357:7357"
+    environment:
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+    command: ["ui", "--host", "0.0.0.0", "--port", "7357"]
+    profiles: ["ui"]
+
   qdrant:
     image: qdrant/qdrant:v1.13.6
     profiles: ["vector"]
