@@ -84,6 +84,33 @@ class InteractiveShellTest(unittest.TestCase):
         self.assertEqual(shell.last_paste, pasted)
         self.assertIn(pasted.rstrip(), " ".join(calls[0]))
 
+    def test_plain_text_is_sent_to_selected_agent_chat(self):
+        output = StringIO()
+        calls = []
+        shell = InteractiveShell(
+            Path("."),
+            None,
+            dispatch=lambda argv: calls.append(argv) or 0,
+            selected_agent="claude",
+            output=output,
+        )
+
+        self.assertEqual(shell.execute("hi there"), 0)
+        self.assertEqual(calls[0][0:4], ["chat", "--project", str(Path(".").resolve()), "claude"])
+        self.assertEqual(calls[0][4:], ["compact", "hi there"])
+        self.assertIn("Sending to claude", output.getvalue())
+
+    def test_chat_slash_command_can_target_another_agent(self):
+        calls = []
+        shell = InteractiveShell(Path("."), None, dispatch=lambda argv: calls.append(argv) or 0)
+
+        self.assertEqual(shell.execute("/chat gemini normal inspect the rules"), 0)
+
+        self.assertEqual(
+            calls[0],
+            ["chat", "--project", str(Path(".").resolve()), "gemini", "normal", "inspect the rules"],
+        )
+
     def test_terminal_routes_to_interactive_pty_modes(self):
         with tempfile.TemporaryDirectory() as temporary:
             calls = []

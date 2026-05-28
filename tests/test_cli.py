@@ -266,6 +266,65 @@ class CliTest(unittest.TestCase):
             self.assertEqual(ask.call_args.args[1], "summarize this large paste")
             self.assertIn("ok", output.getvalue())
 
+    def test_chat_sends_message_with_context_to_agent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            output = StringIO()
+            previous = sys.argv
+            try:
+                sys.argv = ["continuum", "init", "--project", str(project)]
+                self.assertEqual(main(), 0)
+                with patch("continuum.cli.run_agent", return_value=0) as run:
+                    with redirect_stdout(output):
+                        sys.argv = [
+                            "continuum",
+                            "chat",
+                            "--project",
+                            str(project),
+                            "claude",
+                            "hi",
+                            "there",
+                        ]
+                        self.assertEqual(main(), 0)
+            finally:
+                sys.argv = previous
+
+            args = run.call_args.args[0]
+            prompt = run.call_args.kwargs["injected_context"]
+            self.assertEqual(args.agent, "claude")
+            self.assertEqual(args.agent_args, [])
+            self.assertTrue(run.call_args.kwargs["resumed"])
+            self.assertIn("User message:\nhi there", prompt)
+            self.assertIn("Chat target: claude", output.getvalue())
+
+    def test_chat_accepts_explicit_context_mode(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            previous = sys.argv
+            try:
+                sys.argv = ["continuum", "init", "--project", str(project)]
+                self.assertEqual(main(), 0)
+                with patch("continuum.cli.run_agent", return_value=0) as run:
+                    sys.argv = [
+                        "continuum",
+                        "chat",
+                        "--project",
+                        str(project),
+                        "gemini",
+                        "normal",
+                        "inspect",
+                        "rules",
+                    ]
+                    self.assertEqual(main(), 0)
+            finally:
+                sys.argv = previous
+
+            args = run.call_args.args[0]
+            prompt = run.call_args.kwargs["injected_context"]
+            self.assertEqual(args.agent, "gemini")
+            self.assertTrue(run.call_args.kwargs["resumed"])
+            self.assertIn("inspect rules", prompt)
+
     def test_memory_refresh_embeds_recent_events_with_event_ids(self):
         with tempfile.TemporaryDirectory() as temporary:
             project = Path(temporary) / "repo"

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.3 - Alpha
+
+- Added `continuum chat` for one-shot messages to Claude, Codex or Gemini with
+  bounded Continuum context injected.
+- Made plain text in `continuum shell` dispatch to the selected agent as a
+  compact-context chat instead of requiring every message to be a slash command.
+- Kept slash commands as the control surface for actions like `/switch`,
+  `/resume-terminal`, `/memory` and `/handoff`.
+
 ## 0.7.2 - Alpha
 
 - Made `model ask` accept unquoted multi-word prompts for pasted text.

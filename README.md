@@ -73,6 +73,7 @@ project:
 /terminals
 /agent claude
 /switch gemini normal
+/chat claude hi
 /handoff Fix authentication retry | Run the failing API test.
 /resume codex compact
 /memory authentication callback --semantic
@@ -95,6 +96,14 @@ project automatically unless you pass `--project` yourself. `/switch <agent>
 [mode]` changes the active agent target and immediately resumes it with the
 latest compact context. Bracketed paste input is stored in full and displayed
 as a compact `{n chars}` receipt before the command runs.
+
+Plain text in the shell is sent to the selected agent with compact Continuum
+context. These are equivalent:
+
+```text
+hi
+/chat claude hi
+```
 
 ## Record And Resume Agent Work
 
@@ -134,6 +143,14 @@ Resume with bounded context injected into another agent:
 ```bash
 continuum resume gemini compact
 continuum resume codex normal
+```
+
+Send a single message to an agent with bounded context:
+
+```bash
+continuum chat claude hi
+continuum chat gemini normal inspect the card rules
+continuum chat codex compact find the first failing test
 ```
 
 Resume modes are `compact`, `normal` and `deep`. Prefer `compact` unless a

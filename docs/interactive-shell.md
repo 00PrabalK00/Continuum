@@ -46,6 +46,7 @@ Change defaults for the current console:
 /terminal [claude|codex|gemini] [agent arguments]
 /resume [claude|codex|gemini] [compact|normal|deep] [agent arguments]
 /switch <claude|codex|gemini> [compact|normal|deep] [agent arguments]
+/chat [claude|codex|gemini] [compact|normal|deep] <message>
 /resume-terminal [claude|codex|gemini] [compact|normal|deep] [agent arguments]
 /search <query>
 /memory <query> [--semantic]
@@ -65,6 +66,19 @@ Change defaults for the current console:
 ```
 
 Typing `/` by itself shows the available slash commands.
+
+Typing plain text sends that message to the currently selected agent with
+compact Continuum context:
+
+```text
+continuum[claude]> hi
+```
+
+This is equivalent to:
+
+```text
+/chat claude compact hi
+```
 
 Any current `continuum` command can be used as a slash command. The shell
 injects the active `--project` and optional `--vault` into known command

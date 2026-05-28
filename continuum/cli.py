@@ -439,6 +439,45 @@ def resume(args: argparse.Namespace) -> int:
     )
 
 
+def chat(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    if not store.config_file.exists():
+        store.initialize(DEFAULT_CONTEXT_LIMIT, DEFAULT_THRESHOLD)
+    mode = "compact"
+    message_parts = list(args.message)
+    if args.mode_or_message:
+        if args.mode_or_message in {"compact", "normal", "deep"}:
+            mode = args.mode_or_message
+        else:
+            message_parts.insert(0, args.mode_or_message)
+    message = " ".join(message_parts).strip()
+    if not message:
+        raise SystemExit("Message is empty. Example: `continuum chat claude hi`.")
+    context = store.resume_context(mode)
+    prompt = (
+        "Read this bounded Continuum context, then answer the user's message. "
+        "Use targeted Continuum MCP/context retrieval when more detail is needed.\n\n"
+        + context
+        + "\n\nUser message:\n"
+        + message
+    )
+    print(f"Chat target: {args.agent}")
+    print(f"Context mode: {mode}")
+    print(f"Estimated prompt: {estimate_tokens(prompt)} tokens")
+    store.event(
+        "context_injected",
+        {"agent": args.agent, "mode": mode, "summary": f"Chat prompt: {message[:120]}"},
+    )
+    args.agent_args = []
+    args.context_limit = None
+    args.threshold = None
+    return (
+        run_interactive_agent(args, resumed=True, injected_context=prompt)
+        if args.interactive
+        else run_agent(args, resumed=True, injected_context=prompt)
+    )
+
+
 def status(args: argparse.Namespace) -> int:
     store = store_from(args)
     result = project_status(store)
@@ -1031,6 +1070,13 @@ def parser() -> argparse.ArgumentParser:
         )
         command.add_argument("agent_args", nargs=argparse.REMAINDER)
         command.set_defaults(func=handler)
+
+    chat_command = commands.add_parser("chat", parents=[common], help="Send one message to an agent with bounded Continuum context.")
+    chat_command.add_argument("agent", choices=AGENTS)
+    chat_command.add_argument("mode_or_message", nargs="?")
+    chat_command.add_argument("--interactive", "--pty", dest="interactive", action="store_true")
+    chat_command.add_argument("message", nargs="*")
+    chat_command.set_defaults(func=chat)
 
     show = commands.add_parser("status", parents=[common], help="Show recent project memory activity.")
     show.add_argument("--limit", type=int, default=8)

@@ -41,6 +41,7 @@ TOP_LEVEL_COMMON_COMMANDS = {
     "ui",
     "shell",
     "instruct",
+    "chat",
 }
 NESTED_COMMON_COMMANDS = {
     "session",
@@ -127,11 +128,18 @@ class InteractiveShell:
         if paste_chars:
             self.write(f"Bracketed paste received: {{{paste_chars} chars}}")
         if not line.startswith("/"):
+            lowered = line.lower()
+            if lowered in {"clear", "cls"}:
+                return self.clear()
+            if lowered in {"help", "?"}:
+                return self.help()
+            if lowered in {"quit", "exit"}:
+                return self.quit()
             if paste_chars:
-                self.write("Stored pasted text as the latest paste. Use a slash command to act on it.")
+                self.write("Sending pasted text to the selected agent with compact Continuum context.")
             else:
-                self.write("Use slash commands in this shell. Run /help for available actions.")
-            return 1
+                self.write(f"Sending to {self.agent} with compact Continuum context. Use / for commands.")
+            return self.dispatch(["chat", *self.common(), self.agent, "compact", line])
         try:
             parts = shlex.split(line[1:])
         except ValueError as error:
@@ -273,6 +281,8 @@ class InteractiveShell:
             if rest and rest[0].startswith("--"):
                 return self.raw_continuum_command(command, rest)
             return self.instruct(rest)
+        if command == "chat":
+            return self.chat(rest)
         if command == "service":
             return ["service", *self.common(), *(rest or ["status"])]
         if command == "ui":
@@ -344,6 +354,16 @@ class InteractiveShell:
         self.agent = agent
         return ["resume", *self.common(), agent, mode, *passthrough]
 
+    def chat(self, values: list[str]) -> list[str]:
+        agent, rest = self._agent_and_rest(values)
+        mode = "compact"
+        if rest and rest[0] in {"compact", "normal", "deep"}:
+            mode, rest = rest[0], rest[1:]
+        if not rest:
+            self.write("Usage: /chat [claude|codex|gemini] [compact|normal|deep] <message>")
+            return []
+        return ["chat", *self.common(), agent, mode, " ".join(rest)]
+
     def _agent_and_rest(self, values: list[str]) -> tuple[str, list[str]]:
         if values and values[0] in {"claude", "codex", "gemini"}:
             return values[0], values[1:]
@@ -407,6 +427,7 @@ class InteractiveShell:
   /terminal [agent] [args]      Launch a live PTY/ConPTY agent terminal.
   /resume [agent] [mode]       Inject context and continue (compact/normal/deep).
   /switch agent [mode]          Select an agent and resume with context injected.
+  /chat [agent] [mode] message  Send one message to an agent with context.
   /resume-terminal [agent]     Inject context into a live terminal session.
   /search words                 Exact local memory search.
   /memory words [--semantic]   Retrieve bounded memory for a query.
@@ -430,6 +451,7 @@ class InteractiveShell:
 
 Any current Continuum CLI command can also be entered as a slash command; the
 shell injects the active project unless `--project` is already supplied.
+Plain text is sent to the selected agent as `/chat <selected> compact ...`.
 Bracketed paste input is stored in full and shown as a compact `{n chars}`
 receipt before the command runs.
 
