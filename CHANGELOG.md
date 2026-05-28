@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.1 - Alpha
+
+- Added a PTY/ConPTY acceptance test that proves scripted input was consumed
+  by the intended live interactive process.
+- The receipt checks target id, cwd, process generation, prompt/input hash,
+  PTY acceptance, transcript observation and output advancement.
+
 ## 0.6.0 - Alpha
 
 - Added deterministic parallel worktree scheduling for large objectives.
