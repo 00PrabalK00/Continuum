@@ -73,6 +73,29 @@ scheduling only after task dependency, file ownership, review and merge-risk
 rules are deterministic. Each writer requires a separate worktree and the
 same explicit test/review merge gates used today.
 
+### Workflow Timeline And Agent Scheduling
+
+Add a visual workflow layer that shows multi-agent execution over time without
+claiming autonomous behavior that the scheduler has not performed. The view
+should combine a task timeline, dependency graph, agent lanes, context packet
+handoffs and file ownership history.
+
+The timeline should show:
+
+- Which model, agent or tool is assigned to each task.
+- When a task started, ended, blocked or entered user approval.
+- Which tasks depend on other tasks.
+- Which agent handed context to another agent.
+- Which files were changed or claimed by each agent.
+- Which memory packets were created, reused or superseded.
+- Which agents are running in parallel worktrees.
+- Which agent produced the final output.
+
+This should be backed by structured Continuum events, workflow messages,
+tasks, claims, context packets and worktree state. The UI should render this
+state as a read-and-control surface; it must not invent fake execution,
+provider costs, productivity scores or hidden autonomous activity.
+
 ### Sequential Recovery
 
 Add an auditable `team continue` path that resumes a failed sequential

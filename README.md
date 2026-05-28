@@ -448,6 +448,7 @@ Agents/
 - [Tasks And Claims](docs/tasks-and-claims.md)
 - [Task Worktrees](docs/worktrees.md)
 - [Parallel Worktrees](docs/parallel-worktrees.md)
+- [Workflow Timeline](docs/workflow-timeline.md)
 - [Native Services](docs/services.md)
 - [Optional Docker Mode](docs/docker.md)
 - [Troubleshooting](docs/troubleshooting.md)

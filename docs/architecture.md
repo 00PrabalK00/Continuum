@@ -10,6 +10,7 @@ agent CLI -> session recorder -> local event store -> compact handoff notes
 file watcher -----------------/
 model provider (Ollama/OpenRouter) -> bounded memory/reasoning output
 team workflow -> bounded step packet -> provider result message -> next step
+workflow state -> timeline lane -> task block -> context handoff edge
 ```
 
 ## Controller Boundary
@@ -27,6 +28,14 @@ task CREATED -> ASSIGNED -> RUNNING -> DONE
 
 Only one active task may claim a path. This prevents two routed workers from
 being assigned the same file through Continuum.
+
+## Workflow Timeline Boundary
+
+Workflow timeline views must be generated from recorded Continuum state:
+tasks, workflow messages, provider results, file claims, context packets,
+handoffs, worktree lanes and test/review gates. The timeline can show planned,
+running, blocked and completed work, but it must not invent hidden execution or
+imply that an agent is running unless Continuum recorded the run.
 
 ## Provider Boundary
 

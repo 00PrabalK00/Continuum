@@ -27,9 +27,21 @@ Supported actions:
 | Teams | `.continuum/teams/*.json` and the CLI commands that plan workflows |
 | Providers | `.continuum/providers.json` and CLI health-check references |
 | Memory | `current.md`, bounded handoff files and SQLite event search |
-| Runs | Structured task records and file claims |
+| Runs | Structured task records, file claims and workflow timeline state |
 | Handoffs | Bounded handoff reader and CLI command reference |
 | Settings | Local storage and context budget boundary |
+
+## Workflow Timeline
+
+The Control Center should include a workflow timeline for real Continuum
+scheduling state. Each lane represents an agent, model provider, tool or user
+approval step. Task blocks show status, start/end time, dependencies, claimed
+or changed files, context packets, handoff points and blockers.
+
+The timeline is a visualization of recorded tasks, workflow messages, file
+claims, context packets, handoffs and worktree gates. It must label planned
+work as planned and running work as running only when Continuum has recorded
+that state.
 
 ## Design Boundary
 
