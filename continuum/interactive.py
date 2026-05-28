@@ -116,7 +116,7 @@ class InteractiveShell:
     def banner(self) -> None:
         self.write(self.paint("Continuum Interactive Shell", BOLD))
         self.write(f"Project: {self.project}")
-        self.write("Type /help for commands. Use /terminal or /resume-terminal for live PTY/ConPTY agent sessions.")
+        self.write("Type / or /help for commands. Use /terminal or /resume-terminal for live PTY/ConPTY agent sessions.")
         self.terminals()
 
     def execute(self, line: str) -> int:
@@ -129,7 +129,7 @@ class InteractiveShell:
             self.write(f"Invalid input: {error}")
             return 1
         if not parts:
-            return 0
+            return self.help()
         command, rest = parts[0].lower(), parts[1:]
         local = {
             "help": lambda _: self.help(),
@@ -362,6 +362,7 @@ class InteractiveShell:
     def help(self) -> int:
         self.write(
             """Slash commands:
+  /                            Show this command list.
   /status [--events]            Show daemon, memory, task and provider state.
   /doctor                       Run deterministic health checks.
   /up | /down | /logs           Control or inspect the memory daemon.

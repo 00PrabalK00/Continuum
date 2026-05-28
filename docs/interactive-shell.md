@@ -34,6 +34,7 @@ Change defaults for the current console:
 ## Slash Commands
 
 ```text
+/
 /help
 /status [--events]
 /doctor
@@ -62,6 +63,8 @@ Change defaults for the current console:
 /clear
 /quit
 ```
+
+Typing `/` by itself shows the available slash commands.
 
 Any current `continuum` command can be used as a slash command. The shell
 injects the active `--project` and optional `--vault` into known command

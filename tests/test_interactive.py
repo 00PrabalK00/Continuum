@@ -58,6 +58,19 @@ class InteractiveShellTest(unittest.TestCase):
             )
             self.assertIn("\033[35mclaude", shell.prompt())
 
+    def test_bare_slash_shows_available_commands(self):
+        output = StringIO()
+        calls = []
+        shell = InteractiveShell(Path("."), None, dispatch=lambda argv: calls.append(argv) or 0, output=output)
+
+        self.assertEqual(shell.execute("/"), 0)
+
+        rendered = output.getvalue()
+        self.assertIn("Slash commands:", rendered)
+        self.assertIn("/switch agent [mode]", rendered)
+        self.assertIn("/status [--events]", rendered)
+        self.assertEqual(calls, [])
+
     def test_terminal_routes_to_interactive_pty_modes(self):
         with tempfile.TemporaryDirectory() as temporary:
             calls = []

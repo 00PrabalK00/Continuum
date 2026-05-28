@@ -69,6 +69,7 @@ project:
 ```text
 /status
 /doctor
+/
 /terminals
 /agent claude
 /switch gemini normal
