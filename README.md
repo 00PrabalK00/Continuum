@@ -56,6 +56,28 @@ continuum init --vault "/path/to/your/Obsidian Vault/Agents"
 Continuum creates project-local state in `.continuum/`. Keep that directory
 out of source control.
 
+## Set Up Agents
+
+Connect an agent CLI to Continuum's MCP server for bounded context:
+
+```bash
+# Claude Code (project-scoped)
+claude mcp add continuum -- continuum mcp serve --project .
+
+# Gemini CLI (project-scoped)
+# Add to .gemini/settings.json:
+# { "mcpServers": { "continuum": { "command": "continuum", "args": ["mcp", "serve", "--project", "."] } } }
+
+# Codex (project-scoped)
+# Add to .codex/config.toml:
+# [mcpServers.continuum]
+# command = "continuum"
+# args = ["mcp", "serve", "--project", "."]
+```
+
+Verify with `continuum doctor`. See [MCP Setup](docs/mcp-setup.md) for
+details.
+
 ## Open The Interactive CLI
 
 ```bash
@@ -69,7 +91,6 @@ project:
 ```text
 /status
 /doctor
-/
 /terminals
 /agent claude
 /switch gemini normal
@@ -80,7 +101,7 @@ project:
 /context build coder --mode compact
 /mcp serve
 /team run default_dev_team "Fix failing auth test"
-/instruct planner=claude-opus-4-1-20250805 executor=codex mode=checkpoint goal="Implement deterministic PTY receipts"
+/instruct planner=claude-opus-4-1-20250805 executor=codex mode=checkpoint goal="Fix auth test"
 /worktree list
 /color off
 /motion off
@@ -215,8 +236,8 @@ continuum providers test ollama
 
 OpenRouter `401` errors mean the API key is missing or invalid:
 
-```powershell
-$env:OPENROUTER_API_KEY="sk-or-..."
+```bash
+export OPENROUTER_API_KEY="sk-or-..."
 continuum providers test openrouter
 ```
 
@@ -276,9 +297,8 @@ continuum instruct \
   --planner claude-opus-4-1-20250805 \
   --executor codex \
   --mode checkpoint \
-  --scope continuum/terminal.py \
-  --scope tests/test_terminal.py \
-  --goal "Implement deterministic PTY input receipt validation"
+  --scope src/auth.ts \
+  --goal "Fix auth callback"
 ```
 
 Continuum stores a graph in `.continuum/delegations/<id>/graph.json` and
@@ -420,8 +440,8 @@ continuum service remove
 
 On Windows, the compatibility alias is also available:
 
-```powershell
-continuum autostart install --vault "C:\Users\me\Documents\Obsidian Vault\Agents"
+```bash
+continuum autostart install --vault "/path/to/your/Obsidian Vault/Agents"
 ```
 
 ## Optional Docker Mode
@@ -444,15 +464,15 @@ Project-local state:
 
 ```text
 .continuum/
-  events.jsonl
-  events.sqlite3
-  current.md
-  current_state.md
-  latest_handoff.md
-  session_logs/
+  events.jsonl        # event history
+  events.sqlite3      # event and embedding database
+  current.md          # latest compact state
+  current_state.md    # alias for current.md
+  latest_handoff.md   # most recent handoff
+  session_logs/       # agent session output (created on first run)
 ```
 
-Optional Obsidian mirror:
+Optional Obsidian mirror (created when `--vault` is passed to `init`):
 
 ```text
 Agents/
@@ -463,20 +483,28 @@ Agents/
       Sessions/
 ```
 
-## Security Notes
+## Security
 
-- Keep `.continuum/` out of Git.
+> **Read before using Continuum on sensitive projects.**
+
+- `.continuum/` contains project memory and session logs — keep it out of Git.
 - Do not publish session logs without reviewing them for secrets.
-- Provider keys are read from environment variables; do not put keys in notes.
-- Writing team steps require explicit file permissions.
+- Provider API keys are read from environment variables; never hardcode them.
+- Team task steps require explicit file permissions before writing.
 - Use `continuum handoff` before ending important interactive sessions.
 
 ## Documentation
 
+**Getting Started**
+
+- [Quickstart](docs/quickstart.md)
 - [Getting Started](docs/getting-started.md)
+- [Troubleshooting](docs/troubleshooting.md)
+
+**Features**
+
 - [Interactive CLI](docs/interactive-shell.md)
 - [External Sessions](docs/external-sessions.md)
-- [Quickstart](docs/quickstart.md)
 - [MCP Setup](docs/mcp-setup.md)
 - [Providers](docs/providers.md)
 - [Teams](docs/teams.md)
@@ -484,9 +512,14 @@ Agents/
 - [Task Worktrees](docs/worktrees.md)
 - [Parallel Worktrees](docs/parallel-worktrees.md)
 - [Workflow Timeline](docs/workflow-timeline.md)
+
+**Deployment**
+
 - [Native Services](docs/services.md)
 - [Optional Docker Mode](docs/docker.md)
-- [Troubleshooting](docs/troubleshooting.md)
+
+**Release**
+
 - [Release Notes](docs/releases/README.md)
 - [Changelog](CHANGELOG.md)
 
