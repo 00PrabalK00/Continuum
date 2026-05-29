@@ -3,7 +3,7 @@ import unittest
 import json
 from pathlib import Path
 
-from continuum.core import MemoryStore, compact_text, project_key
+from continuum.core import MemoryStore, compact_text, estimate_tokens, project_key, slug
 
 
 class MemoryStoreTest(unittest.TestCase):
@@ -195,6 +195,55 @@ class MemoryStoreTest(unittest.TestCase):
             self.assertEqual(session["session_id"], "S0001")
             self.assertLessEqual(packet["estimated_tokens"], 1_000)
             self.assertTrue(Path(packet["path"]).exists())
+
+    def test_compact_text_returns_short_text_unchanged(self):
+        self.assertEqual(compact_text("hello", 100), "hello")
+
+    def test_compact_text_returns_empty_string_unchanged(self):
+        self.assertEqual(compact_text("", 100), "")
+
+    def test_compact_text_at_exact_limit(self):
+        text = "x" * 50
+        self.assertEqual(compact_text(text, 50), text)
+
+    def test_compact_text_one_over_limit(self):
+        text = "x" * 51
+        result = compact_text(text, 50)
+        self.assertLessEqual(len(result), 50)
+        self.assertIn("truncated", result)
+
+    def test_compact_text_strips_whitespace(self):
+        self.assertEqual(compact_text("  hello  ", 100), "hello")
+
+    def test_compact_text_only_whitespace(self):
+        self.assertEqual(compact_text("   ", 100), "")
+
+    def test_estimate_tokens_empty_string(self):
+        self.assertEqual(estimate_tokens(""), 0)
+
+    def test_estimate_tokens_single_char(self):
+        self.assertEqual(estimate_tokens("x"), 1)
+
+    def test_estimate_tokens_long_text(self):
+        self.assertGreater(estimate_tokens("x" * 1000), 0)
+
+    def test_slug_normal_string(self):
+        self.assertEqual(slug("hello-world"), "hello-world")
+
+    def test_slug_special_characters(self):
+        result = slug("hello world! @#$")
+        self.assertNotIn(" ", result)
+        self.assertNotIn("!", result)
+
+    def test_slug_empty_string(self):
+        self.assertEqual(slug(""), "project")
+
+    def test_slug_only_special_characters(self):
+        self.assertEqual(slug("!@#$%"), "project")
+
+    def test_slug_unicode(self):
+        result = slug("hello 世界")
+        self.assertIn("hello", result)
 
 
 if __name__ == "__main__":

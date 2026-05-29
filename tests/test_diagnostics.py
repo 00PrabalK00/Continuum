@@ -76,6 +76,54 @@ class DiagnosticsTest(unittest.TestCase):
             self.assertEqual(check["status"], "FAIL")
             self.assertIn("Install Ollama", check["fix"])
 
+    def test_doctor_reports_passing_python_import(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "project")
+            store.initialize(1000, 0.8)
+            results = run_doctor(store)
+            check = next(item for item in results if item["name"] == "Python import")
+            self.assertEqual(check["status"], "PASS")
+
+    def test_doctor_reports_project_initialization_status(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "project")
+            store.initialize(1000, 0.8)
+            results = run_doctor(store)
+            check = next(item for item in results if item["name"] == "Project initialization")
+            self.assertEqual(check["status"], "PASS")
+
+    def test_doctor_reports_sqlite_read_write(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "project")
+            store.initialize(1000, 0.8)
+            results = run_doctor(store)
+            check = next(item for item in results if item["name"] == "SQLite read/write")
+            self.assertEqual(check["status"], "PASS")
+
+    def test_doctor_reports_mcp_server_boot(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "project")
+            store.initialize(1000, 0.8)
+            results = run_doctor(store)
+            check = next(item for item in results if item["name"] == "MCP server boot")
+            self.assertEqual(check["status"], "PASS")
+
+    def test_doctor_reports_daemon_stopped_when_no_pid(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "project")
+            store.initialize(1000, 0.8)
+            results = run_doctor(store)
+            check = next(item for item in results if item["name"] == "Daemon process")
+            self.assertIn(check["status"], ("FAIL", "INFO"))
+
+    def test_doctor_reports_node_entrypoint_status(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "project")
+            store.initialize(1000, 0.8)
+            results = run_doctor(store)
+            node_check = next(item for item in results if item["name"] == "Node entrypoint")
+            self.assertIn(node_check["status"], ("PASS", "FAIL"))
+
 
 if __name__ == "__main__":
     unittest.main()

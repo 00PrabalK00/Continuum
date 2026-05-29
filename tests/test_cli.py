@@ -451,6 +451,40 @@ class CliTest(unittest.TestCase):
             self.assertIn("Context packet published:", rendered)
             self.assertIn("cannot retroactively capture or type", rendered)
 
+    def test_logs_shows_no_log_message_when_missing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            output = StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(main(["logs", "--project", str(project)]), 0)
+            self.assertIn("No daemon output log", output.getvalue())
+
+    def test_down_returns_zero_when_daemon_not_running(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            args = argparse.Namespace(project=str(project), vault=None)
+            self.assertEqual(down(args), 0)
+
+    def test_task_list_shows_no_tasks_message(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            output = StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(main(["init", "--project", str(project)]), 0)
+                self.assertEqual(main(["task", "list", "--project", str(project)]), 0)
+            self.assertIn("No tasks found", output.getvalue())
+
+    def test_providers_list_shows_configured_providers(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            output = StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(main(["init", "--project", str(project)]), 0)
+                self.assertEqual(main(["providers", "add", "--project", str(project), "ollama"]), 0)
+                self.assertEqual(main(["providers", "list", "--project", str(project)]), 0)
+            self.assertIn("ollama", output.getvalue())
+            self.assertIn("enabled", output.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()
