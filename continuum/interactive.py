@@ -57,6 +57,16 @@ NESTED_COMMON_COMMANDS = {
     "route",
 }
 ALIASES = {"sessions": "session"}
+PERMISSION_CHOICES = {
+    "claude": {"acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan"},
+    "codex": {"untrusted", "on-request", "never", "on-failure"},
+    "gemini": {"default", "auto_edit", "yolo", "plan"},
+}
+DEFAULT_PERMISSIONS = {
+    "claude": "default",
+    "codex": "on-request",
+    "gemini": "default",
+}
 
 
 class InteractiveShell:
@@ -86,6 +96,7 @@ class InteractiveShell:
         self.animation_enabled = animation == "on" or (animation == "auto" and self.output.isatty())
         self.running = True
         self.last_paste: str | None = None
+        self.permissions = dict(DEFAULT_PERMISSIONS)
 
     def paint(self, text: str, code: str) -> str:
         return f"\033[{code}m{text}{RESET}" if self.color_enabled else text
@@ -135,6 +146,8 @@ class InteractiveShell:
                 return self.help()
             if lowered in {"quit", "exit"}:
                 return self.quit()
+            if lowered == "continuum" or lowered.startswith("continuum "):
+                return self.continuum_command(line)
             if paste_chars:
                 self.write("Sending pasted text to the selected agent with compact Continuum context.")
             else:
@@ -156,6 +169,9 @@ class InteractiveShell:
             "clear": lambda _: self.clear(),
             "terminals": lambda _: self.terminals(),
             "agent": self.select_agent,
+            "permissions": self.permissions_command,
+            "permission": self.permissions_command,
+            "perms": self.permissions_command,
             "color": self.toggle_color,
             "motion": self.toggle_motion,
         }
@@ -168,6 +184,24 @@ class InteractiveShell:
             self.write(f"Unknown command: /{command}. Run /help.")
             return 1
         self.pulse(f"Running /{command}")
+        return self.dispatch(argv)
+
+    def continuum_command(self, line: str) -> int:
+        try:
+            parts = shlex.split(line)
+        except ValueError as error:
+            self.write(f"Invalid input: {error}")
+            return 1
+        if len(parts) == 1:
+            self.write("Usage: continuum <command> [arguments]")
+            return 0
+        argv = self.raw_continuum_command(parts[1], parts[2:])
+        if argv == []:
+            return 0
+        if argv is None:
+            self.write(f"Unknown command: {parts[1]}. Run /help.")
+            return 1
+        self.pulse(f"Running continuum {parts[1]}")
         return self.dispatch(argv)
 
     def ingest_bracketed_paste(self, line: str) -> tuple[str, int]:
@@ -235,7 +269,7 @@ class InteractiveShell:
             return ["run", *self.common(), agent, *passthrough]
         if command in {"terminal", "pty"}:
             agent, passthrough = self._agent_and_rest(rest)
-            return ["run", *self.common(), "--interactive", agent, *passthrough]
+            return ["run", *self.common(), "--interactive", agent, *self.permission_args(agent, passthrough), *passthrough]
         if command in {"resume", "continue"}:
             if rest and rest[0].startswith("--"):
                 return self.raw_continuum_command("resume", rest)
@@ -251,7 +285,7 @@ class InteractiveShell:
             mode = "compact"
             if passthrough and passthrough[0] in {"compact", "normal", "deep"}:
                 mode, passthrough = passthrough[0], passthrough[1:]
-            return ["resume", *self.common(), "--interactive", agent, mode, *passthrough]
+            return ["resume", *self.common(), "--interactive", agent, mode, *self.permission_args(agent, passthrough), *passthrough]
         if command == "memory":
             if rest and rest[0] in {"embed", "retrieve", "refresh"}:
                 return self.nested("memory", rest)
@@ -369,12 +403,50 @@ class InteractiveShell:
             return values[0], values[1:]
         return self.agent, values
 
+    def permission_args(self, agent: str, existing: list[str]) -> list[str]:
+        mode = self.permissions.get(agent)
+        if not mode:
+            return []
+        if agent == "claude":
+            return [] if self._has_option(existing, "--permission-mode") else ["--permission-mode", mode]
+        if agent == "codex":
+            return [] if self._has_option(existing, "--ask-for-approval", "-a") else ["--ask-for-approval", mode]
+        if agent == "gemini":
+            return [] if self._has_option(existing, "--approval-mode") else ["--approval-mode", mode]
+        return []
+
+    @staticmethod
+    def _has_option(values: list[str], *names: str) -> bool:
+        return any(value in names or any(value.startswith(name + "=") for name in names) for value in values)
+
     def select_agent(self, values: list[str]) -> int:
         if len(values) != 1 or values[0] not in {"claude", "codex", "gemini"}:
             self.write("Usage: /agent claude|codex|gemini")
             return 1
         self.agent = values[0]
         self.write(f"Selected agent terminal: {self.paint(self.agent, AGENT_COLORS[self.agent])}")
+        return 0
+
+    def permissions_command(self, values: list[str]) -> int:
+        if not values:
+            self.write("Agent permissions:")
+            for agent in ("claude", "codex", "gemini"):
+                marker = "*" if agent == self.agent else " "
+                self.write(f" {marker} {agent}: {self.permissions[agent]}")
+            self.write("Usage: /permissions [claude|codex|gemini] <mode>")
+            return 0
+        agent, rest = self._agent_and_rest(values)
+        if not rest:
+            choices = ", ".join(sorted(PERMISSION_CHOICES[agent]))
+            self.write(f"{agent}: {self.permissions[agent]} ({choices})")
+            return 0
+        mode = rest[0]
+        if mode not in PERMISSION_CHOICES[agent]:
+            choices = ", ".join(sorted(PERMISSION_CHOICES[agent]))
+            self.write(f"Invalid {agent} permission mode: {mode}. Choices: {choices}")
+            return 1
+        self.permissions[agent] = mode
+        self.write(f"{agent} permission mode: {mode}")
         return 0
 
     def toggle_color(self, values: list[str]) -> int:
@@ -423,6 +495,7 @@ class InteractiveShell:
   /up | /down | /logs           Control or inspect the memory daemon.
   /handoff task | next step     Record a continuation checkpoint.
   /agent claude|codex|gemini   Choose the default agent terminal color/target.
+  /permissions [agent] [mode]  Show or set approval mode for live sessions.
   /run [agent] [args]           Launch a captured-output agent session.
   /terminal [agent] [args]      Launch a live PTY/ConPTY agent terminal.
   /resume [agent] [mode]       Inject context and continue (compact/normal/deep).

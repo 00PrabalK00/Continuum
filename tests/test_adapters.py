@@ -30,16 +30,16 @@ class TerminalAdapterTest(unittest.TestCase):
             self.assertEqual(args[:2], ["-C", str(project.resolve())])
             self.assertEqual(args[-1], "continue")
             supplied = adapter.prepare_args(["--cd", "elsewhere"], None)
-            self.assertEqual(supplied, ["--cd", "elsewhere"])
+            self.assertEqual(supplied, ["--no-alt-screen", "--cd", "elsewhere"])
 
     def test_gemini_uses_interactive_prompt_mode_and_does_not_enable_yolo(self):
         adapter = GeminiTerminalAdapter(Path.cwd())
         args = adapter.prepare_args(["--approval-mode", "default"], "read handoff")
-        self.assertEqual(args[:2], ["--prompt-interactive", "read handoff"])
+        self.assertEqual(args[:3], ["--prompt-interactive", "read handoff", "--screen-reader"])
         self.assertNotIn("yolo", args)
         merged = adapter.prepare_args(["--prompt-interactive", "inspect tests"], "read handoff")
-        self.assertIn("read handoff", merged[1])
-        self.assertIn("inspect tests", merged[1])
+        self.assertIn("read handoff", merged[2])
+        self.assertIn("inspect tests", merged[2])
 
     def test_adapter_detects_split_approval_prompt_once_and_tracks_completion(self):
         adapter = ClaudeTerminalAdapter(Path.cwd())

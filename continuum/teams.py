@@ -56,6 +56,18 @@ LOCAL_ONLY_TEAM: dict[str, Any] = {
     "safety": DEFAULT_DEV_TEAM["safety"],
 }
 
+LOCAL_AGENT_TEAM = deepcopy(DEFAULT_DEV_TEAM)
+LOCAL_AGENT_TEAM["team_name"] = "local_agent_team"
+LOCAL_AGENT_TEAM["agents"]["reasoner"] = {
+    "provider": "claude_code", "role": "architecture_reasoning", "can_edit_files": False, "can_run_commands": True
+}
+LOCAL_AGENT_TEAM["routing"]["new_feature"] = ["explorer", "reasoner", "coder", "tester"]
+LOCAL_AGENT_TEAM["routing"]["bug_fix"] = ["explorer", "reasoner", "coder", "tester"]
+LOCAL_AGENT_TEAM["routing"]["large_refactor"] = ["explorer", "reasoner", "coder", "tester", "reasoner"]
+LOCAL_AGENT_TEAM["routing"]["documentation"] = ["explorer", "reasoner"]
+LOCAL_AGENT_TEAM["routing"]["handoff"] = ["reasoner"]
+LOCAL_AGENT_TEAM["routing"]["test_repair"] = ["tester"]
+
 REVIEW_HEAVY_TEAM = deepcopy(DEFAULT_DEV_TEAM)
 REVIEW_HEAVY_TEAM["team_name"] = "review_heavy"
 REVIEW_HEAVY_TEAM["agents"]["reviewer"] = {
@@ -76,6 +88,7 @@ RESEARCH_THEN_CODE_TEAM["routing"]["large_refactor"] = ["explorer", "reasoner", 
 
 PRESETS = {
     "default_dev_team": DEFAULT_DEV_TEAM,
+    "local_agent_team": LOCAL_AGENT_TEAM,
     "local_only": LOCAL_ONLY_TEAM,
     "review_heavy": REVIEW_HEAVY_TEAM,
     "fast_bugfix": FAST_BUGFIX_TEAM,

@@ -148,6 +148,8 @@ class CodexTerminalAdapter(AgentTerminalAdapter):
 
     def prepare_args(self, passthrough: list[str], context: str | None = None) -> list[str]:
         args = list(passthrough)
+        if "--no-alt-screen" not in args:
+            args = ["--no-alt-screen", *args]
         if not self._has_project_scope(args):
             args = ["-C", str(self.project), *args]
         return [*args, context] if context else args
@@ -169,6 +171,8 @@ class GeminiTerminalAdapter(AgentTerminalAdapter):
 
     def prepare_args(self, passthrough: list[str], context: str | None = None) -> list[str]:
         args = list(passthrough)
+        if "--screen-reader" not in args:
+            args = ["--screen-reader", *args]
         if not context:
             return args
         for index, value in enumerate(args):
