@@ -118,6 +118,84 @@ class OrchestratorTest(unittest.TestCase):
 
             self.assertEqual(store.list_workflows(1)[0]["status"], "FAILED")
 
+    def test_retry_resumes_from_failed_step_without_recreating_earlier_tasks(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "project")
+            store.initialize(1000, 0.8)
+            TeamManager(store).init("local_only")
+            calls = {"count": 0}
+
+            def flaky(provider, prompt):
+                calls["count"] += 1
+                if calls["count"] == 2:
+                    raise RuntimeError("provider timeout")
+                return f"{provider} ok"
+
+            with self.assertRaisesRegex(OrchestrationError, "provider timeout"):
+                Orchestrator(store, runner=flaky).execute("local_only", "plan work")
+
+            failed = store.list_workflows(1)[0]
+            self.assertEqual(failed["status"], "FAILED")
+            self.assertEqual(failed["steps"][0]["status"], "DONE")
+            self.assertEqual(failed["steps"][1]["status"], "FAILED")
+            step0_task = failed["steps"][0]["task_id"]
+            step1_task = failed["steps"][1]["task_id"]
+            self.assertEqual(store.get_task(step0_task)["status"], "DONE")
+            task_count_before = len(store.list_tasks(limit=50))
+
+            resumed = Orchestrator(store, runner=lambda provider, prompt: f"{provider} ok").retry(
+                failed["workflow_id"], execute=True
+            )
+
+            self.assertEqual(resumed["status"], "DONE")
+            # Earlier completed step's task is preserved (same id, still DONE).
+            self.assertEqual(resumed["steps"][0]["task_id"], step0_task)
+            self.assertEqual(resumed["steps"][0]["status"], "DONE")
+            self.assertEqual(resumed["steps"][1]["task_id"], step1_task)
+            self.assertEqual(resumed["steps"][1]["status"], "DONE")
+            # No new tasks were created on retry.
+            self.assertEqual(len(store.list_tasks(limit=50)), task_count_before)
+            retry_events = [event for event in store.recent_events(80) if event["kind"] == "workflow_retry"]
+            self.assertEqual(len(retry_events), 1)
+            self.assertEqual(retry_events[0]["payload"]["resume_step"], 2)
+
+    def test_retry_without_execute_replans_remaining_steps(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "project")
+            store.initialize(1000, 0.8)
+            TeamManager(store).init("local_only")
+            calls = {"count": 0}
+
+            def flaky(provider, prompt):
+                calls["count"] += 1
+                if calls["count"] == 2:
+                    raise RuntimeError("provider timeout")
+                return f"{provider} ok"
+
+            with self.assertRaisesRegex(OrchestrationError, "provider timeout"):
+                Orchestrator(store, runner=flaky).execute("local_only", "plan work")
+            failed = store.list_workflows(1)[0]
+            task_count_before = len(store.list_tasks(limit=50))
+
+            replanned = Orchestrator(store, runner=lambda provider, prompt: "noop").retry(
+                failed["workflow_id"], execute=False
+            )
+
+            self.assertEqual(replanned["status"], "PLANNED")
+            self.assertEqual(replanned["steps"][0]["status"], "DONE")
+            self.assertEqual(replanned["steps"][1]["status"], "PLANNED")
+            self.assertEqual(len(store.list_tasks(limit=50)), task_count_before)
+
+    def test_retry_rejects_completed_workflow(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "project")
+            store.initialize(1000, 0.8)
+            TeamManager(store).init("local_only")
+            workflow = Orchestrator(store, runner=lambda provider, prompt: "ok").execute("local_only", "plan work")
+
+            with self.assertRaisesRegex(OrchestrationError, "already completed"):
+                Orchestrator(store, runner=lambda provider, prompt: "ok").retry(workflow["workflow_id"], execute=True)
+
 
 if __name__ == "__main__":
     unittest.main()

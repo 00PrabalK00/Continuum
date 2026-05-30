@@ -619,6 +619,45 @@ def task_complete(args: argparse.Namespace) -> int:
     return 0
 
 
+def claim_list(args: argparse.Namespace) -> int:
+    claims = store_from(args).list_claims()
+    for claim in claims:
+        print(f"{claim['path']}")
+        print(f"  task: {claim['task_id']} ({claim['task_status'] or 'unknown'})")
+        print(f"  agent: {claim['agent']}")
+        print(f"  since: {claim['since']}")
+        if claim.get("expires_at"):
+            print(f"  expires: {claim['expires_at']}")
+    if not claims:
+        print("No active file claims.")
+    return 0
+
+
+def claim_release(args: argparse.Namespace) -> int:
+    result = store_from(args).release_claim(args.task_id, args.reason, file=args.file, force=args.force)
+    if not result["released"]:
+        print(f"No matching claims to release for {result['task_id']}.")
+        return 0
+    print(f"Released {len(result['released'])} claim(s) for {result['task_id']}:")
+    for path in result["released"]:
+        print(f"  {path}")
+    print(f"Reason recorded: {result['reason']}")
+    return 0
+
+
+def claim_recover(args: argparse.Namespace) -> int:
+    recovered = store_from(args).recover_stale_claims(args.reason)
+    if not recovered:
+        print("No orphaned claims found for terminal/failed tasks.")
+        return 0
+    for item in recovered:
+        print(f"{item['task_id']} ({item['task_status']}): released {len(item['released'])} claim(s)")
+        for path in item["released"]:
+            print(f"  {path}")
+    print(f"Reason recorded: {args.reason}")
+    return 0
+
+
 def print_external_session(session: dict[str, object]) -> None:
     print(f"{session['session_id']} {session['status']} {session['agent']} PID={session['pid']}")
     print(f"  cwd: {session.get('cwd') or 'unavailable'}")
@@ -936,6 +975,55 @@ def team_run(args: argparse.Namespace) -> int:
             print("Automatic provider launching was not requested. Use `--execute` for sequential opt-in execution.")
     except OrchestrationError as error:
         raise SystemExit(f"Workflow stopped: {error}") from error
+    return 0
+
+
+def print_workflow_summary(workflow: dict[str, object]) -> None:
+    print(f"{workflow['workflow_id']} {workflow['status']} team={workflow['team']} step={workflow['current_step']} {workflow['request']}")
+
+
+def workflow_list(args: argparse.Namespace) -> int:
+    workflows = store_from(args).list_workflows(args.limit)
+    for workflow in workflows:
+        print_workflow_summary(workflow)
+    if not workflows:
+        print("No workflows found.")
+    return 0
+
+
+def workflow_show(args: argparse.Namespace) -> int:
+    workflow = store_from(args).get_workflow(args.workflow_id)
+    if not workflow:
+        raise SystemExit(f"Unknown workflow: {args.workflow_id}")
+    print_workflow_summary(workflow)
+    for step in workflow["steps"]:
+        print(f"{step['order']}. {step['role']}:{step['provider']} [{step['status']}] {step['task_id'] or '-'}")
+        if step.get("output"):
+            print(f"   output: {step['output']}")
+    return 0
+
+
+def workflow_retry(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    orchestrator = Orchestrator(store)
+    try:
+        workflow = orchestrator.retry(
+            args.workflow_id,
+            allowed_files=args.allow_file,
+            context_mode=args.context_mode,
+            execute=args.execute,
+        )
+    except OrchestrationError as error:
+        raise SystemExit(f"Workflow retry stopped: {error}") from error
+    if args.execute:
+        print(f"Workflow resumed: {workflow['workflow_id']} {workflow['status']}")
+        print("Remaining steps re-ran from the first failed/incomplete step; completed earlier tasks were preserved.")
+    else:
+        print(f"Workflow re-planned from the first failed/incomplete step: {workflow['workflow_id']}.")
+        print("Earlier completed steps and their tasks were preserved.")
+        for step in workflow["steps"]:
+            print(f"- {step['order']}. {step['task_id'] or '-'} {step['role']}:{step['provider']} [{step['status']}]")
+        print("Re-run with --execute (providers enabled) to resume sequential execution.")
     return 0
 
 
@@ -1265,6 +1353,21 @@ def parser() -> argparse.ArgumentParser:
     complete.add_argument("--summary", required=True)
     complete.set_defaults(func=task_complete)
 
+    claims = commands.add_parser("claim", help="Inspect and recover exclusive file claims.")
+    claim_commands = claims.add_subparsers(dest="claim_command", required=True)
+    list_claims = claim_commands.add_parser("list", parents=[common], help="List all active file claims.")
+    list_claims.set_defaults(func=claim_list)
+    release_claim = claim_commands.add_parser("release", parents=[common], help="Release a task's claims (or one file) with an audit reason.")
+    release_claim.add_argument("task_id")
+    release_claim.add_argument("--reason", required=True, help="Why the claim is being released (recorded as audit event).")
+    release_claim.add_argument("--file", help="Release only this one claimed path instead of all of the task's claims.")
+    release_claim.add_argument("--force", action="store_true", help="Release even when the owning task is still RUNNING.")
+    release_claim.set_defaults(func=claim_release)
+    recover_claims = claim_commands.add_parser("recover", parents=[common], help="Release orphaned claims whose owning task is terminal/failed.")
+    recover_claims.add_argument("--stale", action="store_true", help="Target orphaned claims of terminal/failed tasks (default behavior).")
+    recover_claims.add_argument("--reason", default="Orphaned claim from a terminal or failed task.", help="Audit reason recorded for the recovery.")
+    recover_claims.set_defaults(func=claim_recover)
+
     providers = commands.add_parser("providers", help="Configure agent and model provider backends.")
     provider_commands = providers.add_subparsers(dest="provider_command", required=True)
     list_providers = provider_commands.add_parser("list", parents=[common], help="List configured providers.")
@@ -1367,6 +1470,21 @@ def parser() -> argparse.ArgumentParser:
     run_team.add_argument("--allow-file", action="append", default=[], help="Path a writing role may edit during --execute; repeat per file.")
     run_team.add_argument("--context-mode", choices=["compact", "normal", "deep"], default="compact")
     run_team.set_defaults(func=team_run)
+
+    workflows = commands.add_parser("workflow", help="Inspect and resume persisted sequential workflows.")
+    workflow_commands = workflows.add_subparsers(dest="workflow_command", required=True)
+    list_workflows = workflow_commands.add_parser("list", parents=[common], help="List workflows and their status.")
+    list_workflows.add_argument("--limit", type=int, default=20)
+    list_workflows.set_defaults(func=workflow_list)
+    show_workflow = workflow_commands.add_parser("show", parents=[common], help="Show a workflow's steps and per-step status.")
+    show_workflow.add_argument("workflow_id")
+    show_workflow.set_defaults(func=workflow_show)
+    retry_workflow = workflow_commands.add_parser("retry", parents=[common], help="Resume a FAILED workflow from the first failed/incomplete step.")
+    retry_workflow.add_argument("workflow_id")
+    retry_workflow.add_argument("--execute", action="store_true", help="Resume sequential provider execution (requires enabled providers).")
+    retry_workflow.add_argument("--allow-file", action="append", default=[], help="Path a writing role may edit during --execute; repeat per file.")
+    retry_workflow.add_argument("--context-mode", choices=["compact", "normal", "deep"], default="compact")
+    retry_workflow.set_defaults(func=workflow_retry)
 
     worktrees = commands.add_parser("worktree", help="Manage task-isolated Git worktrees.")
     worktree_commands = worktrees.add_subparsers(dest="worktree_command", required=True)

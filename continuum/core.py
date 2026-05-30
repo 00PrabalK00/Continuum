@@ -762,6 +762,115 @@ The planner role is preserving architecture intent and constraints while the exe
         self.event("task_status", {"task_id": task_ref.upper(), "status": status, "summary": summary})
         return self.get_task(task_ref) or {}
 
+    def list_claims(self) -> list[dict[str, Any]]:
+        """Return every active file claim with its owning task, agent and age."""
+        connection = self.connect()
+        rows = connection.execute(
+            """SELECT locks.path, locks.task_id, locks.agent, locks.created_at, locks.expires_at, tasks.status
+               FROM file_locks AS locks LEFT JOIN tasks ON tasks.id = locks.task_id
+               ORDER BY locks.path""",
+        ).fetchall()
+        connection.close()
+        return [
+            {
+                "path": row[0],
+                "task_id": self.task_ref(row[1]),
+                "agent": row[2],
+                "since": row[3],
+                "expires_at": row[4],
+                "task_status": row[5],
+            }
+            for row in rows
+        ]
+
+    def release_claim(
+        self,
+        task_ref: str,
+        reason: str,
+        file: str | None = None,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        """Release a task's file claims (or one path) and record an audit reason.
+
+        Conservative by design: a claim owned by a task that is still RUNNING is
+        only released when `force` is set, so a live agent's locks are not pulled
+        out from under it by accident. The `claim_released` event always carries
+        the supplied reason so every release is auditable.
+        """
+        reason = (reason or "").strip()
+        if not reason:
+            raise ValueError("A release reason is required.")
+        task = self.get_task(task_ref)
+        if not task:
+            raise ValueError(f"Unknown task: {task_ref}")
+        task_id = self.parse_task_ref(task_ref)
+        if task["status"] == "RUNNING" and not force:
+            raise ValueError(
+                f"Task {task_ref.upper()} is RUNNING; refusing to release its claims without --force."
+            )
+        connection = self.connect()
+        if file is not None:
+            value = str(Path(file).as_posix())
+            while value.startswith("./"):
+                value = value[2:]
+            rows = connection.execute(
+                "SELECT path FROM file_locks WHERE task_id = ? AND path = ?", (task_id, value)
+            ).fetchall()
+            released = [row[0] for row in rows]
+            connection.execute(
+                "DELETE FROM file_locks WHERE task_id = ? AND path = ?", (task_id, value)
+            )
+        else:
+            rows = connection.execute(
+                "SELECT path FROM file_locks WHERE task_id = ? ORDER BY path", (task_id,)
+            ).fetchall()
+            released = [row[0] for row in rows]
+            connection.execute("DELETE FROM file_locks WHERE task_id = ?", (task_id,))
+        connection.commit()
+        connection.close()
+        self.event(
+            "claim_released",
+            {
+                "task_id": task_ref.upper(),
+                "agent": task["agent"],
+                "files": released,
+                "reason": compact_text(reason, 400),
+                "forced": bool(force and task["status"] == "RUNNING"),
+            },
+        )
+        return {"task_id": task_ref.upper(), "released": released, "reason": reason}
+
+    def recover_stale_claims(self, reason: str) -> list[dict[str, Any]]:
+        """Release orphaned claims: locks whose owning task is in a terminal state
+        (DONE/FAILED) but whose locks were never cleaned up. Never touches claims
+        for live (non-terminal) tasks."""
+        reason = (reason or "").strip()
+        if not reason:
+            raise ValueError("A recovery reason is required.")
+        connection = self.connect()
+        rows = connection.execute(
+            f"""SELECT locks.task_id, locks.path, tasks.status
+                FROM file_locks AS locks JOIN tasks ON tasks.id = locks.task_id
+                WHERE tasks.status IN ({','.join('?' for _ in FINAL_TASK_STATUSES)})
+                ORDER BY locks.task_id, locks.path""",
+            tuple(sorted(FINAL_TASK_STATUSES)),
+        ).fetchall()
+        connection.close()
+        by_task: dict[int, dict[str, Any]] = {}
+        for task_id, path, status in rows:
+            entry = by_task.setdefault(task_id, {"status": status, "paths": []})
+            entry["paths"].append(path)
+        recovered: list[dict[str, Any]] = []
+        for task_id, entry in sorted(by_task.items()):
+            task_ref = self.task_ref(task_id)
+            result = self.release_claim(task_ref, f"stale-recover ({entry['status']}): {reason}")
+            self.event(
+                "claim_recovered",
+                {"task_id": task_ref, "task_status": entry["status"], "files": result["released"]},
+            )
+            recovered.append({"task_id": task_ref, "task_status": entry["status"], "released": result["released"]})
+        return recovered
+
     def is_model_provider(self, provider: str) -> bool:
         if provider in NON_WRITING_PROVIDERS:
             return True
