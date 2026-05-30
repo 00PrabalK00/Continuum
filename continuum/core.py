@@ -13,6 +13,9 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from .policy import Policy, load_policy
+from .secrets_scan import redact_text, summarize_findings
+
 DEFAULT_CONTEXT_LIMIT = 100_000
 DEFAULT_THRESHOLD = 0.80
 CONTEXT_BUDGETS = {
@@ -139,6 +142,52 @@ class MemoryStore:
             return json.loads(self.config_file.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return {}
+
+    def policy(self) -> Policy:
+        """Load the effective governance policy for this project (cached)."""
+        cached = getattr(self, "_policy_cache", None)
+        if cached is None:
+            cached = load_policy(self.state_dir)
+            self._policy_cache = cached
+        return cached
+
+    def read_context_file(self, relpath: str) -> str:
+        """Return a project file's content for inclusion in egress context, with
+        two governance guards applied: files matching the policy `sensitive_globs`
+        have their content excluded entirely (replaced with a note), and any
+        included content is passed through the secret scrubber. Use this instead
+        of reading a file directly whenever file content may leave the machine."""
+        normalized = str(Path(relpath).as_posix())
+        while normalized.startswith("./"):
+            normalized = normalized[2:]
+        if self.policy().is_sensitive_file(normalized):
+            self.event("sensitive_excluded", {"path": normalized})
+            return f"[content excluded by policy sensitive_globs: {normalized}]"
+        path = self.project / normalized
+        if not path.exists():
+            return f"[file not found: {normalized}]"
+        try:
+            content = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as error:
+            return f"[could not read {normalized}: {error}]"
+        return self.scrub_egress(content, context=f"file:{normalized}")
+
+    def scrub_egress(self, text: str, *, context: str = "context") -> str:
+        """Redact secrets from text before it leaves the local machine.
+
+        Runs at the egress boundary (hosted-provider packets, external-session
+        context, delegation packets). Records a `secret_redacted` audit event
+        with the count and types only -- never the secret value itself.
+        """
+        if not text:
+            return text
+        cleaned, findings = redact_text(text)
+        if findings:
+            self.event(
+                "secret_redacted",
+                {"context": context, "count": len(findings), "types": summarize_findings(findings)},
+            )
+        return cleaned
 
     def initialize(self, context_limit: int, threshold: float) -> None:
         self.project.mkdir(parents=True, exist_ok=True)
@@ -417,6 +466,7 @@ The planner role is preserving architecture intent and constraints while the exe
 ## Previous Decisions
 {chr(10).join(f"- {item}" for item in decisions) or "- No previous decisions retrieved for this packet."}
 """
+        packet = self.scrub_egress(packet, context="delegation_packet")
         graph = {
             "version": 1,
             "kind": "hierarchical_model_delegation",
@@ -641,6 +691,10 @@ The planner role is preserving architecture intent and constraints while the exe
         provider = agent.split(":")[-1]
         if self.is_model_provider(provider):
             raise ValueError(f"Model provider cannot claim or edit project files: {provider}")
+        policy = self.policy()
+        if not policy.provider_allowed(provider):
+            self.event("policy_denied_provider", {"task_id": task_ref.upper(), "agent": agent, "provider": provider})
+            raise ValueError(f"Provider not allowed by policy: {provider}")
         task = self.get_task(task_ref)
         if not task:
             raise ValueError(f"Unknown task: {task_ref}")
@@ -657,6 +711,10 @@ The planner role is preserving architecture intent and constraints while the exe
         normalized = sorted(set(normalized))
         if not normalized:
             raise ValueError("At least one file is required.")
+        for path in normalized:
+            if policy.is_denied_file(path):
+                self.event("policy_denied_claim", {"task_id": task_ref.upper(), "agent": agent, "path": path})
+                raise ValueError(f"File denied by policy and cannot be claimed: {path}")
         connection = self.connect()
         task_id = self.parse_task_ref(task_ref)
         conflicts = connection.execute(
@@ -850,6 +908,7 @@ The planner role is preserving architecture intent and constraints while the exe
             f"PID: `{session['pid']}`\nMode: `{mode}`\nGenerated: {utc_now()}\n\n"
             f"## Instruction\n\n{instruction}\n\n## Bounded Context\n\n{context}\n"
         )
+        content = self.scrub_egress(content, context="external_session")
         write_text(path, content)
         connection = self.connect()
         connection.execute(
@@ -1072,7 +1131,12 @@ The planner role is preserving architecture intent and constraints while the exe
         return sorted(ranked, key=lambda item: item["score"], reverse=True)[:limit]
 
     def context_packet(
-        self, role: str, query: str = "", mode: str = "compact", workflow_ref: str | None = None
+        self,
+        role: str,
+        query: str = "",
+        mode: str = "compact",
+        workflow_ref: str | None = None,
+        files: list[str] | None = None,
     ) -> dict[str, Any]:
         if mode not in {"compact", "normal", "deep"}:
             raise ValueError(f"Invalid context mode: {mode}")
@@ -1085,7 +1149,17 @@ The planner role is preserving architecture intent and constraints while the exe
             matches = self.search(query, 3 if mode == "normal" else 8)
             if matches:
                 sections.append("## Retrieved Memory\n" + "\n".join(f"- M{item['id']} `{item['kind']}`: {json.dumps(item['payload'], ensure_ascii=True)}" for item in matches))
-        text = compact_text("\n\n".join(sections), CONTEXT_BUDGETS[mode] * 4)
+        for relpath in files or []:
+            if not relpath.strip():
+                continue
+            # read_context_file already excludes sensitive_globs content and scrubs
+            # secrets, so this file content is safe to include.
+            sections.append(f"## File `{relpath}`\n```\n{self.read_context_file(relpath)}\n```")
+        text = self.scrub_egress("\n\n".join(sections), context="context_packet")
+        if self.policy().max_context_tokens:
+            text = compact_text(text, min(CONTEXT_BUDGETS[mode] * 4, self.policy().max_context_tokens * 4))
+        else:
+            text = compact_text(text, CONTEXT_BUDGETS[mode] * 4)
         return {"role": role, "mode": mode, "estimated_tokens": estimate_tokens(text), "text": text}
 
     def latest_task(self) -> tuple[str, str | None] | None:

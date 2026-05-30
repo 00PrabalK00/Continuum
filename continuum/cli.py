@@ -28,6 +28,8 @@ from .core import (
 )
 from .mcp_server import serve_stdio
 from .orchestration import OrchestrationError, Orchestrator
+from .policy import PolicyError, write_starter_policy
+from .secrets_scan import scan_text
 from .providers import DEFAULT_PROVIDERS, ProviderError, ProviderManager
 from .services import ServiceError, ServiceManager
 from .teams import PRESETS, TeamError, TeamManager
@@ -783,6 +785,46 @@ def memory_refresh(args: argparse.Namespace) -> int:
     return 0
 
 
+def policy_init(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    store.state_dir.mkdir(parents=True, exist_ok=True)
+    path = write_starter_policy(store.state_dir, args.force)
+    print(f"Wrote starter policy: {path}")
+    print("Edit denied_files / sensitive_globs / allowed_providers as needed, then `continuum policy show`.")
+    return 0
+
+
+def policy_show(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    policy = store.policy()
+    source = policy.source or "built-in defaults (no policy.json present)"
+    print(f"Policy source: {source}")
+    print(json.dumps(policy.as_dict(), indent=2))
+    return 0
+
+
+def secrets_scan_cmd(args: argparse.Namespace) -> int:
+    target = args.path
+    if target == "-":
+        text = sys.stdin.read()
+        label = "<stdin>"
+    else:
+        path = Path(target)
+        if not path.exists():
+            print(f"Error: file not found: {target}", file=sys.stderr)
+            return 2
+        text = path.read_text(encoding="utf-8", errors="replace")
+        label = str(path)
+    findings = scan_text(text)
+    if not findings:
+        print(f"{label}: no secrets detected.")
+        return 0
+    print(f"{label}: {len(findings)} potential secret(s) detected.")
+    for finding in findings:
+        print(f"  {finding.kind}: {finding.preview}")
+    return 1
+
+
 def context_build(args: argparse.Namespace) -> int:
     packet = store_from(args).context_packet(args.role, args.query, args.mode, args.workflow)
     print(f"Context mode: {packet['mode']}")
@@ -1389,6 +1431,20 @@ def parser() -> argparse.ArgumentParser:
     packet_cmd.add_argument("--output", help="Write the packet to this file instead of stdout.")
     packet_cmd.set_defaults(func=pr_packet)
 
+    policy_cmd = commands.add_parser("policy", help="Manage the governance policy (.continuum/policy.json).")
+    policy_commands = policy_cmd.add_subparsers(dest="policy_command", required=True)
+    init_policy = policy_commands.add_parser("init", parents=[common], help="Write a starter policy.json.")
+    init_policy.add_argument("--force", action="store_true", help="Overwrite an existing policy.json.")
+    init_policy.set_defaults(func=policy_init)
+    show_policy = policy_commands.add_parser("show", parents=[common], help="Print the effective policy and its source.")
+    show_policy.set_defaults(func=policy_show)
+
+    secrets_cmd = commands.add_parser("secrets", help="Scan text for secrets before it leaves the machine.")
+    secrets_commands = secrets_cmd.add_subparsers(dest="secrets_command", required=True)
+    scan_secrets = secrets_commands.add_parser("scan", parents=[common], help="Scan a file (or '-' for stdin) for secrets.")
+    scan_secrets.add_argument("path", help="Path to scan, or '-' to read from stdin.")
+    scan_secrets.set_defaults(func=secrets_scan_cmd)
+
     route = commands.add_parser("route", help="Explain provider/team routing.")
     route_commands = route.add_subparsers(dest="route_command", required=True)
     explain_route = route_commands.add_parser("explain", parents=[common], help="Classify and show the selected team route.")
@@ -1438,7 +1494,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("--context-limit must be positive")
     try:
         return int(args.func(args))
-    except (EvidenceError, ExternalSessionError, ProviderError, ServiceError, TeamError, WorktreeError, ValueError) as error:
+    except (EvidenceError, ExternalSessionError, PolicyError, ProviderError, ServiceError, TeamError, WorktreeError, ValueError) as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1
 
