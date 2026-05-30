@@ -54,49 +54,140 @@ class Orchestrator:
         team = self.teams.load(team_name)
         self.teams.validate(team)
         workflow = self.plan(team_name, request, task_type)
+        return self._run_workflow(workflow, team, request, allowed_files, context_mode)
+
+    def retry(
+        self,
+        workflow_ref: str,
+        allowed_files: list[str] | None = None,
+        context_mode: str = "compact",
+        execute: bool = False,
+    ) -> dict[str, Any]:
+        """Resume a FAILED workflow from its first failed/incomplete step.
+
+        Already-completed earlier steps and their tasks are preserved -- they are
+        neither re-planned nor re-run. By default this re-plans the remaining
+        steps and returns the controlled tasks/next-commands (mirroring how
+        `team run` behaves without `--execute`); with `execute=True` it resumes
+        sequential provider execution from the failed step.
+        """
+        workflow = self.store.get_workflow(workflow_ref)
+        if not workflow:
+            raise OrchestrationError(f"Unknown workflow: {workflow_ref}")
+        if workflow["status"] == "DONE":
+            raise OrchestrationError(f"Workflow {workflow['workflow_id']} already completed; nothing to retry.")
+        resume_step = self._first_incomplete_step(workflow)
+        if resume_step is None:
+            raise OrchestrationError(f"Workflow {workflow['workflow_id']} has no failed or incomplete step to retry.")
+        team = self.teams.load(workflow["team"])
+        self.teams.validate(team)
+        self.store.event(
+            "workflow_retry",
+            {
+                "workflow_id": workflow["workflow_id"],
+                "resume_step": resume_step,
+                "execute": bool(execute),
+            },
+        )
+        # Re-arm the steps to be retried: a previously FAILED task is in a terminal
+        # state, so reset it (and any later steps) to PLANNED so they can be claimed
+        # and run again. Earlier DONE steps and their tasks are left untouched.
+        for step in workflow["steps"]:
+            if int(step["order"]) < resume_step:
+                continue
+            if step["status"] != "PLANNED":
+                self.store.update_workflow_step(workflow["workflow_id"], int(step["order"]), "PLANNED")
+            if step["task_id"] and self._is_terminal_task(step["task_id"]):
+                self.store.set_task_status(step["task_id"], "CREATED", "Re-armed for workflow retry.")
+        if not execute:
+            self.store.update_workflow(workflow["workflow_id"], "PLANNED", resume_step - 1)
+            return self.store.get_workflow(workflow["workflow_id"]) or workflow
+        return self._run_workflow(
+            self.store.get_workflow(workflow["workflow_id"]) or workflow,
+            team,
+            workflow["request"],
+            allowed_files,
+            context_mode,
+            start_step=resume_step,
+        )
+
+    def _is_terminal_task(self, task_ref: str) -> bool:
+        task = self.store.get_task(task_ref)
+        return bool(task and task["status"] in {"DONE", "FAILED"})
+
+    @staticmethod
+    def _first_incomplete_step(workflow: dict[str, Any]) -> int | None:
+        for step in workflow["steps"]:
+            if step["status"] != "DONE":
+                return int(step["order"])
+        return None
+
+    def _run_workflow(
+        self,
+        workflow: dict[str, Any],
+        team: dict[str, Any],
+        request: str,
+        allowed_files: list[str] | None,
+        context_mode: str,
+        start_step: int = 1,
+    ) -> dict[str, Any]:
         workflow_id = workflow["workflow_id"]
         allowed = self._normalize_paths(allowed_files or [])
-        self.store.update_workflow(workflow_id, "RUNNING")
+        self.store.update_workflow(workflow_id, "RUNNING", start_step - 1)
         for step in workflow["steps"]:
-            role = step["role"]
-            provider = step["provider"]
-            task_id = str(step["task_id"])
-            role_config = team["agents"][role]
-            output = ""
-            try:
-                self._begin_step(workflow_id, step["order"], task_id, role, provider, role_config, allowed)
-                packet = self.store.context_packet(role, request, context_mode, workflow_id)
-                prompt = self._step_prompt(request, role, provider, role_config, packet["text"], allowed)
-                output = self.runner(provider, prompt)
-                self._verify_writer_paths(role_config, allowed)
-                next_role = self._next_role(workflow, step["order"])
-                self.store.send_message(role, next_role or "*", output, "result", workflow_id, task_id)
-                self.store.update_workflow_step(workflow_id, step["order"], "DONE", output=output)
-                self.store.set_task_status(task_id, "DONE", f"{provider} completed step {step['order']}.")
-                self.store.update_workflow(workflow_id, "RUNNING", step["order"])
-            except Exception as error:
-                message = compact_text(str(error), 800)
-                if role_config.get("can_edit_files"):
-                    try:
-                        self._verify_writer_paths(role_config, allowed)
-                    except OrchestrationError as unsafe_edit:
-                        message = compact_text(f"{message}; {unsafe_edit}", 800)
-                retained = compact_text(
-                    (f"Provider output:\n{output}\n\n" if output else "") + f"Execution stopped: {message}",
-                    2_400,
-                )
-                self.store.update_workflow_step(workflow_id, step["order"], "FAILED", output=retained)
-                self.store.set_task_status(task_id, "FAILED", message)
-                self.store.update_workflow(workflow_id, "FAILED", step["order"], message)
-                self.store.send_message("continuum", role, message, "error", workflow_id, task_id)
-                self.store.event("handoff", {"task": request, "next_step": f"Inspect failed workflow {workflow_id} step {step['order']}: {message}"})
-                self.store.write_handoff(request, f"Inspect failed workflow {workflow_id} step {step['order']}: {message}")
-                raise OrchestrationError(message) from error
+            if int(step["order"]) < start_step:
+                continue
+            self._run_step(workflow, team, request, step, allowed, context_mode)
         summary = f"Sequential workflow completed for {request}."
         completed = self.store.update_workflow(workflow_id, "DONE", len(workflow["steps"]), summary)
         self.store.event("handoff", {"task": request, "next_step": f"Review completed workflow {workflow_id} outputs and commit verified changes."})
         self.store.write_handoff(request, f"Review completed workflow {workflow_id} outputs and commit verified changes.")
         return completed
+
+    def _run_step(
+        self,
+        workflow: dict[str, Any],
+        team: dict[str, Any],
+        request: str,
+        step: dict[str, Any],
+        allowed: set[str],
+        context_mode: str,
+    ) -> None:
+        workflow_id = workflow["workflow_id"]
+        role = step["role"]
+        provider = step["provider"]
+        task_id = str(step["task_id"])
+        role_config = team["agents"][role]
+        output = ""
+        try:
+            self._begin_step(workflow_id, step["order"], task_id, role, provider, role_config, allowed)
+            packet = self.store.context_packet(role, request, context_mode, workflow_id)
+            prompt = self._step_prompt(request, role, provider, role_config, packet["text"], allowed)
+            output = self.runner(provider, prompt)
+            self._verify_writer_paths(role_config, allowed)
+            next_role = self._next_role(workflow, step["order"])
+            self.store.send_message(role, next_role or "*", output, "result", workflow_id, task_id)
+            self.store.update_workflow_step(workflow_id, step["order"], "DONE", output=output)
+            self.store.set_task_status(task_id, "DONE", f"{provider} completed step {step['order']}.")
+            self.store.update_workflow(workflow_id, "RUNNING", step["order"])
+        except Exception as error:
+            message = compact_text(str(error), 800)
+            if role_config.get("can_edit_files"):
+                try:
+                    self._verify_writer_paths(role_config, allowed)
+                except OrchestrationError as unsafe_edit:
+                    message = compact_text(f"{message}; {unsafe_edit}", 800)
+            retained = compact_text(
+                (f"Provider output:\n{output}\n\n" if output else "") + f"Execution stopped: {message}",
+                2_400,
+            )
+            self.store.update_workflow_step(workflow_id, step["order"], "FAILED", output=retained)
+            self.store.set_task_status(task_id, "FAILED", message)
+            self.store.update_workflow(workflow_id, "FAILED", step["order"], message)
+            self.store.send_message("continuum", role, message, "error", workflow_id, task_id)
+            self.store.event("handoff", {"task": request, "next_step": f"Inspect failed workflow {workflow_id} step {step['order']}: {message}"})
+            self.store.write_handoff(request, f"Inspect failed workflow {workflow_id} step {step['order']}: {message}")
+            raise OrchestrationError(message) from error
 
     def _begin_step(
         self,
