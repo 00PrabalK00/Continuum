@@ -8,7 +8,7 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-from continuum.cli import down, injected_resume_args, main, pid_is_running, up
+from continuum.cli import down, injected_resume_args, main, pid_is_running, suppress_agent_display_line, up
 from continuum.providers import ProviderError, ProviderManager
 
 
@@ -210,11 +210,18 @@ class CliTest(unittest.TestCase):
         prompt = "continue from handoff"
 
         self.assertEqual(injected_resume_args("claude", ["--model", "opus"], prompt)[-1], prompt)
-        self.assertEqual(injected_resume_args("codex", [], prompt), [prompt])
-        self.assertEqual(injected_resume_args("gemini", ["--approval-mode", "plan"], prompt)[:2], ["--prompt-interactive", prompt])
+        self.assertEqual(injected_resume_args("codex", [], prompt), ["exec", prompt])
+        self.assertEqual(injected_resume_args("gemini", ["--approval-mode", "plan"], prompt)[:2], ["--prompt", prompt])
+        self.assertIn("--output-format", injected_resume_args("gemini", [], prompt))
         merged = injected_resume_args("gemini", ["--prompt", "other"], prompt)
         self.assertIn(prompt, merged[1])
         self.assertIn("other", merged[1])
+
+    def test_known_gemini_startup_noise_is_hidden_from_shell_display(self):
+        self.assertTrue(suppress_agent_display_line("gemini", "Warning: 256-color support not detected.\n"))
+        self.assertTrue(suppress_agent_display_line("gemini", "Ripgrep is not available. Falling back to GrepTool.\n"))
+        self.assertFalse(suppress_agent_display_line("gemini", "Actual answer.\n"))
+        self.assertFalse(suppress_agent_display_line("codex", "Warning: 256-color support not detected.\n"))
 
     def test_semantic_retrieval_falls_back_to_exact_search_when_ollama_is_unavailable(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -295,6 +302,9 @@ class CliTest(unittest.TestCase):
             self.assertEqual(args.agent_args, [])
             self.assertTrue(run.call_args.kwargs["resumed"])
             self.assertIn("User message:\nhi there", prompt)
+            self.assertIn("Do not run shell commands", prompt)
+            self.assertIn("satisfies the project startup requirement", prompt)
+            self.assertIn("plain Continuum chat question", prompt)
             self.assertIn("Chat target: claude", output.getvalue())
 
     def test_chat_accepts_explicit_context_mode(self):
@@ -324,6 +334,27 @@ class CliTest(unittest.TestCase):
             self.assertEqual(args.agent, "gemini")
             self.assertTrue(run.call_args.kwargs["resumed"])
             self.assertIn("inspect rules", prompt)
+
+    def test_codex_chat_uses_noninteractive_exec_subcommand(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            previous = sys.argv
+            try:
+                sys.argv = ["continuum", "init", "--project", str(project)]
+                self.assertEqual(main(), 0)
+                with patch("continuum.cli.shutil.which", return_value="codex"):
+                    with patch("continuum.cli.subprocess.Popen") as popen:
+                        process = popen.return_value
+                        process.stdout = []
+                        process.wait.return_value = 0
+                        sys.argv = ["continuum", "chat", "--project", str(project), "codex", "hi"]
+                        self.assertEqual(main(), 0)
+            finally:
+                sys.argv = previous
+
+            command = popen.call_args.args[0]
+            self.assertIn("codex", Path(command[0]).name)
+            self.assertEqual(command[1], "exec")
 
     def test_memory_refresh_embeds_recent_events_with_event_ids(self):
         with tempfile.TemporaryDirectory() as temporary:

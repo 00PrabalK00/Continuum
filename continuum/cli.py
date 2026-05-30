@@ -206,20 +206,41 @@ def agent_command(agent: str, passthrough: list[str]) -> list[str]:
 
 def injected_resume_args(agent: str, passthrough: list[str], prompt: str) -> list[str]:
     if agent == "gemini":
-        for index, value in enumerate(passthrough):
+        merged_args = list(passthrough)
+        if not any(value in {"--approval-mode"} or value.startswith("--approval-mode=") for value in merged_args):
+            merged_args.extend(["--approval-mode", "plan"])
+        if not any(value in {"-o", "--output-format"} or value.startswith("--output-format=") for value in merged_args):
+            merged_args.extend(["--output-format", "text"])
+        for index, value in enumerate(merged_args):
             if value in {"-p", "--prompt", "-i", "--prompt-interactive"}:
-                if index + 1 >= len(passthrough):
+                if index + 1 >= len(merged_args):
                     raise ValueError(f"Missing value after Gemini prompt option: {value}")
-                merged = list(passthrough)
-                merged[index + 1] = prompt + "\n\nAdditional user instruction:\n" + passthrough[index + 1]
+                merged = list(merged_args)
+                merged[index + 1] = prompt + "\n\nAdditional user instruction:\n" + merged_args[index + 1]
                 return merged
             if value.startswith("--prompt=") or value.startswith("--prompt-interactive="):
                 option, requested = value.split("=", 1)
-                merged = list(passthrough)
+                merged = list(merged_args)
                 merged[index] = option + "=" + prompt + "\n\nAdditional user instruction:\n" + requested
                 return merged
-        return ["--prompt-interactive", prompt, *passthrough]
+        return ["--prompt", prompt, *merged_args]
+    if agent == "codex":
+        if passthrough and passthrough[0] == "exec":
+            return [*passthrough, prompt]
+        return ["exec", *passthrough, prompt]
     return [*passthrough, prompt]
+
+
+def suppress_agent_display_line(agent: str, line: str) -> bool:
+    if agent != "gemini":
+        return False
+    stripped = line.strip()
+    return (
+        stripped.startswith("Warning: 256-color support not detected.")
+        or stripped.startswith("Ripgrep is not available.")
+        or ("[DEP0190] DeprecationWarning" in stripped)
+        or stripped.startswith("(Use `node --trace-deprecation")
+    )
 
 
 def run_agent(args: argparse.Namespace, resumed: bool = False, injected_context: str | None = None) -> int:
@@ -265,7 +286,8 @@ def run_agent(args: argparse.Namespace, resumed: bool = False, injected_context:
             )
             assert process.stdout is not None
             for line in process.stdout:
-                print(line, end="")
+                if not suppress_agent_display_line(args.agent, line):
+                    print(line, end="")
                 output.write(line)
                 output.flush()
                 tokens += estimate_tokens(line)
@@ -455,8 +477,13 @@ def chat(args: argparse.Namespace) -> int:
         raise SystemExit("Message is empty. Example: `continuum chat claude hi`.")
     context = store.resume_context(mode)
     prompt = (
+        "This is a plain Continuum chat question, not a request to continue project work. "
         "Read this bounded Continuum context, then answer the user's message. "
-        "Use targeted Continuum MCP/context retrieval when more detail is needed.\n\n"
+        "For this chat turn, the supplied Continuum context below satisfies the project startup requirement to read `.continuum/current.md` and any included handoff. "
+        "Do not refuse by asking to read `.continuum/current.md`, `.continuum/latest_handoff.md`, `GEMINI.md`, `CLAUDE.md`, or `AGENTS.md`; use the supplied context instead. "
+        "Do not run shell commands, repo tools, MCP tools, or agent tools unless the user explicitly asks you to inspect or change files. "
+        "If the supplied context is not enough, say what context is missing.\n\n"
+        "Supplied Continuum context:\n"
         + context
         + "\n\nUser message:\n"
         + message

@@ -100,6 +100,26 @@ class InteractiveShellTest(unittest.TestCase):
         self.assertEqual(calls[0][4:], ["compact", "hi there"])
         self.assertIn("Sending to claude", output.getvalue())
 
+    def test_bare_continuum_command_runs_cli_instead_of_agent_chat(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = StringIO()
+            calls = []
+            shell = InteractiveShell(
+                Path(temporary),
+                None,
+                dispatch=lambda argv: calls.append(argv) or 0,
+                animation="off",
+                output=output,
+            )
+
+            self.assertEqual(shell.execute("continuum team init local_agent_team"), 0)
+
+            self.assertEqual(
+                calls[0],
+                ["team", "init", "--project", str(Path(temporary).resolve()), "local_agent_team"],
+            )
+            self.assertNotIn("Sending to", output.getvalue())
+
     def test_chat_slash_command_can_target_another_agent(self):
         calls = []
         shell = InteractiveShell(Path("."), None, dispatch=lambda argv: calls.append(argv) or 0)
@@ -120,8 +140,41 @@ class InteractiveShellTest(unittest.TestCase):
             self.assertEqual(shell.execute("/resume-terminal gemini normal"), 0)
 
             project = str(Path(temporary).resolve())
-            self.assertEqual(calls[0], ["run", "--project", project, "--interactive", "codex", "--model", "strong"])
-            self.assertEqual(calls[1], ["resume", "--project", project, "--interactive", "gemini", "normal"])
+            self.assertEqual(calls[0], [
+                "run", "--project", project, "--interactive", "codex",
+                "--ask-for-approval", "on-request", "--model", "strong",
+            ])
+            self.assertEqual(calls[1], [
+                "resume", "--project", project, "--interactive", "gemini", "normal",
+                "--approval-mode", "default",
+            ])
+
+    def test_permissions_command_sets_active_agent_approval_mode(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            calls = []
+            output = StringIO()
+            shell = InteractiveShell(
+                Path(temporary),
+                None,
+                dispatch=lambda argv: calls.append(argv) or 0,
+                output=output,
+            )
+
+            self.assertEqual(shell.execute("/permissions codex never"), 0)
+            self.assertEqual(shell.execute("/permissions gemini plan"), 0)
+            self.assertEqual(shell.execute("/terminal codex"), 0)
+            self.assertEqual(shell.execute("/resume-terminal gemini compact"), 0)
+
+            project = str(Path(temporary).resolve())
+            self.assertEqual(calls[0], [
+                "run", "--project", project, "--interactive", "codex",
+                "--ask-for-approval", "never",
+            ])
+            self.assertEqual(calls[1], [
+                "resume", "--project", project, "--interactive", "gemini", "compact",
+                "--approval-mode", "plan",
+            ])
+            self.assertIn("codex permission mode: never", output.getvalue())
 
     def test_session_route_defaults_to_attached_session_list(self):
         calls = []
