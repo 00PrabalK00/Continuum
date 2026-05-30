@@ -13,6 +13,10 @@ class WorktreeManagerTest(unittest.TestCase):
         self.project = Path(self.temporary.name) / "project"
         self.project.mkdir()
         subprocess.run(["git", "init"], cwd=self.project, capture_output=True, check=True)
+        # Persist identity to the repo config so operations that create commits
+        # (e.g. `git merge`) work on CI runners with no global git identity.
+        subprocess.run(["git", "config", "user.name", "Continuum Test"], cwd=self.project, capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=self.project, capture_output=True, check=True)
         (self.project / "app.py").write_text("value = 1\n", encoding="utf-8")
         subprocess.run(["git", "add", "."], cwd=self.project, capture_output=True, check=True)
         subprocess.run(
