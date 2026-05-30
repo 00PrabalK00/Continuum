@@ -144,6 +144,11 @@ class MemoryStore:
         self.project.mkdir(parents=True, exist_ok=True)
         self.state_dir.mkdir(exist_ok=True)
         (self.state_dir / "session_logs").mkdir(exist_ok=True)
+        # Keep machine-local state (sqlite, worktrees, session logs) out of Git so it
+        # never dirties the project tree or registers worktrees as embedded repositories.
+        gitignore = self.state_dir / ".gitignore"
+        if not gitignore.exists():
+            write_text(gitignore, "*\n")
         config = {
             "project": str(self.project),
             "project_id": self.project_id,

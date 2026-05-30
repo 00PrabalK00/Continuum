@@ -14,6 +14,7 @@ Available editable starter presets:
 
 ```text
 default_dev_team
+local_agent_team
 local_only
 review_heavy
 fast_bugfix

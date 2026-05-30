@@ -22,6 +22,9 @@ class MemoryStoreTest(unittest.TestCase):
             self.assertTrue((vault / "Memory Index.md").exists())
             self.assertIn("/Current|", (vault / "Memory Index.md").read_text(encoding="utf-8"))
             self.assertIn("Continuum Shared Memory", (project / "AGENTS.md").read_text(encoding="utf-8"))
+            gitignore = project / ".continuum" / ".gitignore"
+            self.assertTrue(gitignore.exists())
+            self.assertEqual(gitignore.read_text(encoding="utf-8").strip(), "*")
 
     def test_handoff_is_bounded_and_searchable(self):
         with tempfile.TemporaryDirectory() as temporary:

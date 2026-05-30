@@ -87,13 +87,25 @@ class ServiceManagerTest(unittest.TestCase):
             result = manager.install()
 
         path = Path(result["path"])
-        self.assertIn("Continuum Daemon.cmd", result["path"])
+        self.assertIn(f"Continuum Daemon {self.store.project_id}.cmd", result["path"])
         self.assertTrue(path.exists())
 
         content = path.read_text(encoding="utf-8")
         self.assertTrue(content.startswith("@echo off"))
         self.assertIn("continuum", content)
         self.assertIn("PYTHONPATH", content)
+
+    def test_windows_startup_filename_is_project_scoped(self):
+        other_project = Path(self.tmp.name) / "other_project"
+        other_store = MemoryStore(other_project)
+        other_store.initialize(1000, 0.8)
+
+        path_a = self._manager("Windows").location()
+        path_b = ServiceManager(other_store, system="Windows", home=self.home).location()
+
+        self.assertIn(self.store.project_id, path_a.name)
+        self.assertIn(other_store.project_id, path_b.name)
+        self.assertNotEqual(path_a, path_b)
 
     def test_vault_dir_added_to_daemon_args(self):
         vault = Path(self.tmp.name) / "vault"
