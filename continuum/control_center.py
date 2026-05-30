@@ -6,6 +6,7 @@ import json
 import mimetypes
 import os
 import re
+import secrets
 import subprocess
 import threading
 import webbrowser
@@ -21,6 +22,8 @@ from .providers import ProviderError, ProviderManager
 from .teams import TeamError, TeamManager
 
 UI_DIR = Path(__file__).resolve().parent / "ui"
+
+TOKEN_HEADER = "X-Continuum-Token"
 
 
 def read_optional(path: Path, limit: int = 8_000) -> str:
@@ -201,12 +204,21 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
             return
         if not path.exists() or not path.is_file():
             path = UI_DIR / "index.html"
-        body = path.read_bytes()
+        if path.name == "index.html":
+            body = self._inject_token(path.read_text(encoding="utf-8")).encode("utf-8")
+            content_type = "text/html; charset=utf-8"
+        else:
+            body = path.read_bytes()
+            content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", mimetypes.guess_type(path.name)[0] or "application/octet-stream")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _inject_token(self, html: str) -> str:
+        meta = f'<meta name="continuum-token" content="{self.server.token}">'
+        return html.replace("</head>", f"    {meta}\n  </head>", 1)
 
     def handle_api_get(self, path: str, query: dict[str, list[str]]) -> None:
         app = self.server.app
@@ -230,6 +242,9 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
+        if not secrets.compare_digest(self.headers.get(TOKEN_HEADER, ""), self.server.token):
+            self.send_json({"error": "Missing or invalid session token."}, HTTPStatus.FORBIDDEN)
+            return
         try:
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
@@ -255,9 +270,10 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
 
 
 class ControlCenterServer(ThreadingHTTPServer):
-    def __init__(self, address: tuple[str, int], app: ControlCenter) -> None:
+    def __init__(self, address: tuple[str, int], app: ControlCenter, token: str | None = None) -> None:
         super().__init__(address, ControlCenterHandler)
         self.app = app
+        self.token = token or secrets.token_urlsafe(32)
 
 
 def serve_control_center(

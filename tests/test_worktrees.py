@@ -13,6 +13,10 @@ class WorktreeManagerTest(unittest.TestCase):
         self.project = Path(self.temporary.name) / "project"
         self.project.mkdir()
         subprocess.run(["git", "init"], cwd=self.project, capture_output=True, check=True)
+        # Persist identity to the repo config so operations that create commits
+        # (e.g. `git merge`) work on CI runners with no global git identity.
+        subprocess.run(["git", "config", "user.name", "Continuum Test"], cwd=self.project, capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=self.project, capture_output=True, check=True)
         (self.project / "app.py").write_text("value = 1\n", encoding="utf-8")
         subprocess.run(["git", "add", "."], cwd=self.project, capture_output=True, check=True)
         subprocess.run(
@@ -102,6 +106,39 @@ class WorktreeManagerTest(unittest.TestCase):
 
         with self.assertRaisesRegex(WorktreeError, "changed after"):
             self.manager.merge(self.task["task_id"])
+
+    def test_merge_removes_worktree_and_deletes_branch(self):
+        record = self.manager.create(self.task["task_id"])
+        worktree = Path(record["path"])
+        branch = record["branch"]
+        (worktree / "app.py").write_text("value = 2\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=worktree, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "-c", "user.name=Continuum Test", "-c", "user.email=test@example.invalid", "commit", "-m", "change"],
+            cwd=worktree, capture_output=True, check=True,
+        )
+        # Commit Continuum-generated scaffolding so the main tree is clean for the merge gate.
+        subprocess.run(["git", "add", "-A"], cwd=self.project, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "-c", "user.name=Continuum Test", "-c", "user.email=test@example.invalid", "commit", "-m", "scaffolding"],
+            cwd=self.project, capture_output=True, check=True,
+        )
+        self.manager.record_tests(self.task["task_id"], True, "tests pass")
+        self.manager.record_review(self.task["task_id"], True, "approved")
+
+        merged = self.manager.merge(self.task["task_id"])
+
+        self.assertEqual(merged["status"], "MERGED")
+        self.assertNotIn("cleanup_warning", merged)
+        self.assertFalse(worktree.exists())
+        worktrees = subprocess.run(
+            ["git", "worktree", "list"], cwd=self.project, capture_output=True, text=True, check=True
+        ).stdout
+        self.assertNotIn(str(worktree), worktrees)
+        branches = subprocess.run(
+            ["git", "branch", "--list", branch], cwd=self.project, capture_output=True, text=True, check=True
+        ).stdout
+        self.assertEqual(branches.strip(), "")
 
     def test_merge_rejects_uncommitted_changes_after_recorded_gates(self):
         record = self.manager.create(self.task["task_id"])

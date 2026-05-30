@@ -73,18 +73,19 @@ class ControlCenterTest(unittest.TestCase):
             server = ControlCenterServer(("127.0.0.1", 0), app)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
+            auth = {"Content-Type": "application/json", "X-Continuum-Token": server.token}
             try:
                 create = urllib.request.Request(
                     f"http://127.0.0.1:{server.server_port}/api/teams/create",
                     data=json.dumps({"preset": "local_only"}).encode("utf-8"),
-                    headers={"Content-Type": "application/json"}, method="POST",
+                    headers=auth, method="POST",
                 )
                 with urllib.request.urlopen(create) as response:
                     created = json.loads(response.read().decode("utf-8"))
                 plan = urllib.request.Request(
                     f"http://127.0.0.1:{server.server_port}/api/workflows/run",
                     data=json.dumps({"team": "local_only", "request": "document auth"}).encode("utf-8"),
-                    headers={"Content-Type": "application/json"}, method="POST",
+                    headers=auth, method="POST",
                 )
                 with urllib.request.urlopen(plan) as response:
                     workflow = json.loads(response.read().decode("utf-8"))
@@ -93,7 +94,7 @@ class ControlCenterTest(unittest.TestCase):
                 resume = urllib.request.Request(
                     f"http://127.0.0.1:{server.server_port}/api/resume-context",
                     data=json.dumps({"role": "reasoner", "mode": "compact"}).encode("utf-8"),
-                    headers={"Content-Type": "application/json"}, method="POST",
+                    headers=auth, method="POST",
                 )
                 with urllib.request.urlopen(resume) as response:
                     packet = json.loads(response.read().decode("utf-8"))
@@ -111,7 +112,9 @@ class ControlCenterTest(unittest.TestCase):
             thread.start()
             request = urllib.request.Request(
                 f"http://127.0.0.1:{server.server_port}/api/unknown",
-                data=b"{}", headers={"Content-Type": "application/json"}, method="POST",
+                data=b"{}",
+                headers={"Content-Type": "application/json", "X-Continuum-Token": server.token},
+                method="POST",
             )
             try:
                 with self.assertRaises(urllib.error.HTTPError) as context:
@@ -132,13 +135,71 @@ class ControlCenterTest(unittest.TestCase):
             request = urllib.request.Request(
                 f"http://127.0.0.1:{server.server_port}/api/teams/save",
                 data=json.dumps({"name": "../outside", "config": {"agents": {}, "routing": {}}}).encode("utf-8"),
-                headers={"Content-Type": "application/json"}, method="POST",
+                headers={"Content-Type": "application/json", "X-Continuum-Token": server.token},
+                method="POST",
             )
             try:
                 with self.assertRaises(urllib.error.HTTPError) as context:
                     urllib.request.urlopen(request)
                 self.assertEqual(context.exception.code, 400)
                 self.assertFalse((app.store.state_dir / "outside.json").exists())
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
+
+    def test_post_without_token_is_rejected_with_403(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            app = ControlCenter(Path(temporary) / "project")
+            app.store.initialize(1000, 0.8)
+            server = ControlCenterServer(("127.0.0.1", 0), app)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/teams/create",
+                data=json.dumps({"preset": "local_only"}).encode("utf-8"),
+                headers={"Content-Type": "application/json"}, method="POST",
+            )
+            wrong = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/teams/create",
+                data=json.dumps({"preset": "local_only"}).encode("utf-8"),
+                headers={"Content-Type": "application/json", "X-Continuum-Token": "wrong"}, method="POST",
+            )
+            try:
+                with self.assertRaises(urllib.error.HTTPError) as context:
+                    urllib.request.urlopen(request)
+                self.assertEqual(context.exception.code, 403)
+                with self.assertRaises(urllib.error.HTTPError) as context:
+                    urllib.request.urlopen(wrong)
+                self.assertEqual(context.exception.code, 403)
+                self.assertFalse((app.store.state_dir / "teams").exists())
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
+    def test_post_with_valid_token_succeeds_and_token_is_served_in_html(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            app = ControlCenter(Path(temporary) / "project")
+            app.store.initialize(1000, 0.8)
+            server = ControlCenterServer(("127.0.0.1", 0), app)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            url = f"http://127.0.0.1:{server.server_port}"
+            try:
+                with urllib.request.urlopen(url + "/") as response:
+                    html = response.read().decode("utf-8")
+                self.assertIn(f'<meta name="continuum-token" content="{server.token}">', html)
+                create = urllib.request.Request(
+                    url + "/api/teams/create",
+                    data=json.dumps({"preset": "local_only"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json", "X-Continuum-Token": server.token},
+                    method="POST",
+                )
+                with urllib.request.urlopen(create) as response:
+                    created = json.loads(response.read().decode("utf-8"))
+                self.assertEqual(created["team"], "local_only")
             finally:
                 server.shutdown()
                 server.server_close()

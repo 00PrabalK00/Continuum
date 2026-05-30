@@ -221,7 +221,9 @@ def run_doctor(store: MemoryStore, package_root: Path | None = None) -> list[dic
     checks.append(check("MCP server boot", "PASS" if mcp_ok else "FAIL", "MCP initialize response is valid." if mcp_ok else "MCP initialize failed.", f'Run `continuum mcp serve --project "{store.project}"`.' if not mcp_ok else ""))
 
     state, pid = daemon_state(store)
-    checks.append(check("Daemon process", "PASS" if state == "running" else "FAIL", f"{state}; PID {pid}" if pid else state, f'Run `continuum up --project "{store.project}"`.' if state != "running" else ""))
+    # A stopped daemon is a normal runtime state, not an install/config failure, so it
+    # surfaces as INFO and must never drive a non-zero `continuum doctor` exit code.
+    checks.append(check("Daemon process", "PASS" if state == "running" else "INFO", f"{state}; PID {pid}" if pid else state, f'Run `continuum up --project "{store.project}"`.' if state != "running" else ""))
     try:
         try:
             service_home = Path.home()

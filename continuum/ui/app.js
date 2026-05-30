@@ -19,9 +19,12 @@ async function api(path) {
   if (!response.ok || data.error) throw new Error(data.error || `Request failed: ${response.status}`);
   return data;
 }
+const sessionToken = document.querySelector('meta[name="continuum-token"]')?.content || "";
 async function post(path, payload) {
   const response = await fetch(path, {
-    method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload)
+    method: "POST",
+    headers: {"Content-Type": "application/json", "X-Continuum-Token": sessionToken},
+    body: JSON.stringify(payload)
   });
   const data = await response.json();
   if (!response.ok || data.error) throw new Error(data.error || `Request failed: ${response.status}`);

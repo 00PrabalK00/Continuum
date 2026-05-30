@@ -535,6 +535,9 @@ def status(args: argparse.Namespace) -> int:
 
 def doctor(args: argparse.Namespace) -> int:
     checks = run_doctor(store_from(args))
+    # Only install/config failures (FAIL) drive a non-zero exit so `continuum doctor`
+    # works as a CI install-health gate. Runtime state such as a stopped daemon is
+    # reported as INFO and never fails the exit code.
     failed = False
     for item in checks:
         print(f"[{item['status']}] {item['name']}: {item['detail']}")
