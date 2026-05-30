@@ -37,6 +37,14 @@ from .teams import PRESETS, TeamError, TeamManager
 from .worktrees import WorktreeError, WorktreeManager
 from .control_center import serve_control_center
 from .diagnostics import project_status, run_doctor
+from .context_intel import (
+    diff_intel,
+    gather_context_intel,
+    render_diff,
+    render_intel,
+    render_score,
+    score_intel,
+)
 from .evidence import EvidenceError, gather_evidence, render_packet
 from .external_sessions import ExternalSessionError, ExternalSessionManager
 from .terminal import TerminalUnavailable, run_terminal_process, terminal_backend
@@ -866,10 +874,58 @@ def secrets_scan_cmd(args: argparse.Namespace) -> int:
 
 
 def context_build(args: argparse.Namespace) -> int:
-    packet = store_from(args).context_packet(args.role, args.query, args.mode, args.workflow)
+    store = store_from(args)
+    packet = store.context_packet(args.role, args.query, args.mode, args.workflow)
     print(f"Context mode: {packet['mode']}")
     print(f"Estimated context: {packet['estimated_tokens']} tokens")
     print(packet["text"])
+    # Optional symbol-aware appendix; default packet behavior is unchanged.
+    if getattr(args, "intel", False) or getattr(args, "symbols", False):
+        intel = gather_context_intel(store, files=args.files or None)
+        print()
+        print("## Relevant Symbols / Tests / Recent Changes")
+        for path, syms in intel["symbols"].items():
+            rendered = ", ".join(f"{s['kind']} {s['name']}" for s in syms)
+            print(f"- `{path}`: {rendered}")
+        if not intel["symbols"]:
+            print("- No symbols extracted.")
+        print(f"- Tests: {', '.join(intel['tests']) or 'none'}")
+        print(
+            "- Recent: "
+            + ("; ".join(f"{c['sha']} {c['subject']}" for c in intel["recent_commits"]) or "none")
+        )
+    return 0
+
+
+def context_enrich(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    intel = gather_context_intel(store, args.task_ref, args.files or None)
+    if args.json:
+        print(json.dumps(intel, indent=2, ensure_ascii=True))
+        return 0
+    print(render_intel(intel))
+    return 0
+
+
+def context_diff(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    intel_a = gather_context_intel(store, args.ref_a)
+    intel_b = gather_context_intel(store, args.ref_b)
+    diff = diff_intel(intel_a, intel_b)
+    if args.json:
+        print(json.dumps(diff, indent=2, ensure_ascii=True))
+        return 0
+    print(render_diff(diff))
+    return 0
+
+
+def context_score(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    score = score_intel(store, args.ref)
+    if args.json:
+        print(json.dumps(score, indent=2, ensure_ascii=True))
+        return 0
+    print(render_score(score))
     return 0
 
 
@@ -1506,7 +1562,44 @@ def parser() -> argparse.ArgumentParser:
     build_context.add_argument("--query", default="")
     build_context.add_argument("--mode", choices=["compact", "normal", "deep"], default="compact")
     build_context.add_argument("--workflow")
+    build_context.add_argument(
+        "--intel", "--symbols", dest="intel", action="store_true",
+        help="Append a compact Relevant Symbols / Tests / Recent Changes section.",
+    )
+    build_context.add_argument(
+        "--file", dest="files", action="append", default=[],
+        help="File to inspect for the --intel appendix; repeat per file.",
+    )
     build_context.set_defaults(func=context_build)
+
+    enrich_context = context_commands.add_parser(
+        "enrich", parents=[common],
+        help="Show symbol-aware context intel for a task: files, symbols, tests, commits, decisions, blockers.",
+    )
+    enrich_context.add_argument("task_ref", nargs="?", help="Task ref (e.g. T0001); omit to use explicit --file paths.")
+    enrich_context.add_argument(
+        "--file", dest="files", action="append", default=[],
+        help="Explicit file to analyze instead of a task's claims; repeat per file.",
+    )
+    enrich_context.add_argument("--json", action="store_true", help="Emit the intel record as JSON.")
+    enrich_context.set_defaults(func=context_enrich)
+
+    diff_context = context_commands.add_parser(
+        "diff", parents=[common],
+        help="Compare the context two tasks received: files/symbols/tests/decisions only-in-A vs only-in-B and token delta.",
+    )
+    diff_context.add_argument("ref_a", help="First task ref (e.g. T0001).")
+    diff_context.add_argument("ref_b", help="Second task ref (e.g. T0002).")
+    diff_context.add_argument("--json", action="store_true", help="Emit the diff as JSON.")
+    diff_context.set_defaults(func=context_diff)
+
+    score_context = context_commands.add_parser(
+        "score", parents=[common],
+        help="Score a task's context packet: tokens, sources, staleness, risk level and missing-info checklist.",
+    )
+    score_context.add_argument("ref", help="Task ref to score (e.g. T0001).")
+    score_context.add_argument("--json", action="store_true", help="Emit the score as JSON.")
+    score_context.set_defaults(func=context_score)
 
     delegate = commands.add_parser(
         "instruct",
