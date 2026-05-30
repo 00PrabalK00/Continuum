@@ -264,6 +264,19 @@ class WorktreeManager:
         self.store.event("worktree_discarded", {"task_id": task_ref.upper(), "branch": record["branch"]})
         return record
 
+    def list_records_index(self) -> dict[str, dict[str, Any]]:
+        """Return the raw worktree records keyed by task id (read-only snapshot)."""
+        return self._read()
+
+    def record(self, task_ref: str) -> dict[str, Any] | None:
+        """Return the stored worktree record for a task, or None if none exists."""
+        return self._read().get(task_ref.upper())
+
+    def branch_head(self, task_ref: str) -> str:
+        """Return the current HEAD SHA of the task worktree's branch."""
+        record = self._require(task_ref)
+        return self._git("-C", str(record["path"]), "rev-parse", "HEAD")
+
     def _require(self, task_ref: str) -> dict[str, Any]:
         value = self._read().get(task_ref.upper())
         if not value:

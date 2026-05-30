@@ -34,6 +34,7 @@ from .teams import PRESETS, TeamError, TeamManager
 from .worktrees import WorktreeError, WorktreeManager
 from .control_center import serve_control_center
 from .diagnostics import project_status, run_doctor
+from .evidence import EvidenceError, gather_evidence, render_packet
 from .external_sessions import ExternalSessionError, ExternalSessionManager
 from .terminal import TerminalUnavailable, run_terminal_process, terminal_backend
 from .adapters import terminal_adapter, terminal_adapter_capabilities
@@ -1019,6 +1020,46 @@ def worktree_discard(args: argparse.Namespace) -> int:
     return 0
 
 
+def evidence(args: argparse.Namespace) -> int:
+    record = gather_evidence(store_from(args), args.task_id)
+    if args.json:
+        print(json.dumps(record, indent=2, ensure_ascii=True))
+        return 0
+    print(f"{record['task_id']} {record['status']} [{record['mode']}] {record['title']}")
+    print(f"  agent: {record['agent'] or '-'}")
+    print(f"  branch: {record['branch'] or '-'}")
+    print(f"  worktree: {record['worktree_note']}")
+    print(f"  claimed files: {', '.join(record['claimed_files']) or 'none'}")
+    print(f"  changed files: {', '.join(record['changed_files']) or 'none'}")
+    test_gate = record["test_gate"]
+    review_gate = record["review_gate"]
+    print(f"  test gate: {test_gate['result'] or 'not recorded'} sha={test_gate['sha'] or '-'} note={test_gate['note'] or '-'}")
+    print(f"  review gate: {review_gate['result'] or 'not recorded'} sha={review_gate['sha'] or '-'} note={review_gate['note'] or '-'}")
+    print("  activity:")
+    for event in record["events"]:
+        print(f"    {event['created_at']} {event['kind']}: {event['detail']}")
+    if not record["events"]:
+        print("    none recorded")
+    print("  risks:")
+    for risk in record["risks"]:
+        print(f"    - {risk}")
+    if not record["risks"]:
+        print("    none detected")
+    print(f"  next action: {record['next_action']}")
+    return 0
+
+
+def pr_packet(args: argparse.Namespace) -> int:
+    record = gather_evidence(store_from(args), args.task_id)
+    markdown = render_packet(record)
+    if args.output:
+        write_text(Path(args.output), markdown if markdown.endswith("\n") else markdown + "\n")
+        print(f"Wrote PR packet: {args.output}")
+    else:
+        print(markdown)
+    return 0
+
+
 def service(args: argparse.Namespace) -> int:
     manager = ServiceManager(store_from(args))
     result = getattr(manager, args.action)()
@@ -1338,6 +1379,16 @@ def parser() -> argparse.ArgumentParser:
     discard_worktree.add_argument("--force", action="store_true")
     discard_worktree.set_defaults(func=worktree_discard)
 
+    evidence_cmd = commands.add_parser("evidence", parents=[common], help="Aggregate inspectable evidence for a task: claims, changes, gates and risks.")
+    evidence_cmd.add_argument("task_id")
+    evidence_cmd.add_argument("--json", action="store_true", help="Emit the evidence record as JSON.")
+    evidence_cmd.set_defaults(func=evidence)
+
+    packet_cmd = commands.add_parser("pr-packet", parents=[common], help="Generate a reviewer-facing markdown PR packet for a task.")
+    packet_cmd.add_argument("task_id")
+    packet_cmd.add_argument("--output", help="Write the packet to this file instead of stdout.")
+    packet_cmd.set_defaults(func=pr_packet)
+
     route = commands.add_parser("route", help="Explain provider/team routing.")
     route_commands = route.add_subparsers(dest="route_command", required=True)
     explain_route = route_commands.add_parser("explain", parents=[common], help="Classify and show the selected team route.")
@@ -1387,7 +1438,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("--context-limit must be positive")
     try:
         return int(args.func(args))
-    except (ExternalSessionError, ProviderError, ServiceError, TeamError, WorktreeError, ValueError) as error:
+    except (EvidenceError, ExternalSessionError, ProviderError, ServiceError, TeamError, WorktreeError, ValueError) as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1
 
