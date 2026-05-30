@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .core import compact_text, write_text
+from .policy import load_policy
 from .secrets_scan import redact_text, summarize_findings
 
 DEFAULT_PROVIDERS: dict[str, dict[str, Any]] = {
@@ -73,6 +74,48 @@ class ProviderManager:
         if name == "ollama":
             return False
         return provider.get("type") not in {"local", "cli"}
+
+    @staticmethod
+    def _is_local_provider(name: str, provider: dict[str, Any]) -> bool:
+        """True for providers that stay on-machine (Ollama / `type: local`)."""
+        return name == "ollama" or provider.get("type") == "local"
+
+    def _enforce_network_policy(self, name: str, provider: dict[str, Any]) -> None:
+        """Refuse network-using providers under a restrictive policy `network` mode.
+
+        - "on" (default/absent): no change; all providers permitted.
+        - "local_only": hosted/remote providers (e.g. openrouter) are refused;
+          local Ollama is allowed.
+        - "off": every provider that would reach the network is refused; only
+          purely local providers run, but a hosted provider under "off" is
+          refused too. Local Ollama is refused under "off".
+
+        A `policy_network_block` audit event is recorded (when a store is
+        available) before raising ProviderError, so the refusal is inspectable.
+        """
+        mode = load_policy(self.state_dir).network
+        if mode == "on":
+            return
+        local = self._is_local_provider(name, provider)
+        if mode == "local_only" and local:
+            return
+        # local_only + remote, or off + (local or remote) -> refuse.
+        if self.store is not None:
+            self.store.event(
+                "policy_network_block",
+                {"provider": name, "network_mode": mode, "local": local},
+            )
+        if mode == "off":
+            raise ProviderError(
+                f"Network policy is `off`: provider `{name}` is refused. "
+                "Set `network` to `local_only` (local providers) or `on` in "
+                ".continuum/policy.json to allow it."
+            )
+        raise ProviderError(
+            f"Network policy is `local_only`: hosted/remote provider `{name}` is refused. "
+            "Use the local `ollama` provider, or set `network` to `on` in "
+            ".continuum/policy.json."
+        )
 
     def _scrub_outbound(self, name: str, provider: dict[str, Any], text: str, *, context: str) -> str:
         """Redact secrets from prompt text before it egresses to a remote provider.
@@ -179,6 +222,7 @@ class ProviderManager:
             command = provider.get("command", name)
             path = shutil.which(command)
             return f"available: {path}" if path else f"not found on PATH: {command}"
+        self._enforce_network_policy(name, provider)
         headers = self._headers(name, provider)
         response = self._json_request(
             provider["base_url"].rstrip("/") + "/models",
@@ -192,6 +236,7 @@ class ProviderManager:
 
     def models(self, name: str) -> list[str]:
         provider = self.provider(name)
+        self._enforce_network_policy(name, provider)
         response = self._json_request(
             provider["base_url"].rstrip("/") + "/models",
             None,
@@ -207,6 +252,7 @@ class ProviderManager:
             raise ProviderError(f"`model ask` requires a model provider, not {name}.")
         if not provider.get("enabled"):
             raise ProviderError(f"Provider is disabled: {name}. Run `continuum providers add {name}`.")
+        self._enforce_network_policy(name, provider)
         selected_model = model or provider.get("chat_model") or provider.get("default_model")
         prompt = self._scrub_outbound(name, provider, prompt, context="model_ask")
         result = self._json_request(
@@ -228,6 +274,7 @@ class ProviderManager:
         provider = self.provider(name)
         if name != "ollama":
             raise ProviderError("Embedding storage currently supports Ollama only.")
+        self._enforce_network_policy(name, provider)
         # Embedding only ever targets local Ollama (the guard above rejects every
         # other provider), so no text egresses off-machine here and no scrubbing
         # is required. If a remote embedding backend is added, route it through

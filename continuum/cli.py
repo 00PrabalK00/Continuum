@@ -29,7 +29,10 @@ from .core import (
 from .mcp_server import serve_stdio
 from .objective import AGENT_PROVIDERS, ObjectiveError, plan_objective
 from .orchestration import OrchestrationError, Orchestrator
-from .policy import PolicyError, write_starter_policy
+from .policy import PolicyError, requires_approval, write_starter_policy
+from . import command_risk
+from . import mcp_trust
+from . import audit_export
 from .secrets_scan import scan_text
 from .providers import DEFAULT_PROVIDERS, ProviderError, ProviderManager
 from .services import ServiceError, ServiceManager
@@ -521,6 +524,7 @@ def status(args: argparse.Namespace) -> int:
     store = store_from(args)
     result = project_status(store)
     print(f"Project path: {result['project']}")
+    print(f"Network policy: {result['network_policy']}")
     print(f"Daemon state: {result['daemon_state']}")
     print(f"Daemon PID: {result['daemon_pid'] or '-'}")
     print(f"SQLite state: {result['sqlite']}")
@@ -753,7 +757,8 @@ def providers_add(args: argparse.Namespace) -> int:
 
 
 def providers_test(args: argparse.Namespace) -> int:
-    manager = ProviderManager(store_from(args).state_dir)
+    store = store_from(args)
+    manager = ProviderManager(store.state_dir, store=store)
     names = [args.provider] if args.provider else ["ollama", "openrouter"]
     failed = False
     for name in names:
@@ -1372,6 +1377,114 @@ def interactive_shell(args: argparse.Namespace) -> int:
     return shell.run()
 
 
+def command_classify(args: argparse.Namespace) -> int:
+    """Classify a command's risk. Exits non-zero when level==high so scripts can gate.
+
+    When a project policy is reachable, the command's approval-required status is
+    also reported using the policy `approval_required_risk` threshold.
+    """
+    result = command_risk.classify(args.command)
+    approval = None
+    try:
+        policy = store_from(args).policy()
+        approval = requires_approval(args.command, policy)["approval_required"]
+    except (PolicyError, OSError):
+        approval = None
+    if args.json:
+        payload = dict(result)
+        if approval is not None:
+            payload["approval_required"] = approval
+        print(json.dumps(payload, indent=2, ensure_ascii=True))
+    else:
+        print(command_risk.render(result))
+        if approval is not None:
+            print(f"Approval required: {'yes' if approval else 'no'}")
+    return 1 if result["level"] == "high" else 0
+
+
+def _load_trust(store: MemoryStore) -> dict[str, object]:
+    return mcp_trust.load_registry(store.state_dir)
+
+
+def _save_trust(store: MemoryStore, registry: dict[str, object], action: str, server: str, detail: dict[str, object]) -> None:
+    mcp_trust.save_registry(store.state_dir, registry)
+    store.event("mcp_trust_changed", {"action": action, "server": server, **detail})
+
+
+def mcp_trust_list(args: argparse.Namespace) -> int:
+    registry = _load_trust(store_from(args))
+    servers = registry.get("servers", [])
+    if not servers:
+        print("No MCP servers registered. Unknown servers are treated as untrusted by default.")
+        return 0
+    for entry in servers:
+        print(f"{entry['server']}: {entry['status']} risk={entry['risk_score']} changed={entry['last_changed']}")
+        if entry["tool_allow"]:
+            print(f"  allow: {', '.join(entry['tool_allow'])}")
+        if entry["tool_deny"]:
+            print(f"  deny: {', '.join(entry['tool_deny'])}")
+    return 0
+
+
+def mcp_trust_add(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    registry = _load_trust(store)
+    entry = mcp_trust.add_server(registry, args.server, args.status)
+    _save_trust(store, registry, "add", entry["server"], {"status": entry["status"]})
+    print(f"Added {entry['server']}: {entry['status']}")
+    return 0
+
+
+def mcp_trust_set(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    registry = _load_trust(store)
+    entry = mcp_trust.set_status(registry, args.server, args.status)
+    _save_trust(store, registry, "set_status", entry["server"], {"status": entry["status"]})
+    print(f"{entry['server']}: {entry['status']}")
+    return 0
+
+
+def mcp_trust_allow(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    registry = _load_trust(store)
+    entry = mcp_trust.allow_tool(registry, args.server, args.tool)
+    _save_trust(store, registry, "allow_tool", entry["server"], {"tool": args.tool})
+    print(f"{entry['server']}: allow {args.tool}")
+    return 0
+
+
+def mcp_trust_deny(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    registry = _load_trust(store)
+    entry = mcp_trust.deny_tool(registry, args.server, args.tool)
+    _save_trust(store, registry, "deny_tool", entry["server"], {"tool": args.tool})
+    print(f"{entry['server']}: deny {args.tool}")
+    return 0
+
+
+def mcp_trust_remove(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    registry = _load_trust(store)
+    removed = mcp_trust.remove_server(registry, args.server)
+    if not removed:
+        print(f"No registry entry for {args.server}.")
+        return 0
+    _save_trust(store, registry, "remove", args.server, {})
+    print(f"Removed {args.server}.")
+    return 0
+
+
+def audit_export_cmd(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    text = audit_export.export(store, since=args.since, fmt=args.format)
+    if args.output:
+        write_text(Path(args.output), text if text.endswith("\n") else text + "\n")
+        print(f"Wrote audit export: {args.output}")
+    else:
+        print(text)
+    return 0
+
+
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="continuum", description="Local context continuity for AI coding agents.")
     root.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -1789,6 +1902,21 @@ def parser() -> argparse.ArgumentParser:
     show_policy = policy_commands.add_parser("show", parents=[common], help="Print the effective policy and its source.")
     show_policy.set_defaults(func=policy_show)
 
+    command_cmd = commands.add_parser("command", help="Classify command risk for governance gating.")
+    command_commands = command_cmd.add_subparsers(dest="command_command", required=True)
+    classify_cmd = command_commands.add_parser("classify", parents=[common], help="Classify a command's risk; exits non-zero if high.")
+    classify_cmd.add_argument("command", help="The command string to classify, quoted.")
+    classify_cmd.add_argument("--json", action="store_true", help="Emit the classification as JSON.")
+    classify_cmd.set_defaults(func=command_classify)
+
+    audit_cmd = commands.add_parser("audit", help="Inspect and export the local event audit trail.")
+    audit_commands = audit_cmd.add_subparsers(dest="audit_command", required=True)
+    export_cmd = audit_commands.add_parser("export", parents=[common], help="Export the event log as an auditable trail.")
+    export_cmd.add_argument("--since", help="Lower time bound: ISO date/time or relative like '7d'.")
+    export_cmd.add_argument("--format", choices=["json", "md"], default="md", help="Output format (default: md).")
+    export_cmd.add_argument("--output", help="Write to this file instead of stdout.")
+    export_cmd.set_defaults(func=audit_export_cmd)
+
     secrets_cmd = commands.add_parser("secrets", help="Scan text for secrets before it leaves the machine.")
     secrets_commands = secrets_cmd.add_subparsers(dest="secrets_command", required=True)
     scan_secrets = secrets_commands.add_parser("scan", parents=[common], help="Scan a file (or '-' for stdin) for secrets.")
@@ -1811,9 +1939,33 @@ def parser() -> argparse.ArgumentParser:
     startup.add_argument("action", choices=["install", "status", "remove"])
     startup.set_defaults(func=autostart)
 
-    mcp = commands.add_parser("mcp", parents=[common], help="Expose scoped memory tools over MCP stdio.")
-    mcp.add_argument("action", choices=["serve"])
-    mcp.set_defaults(func=lambda args: serve_stdio(store_from(args)))
+    mcp = commands.add_parser("mcp", help="Expose scoped memory tools over MCP stdio and manage MCP trust.")
+    mcp_commands = mcp.add_subparsers(dest="mcp_command", required=True)
+    serve_mcp = mcp_commands.add_parser("serve", parents=[common], help="Expose scoped memory tools over MCP stdio.")
+    serve_mcp.set_defaults(func=lambda args: serve_stdio(store_from(args)))
+    trust_mcp = mcp_commands.add_parser("trust", help="Manage the MCP server/tool trust registry.")
+    trust_commands = trust_mcp.add_subparsers(dest="mcp_trust_command", required=True)
+    trust_list = trust_commands.add_parser("list", parents=[common], help="List registered MCP servers and trust status.")
+    trust_list.set_defaults(func=mcp_trust_list)
+    trust_add = trust_commands.add_parser("add", parents=[common], help="Register an MCP server (default untrusted).")
+    trust_add.add_argument("server")
+    trust_add.add_argument("--status", choices=list(mcp_trust.STATUSES), default=mcp_trust.DEFAULT_STATUS)
+    trust_add.set_defaults(func=mcp_trust_add)
+    trust_set = trust_commands.add_parser("set", parents=[common], help="Set an MCP server's trust status.")
+    trust_set.add_argument("server")
+    trust_set.add_argument("--status", choices=list(mcp_trust.STATUSES), required=True)
+    trust_set.set_defaults(func=mcp_trust_set)
+    trust_allow = trust_commands.add_parser("allow", parents=[common], help="Allow a specific tool on a server.")
+    trust_allow.add_argument("server")
+    trust_allow.add_argument("tool")
+    trust_allow.set_defaults(func=mcp_trust_allow)
+    trust_deny = trust_commands.add_parser("deny", parents=[common], help="Deny a specific tool on a server (overrides allow).")
+    trust_deny.add_argument("server")
+    trust_deny.add_argument("tool")
+    trust_deny.set_defaults(func=mcp_trust_deny)
+    trust_remove = trust_commands.add_parser("remove", parents=[common], help="Remove a server from the trust registry.")
+    trust_remove.add_argument("server")
+    trust_remove.set_defaults(func=mcp_trust_remove)
 
     ui = commands.add_parser("ui", parents=[common], help="Run Continuum Control Center locally.")
     ui.add_argument("--host", default="127.0.0.1")
@@ -1844,7 +1996,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("--context-limit must be positive")
     try:
         return int(args.func(args))
-    except (EvidenceError, ExternalSessionError, ObjectiveError, PolicyError, ProviderError, ServiceError, TeamError, WorktreeError, ValueError) as error:
+    except (EvidenceError, ExternalSessionError, ObjectiveError, PolicyError, ProviderError, ServiceError, TeamError, WorktreeError, mcp_trust.TrustError, ValueError) as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1
 

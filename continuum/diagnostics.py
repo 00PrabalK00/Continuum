@@ -112,8 +112,13 @@ def project_status(store: MemoryStore) -> dict[str, Any]:
     handoff = store.state_dir / "latest_handoff.md"
     mirror = store.notes_dir / "Latest Handoff.md" if store.notes_dir else None
     provider_config = _read_provider_config(store).get("providers", {})
+    try:
+        network_mode = store.policy().network
+    except Exception:  # noqa: BLE001 - a malformed policy must not break status output.
+        network_mode = "on"
     return {
         "project": str(store.project),
+        "network_policy": network_mode,
         "daemon_state": state,
         "daemon_pid": pid,
         "sqlite": sqlite_status,
@@ -199,6 +204,13 @@ def run_doctor(store: MemoryStore, package_root: Path | None = None) -> list[dic
     checks.append(check("Project initialization", "PASS", str(store.config_file)))
 
     try:
+        network_mode = store.policy().network
+        checks.append(check("Network policy", "INFO", f"mode={network_mode}"))
+    except Exception as error:  # noqa: BLE001 - report malformed policy, do not crash doctor.
+        network_mode = "on"
+        checks.append(check("Network policy", "FAIL", f"Policy could not be loaded: {error}", "Fix .continuum/policy.json."))
+
+    try:
         connection = store.connect()
         connection.execute("CREATE TEMP TABLE continuum_doctor(value TEXT)")
         connection.execute("INSERT INTO continuum_doctor(value) VALUES ('ok')")
@@ -255,6 +267,10 @@ def run_doctor(store: MemoryStore, package_root: Path | None = None) -> list[dic
         variable = str(openrouter.get("api_key_env", "OPENROUTER_API_KEY"))
         if not os.environ.get(variable):
             checks.append(check("OpenRouter configuration", "FAIL", f"Missing environment variable: {variable}.", f'Run `$env:{variable}="<key>"; continuum providers test openrouter`.'))
+        elif network_mode != "on":
+            # A network policy refusal is governance, not an install fault: report as INFO.
+            checks.append(check("OpenRouter configuration", "PASS", f"{variable} is set."))
+            checks.append(check("OpenRouter connectivity", "INFO", f"Skipped: network policy `{network_mode}` refuses hosted providers."))
         else:
             checks.append(check("OpenRouter configuration", "PASS", f"{variable} is set."))
             try:
