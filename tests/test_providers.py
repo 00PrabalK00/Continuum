@@ -92,6 +92,61 @@ class ProviderManagerTest(unittest.TestCase):
             self.assertIn("exec", invoked.call_args.args[0])
             self.assertIn("inspect current state", invoked.call_args.args[0])
 
+    def test_hosted_ask_redacts_secret_before_egress_and_audits(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "project")
+            store.initialize(1000, 0.8)
+            manager = ProviderManager(store.state_dir, store=store)
+            manager.add("openrouter")
+
+            secret = "AKIAIOSFODNN7EXAMPLE"
+            prompt = f"deploy with this key {secret} now"
+            captured: dict = {}
+
+            def fake_request(url, payload, headers, timeout=15, *, provider_name=None):
+                captured["payload"] = payload
+                return {"choices": [{"message": {"content": "ok"}}]}
+
+            with patch.dict("os.environ", {"OPENROUTER_API_KEY": "sk-or-test"}), patch.object(
+                manager, "_json_request", side_effect=fake_request
+            ):
+                answer = manager.ask("openrouter", prompt)
+
+            self.assertEqual(answer, "ok")
+            sent = captured["payload"]["messages"][0]["content"]
+            self.assertNotIn(secret, sent)
+            self.assertIn("[REDACTED:aws_access_key]", sent)
+
+            events = store.search("secret_redacted")
+            self.assertTrue(events)
+            payload = events[0]["payload"]
+            self.assertEqual(payload["provider"], "openrouter")
+            self.assertEqual(payload["count"], 1)
+            self.assertEqual(payload["types"], {"aws_access_key": 1})
+            self.assertNotIn(secret, str(payload))
+
+    def test_local_ollama_ask_does_not_scrub_local_memory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "project")
+            store.initialize(1000, 0.8)
+            manager = ProviderManager(store.state_dir, store=store)
+            manager.add("ollama")
+
+            secret = "AKIAIOSFODNN7EXAMPLE"
+            prompt = f"local note {secret}"
+            captured: dict = {}
+
+            def fake_request(url, payload, headers, timeout=15, *, provider_name=None):
+                captured["payload"] = payload
+                return {"choices": [{"message": {"content": "ok"}}]}
+
+            with patch.object(manager, "_json_request", side_effect=fake_request):
+                manager.ask("ollama", prompt)
+
+            sent = captured["payload"]["messages"][0]["content"]
+            self.assertIn(secret, sent)
+            self.assertEqual(store.search("secret_redacted"), [])
+
     def test_agent_launch_os_error_has_actionable_failure(self):
         with tempfile.TemporaryDirectory() as temporary:
             manager = ProviderManager(Path(temporary))

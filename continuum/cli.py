@@ -722,7 +722,7 @@ def model_ask(args: argparse.Namespace) -> int:
     prompt = " ".join(args.prompt).strip() if isinstance(args.prompt, list) else str(args.prompt)
     if not prompt:
         raise ProviderError("Prompt is empty. Example: `continuum model ask ollama \"summarize this handoff\"`.")
-    answer = ProviderManager(store.state_dir).ask(args.provider, prompt, args.model)
+    answer = ProviderManager(store.state_dir, store=store).ask(args.provider, prompt, args.model)
     store.event("model_ask", {"provider": args.provider, "model": args.model, "summary": prompt[:120]})
     print(answer)
     return 0
