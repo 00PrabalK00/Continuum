@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "continuum-agent-memory"
-version = "0.7.3"
+version = "0.8.0"
 description = "Local shared memory and opt-in sequential orchestration for AI coding agents."
 readme = "README.md"
 requires-python = ">=3.9"

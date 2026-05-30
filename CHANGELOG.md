@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.8.0 - Alpha
+
+Trust-layer release: make Continuum verify, not trust, what agents claim.
+
+- Added `continuum evidence <task>` — an inspectable evidence pack (claimed vs
+  changed files, commands, test/review gates with their commit SHAs, and
+  deterministic risk flags for out-of-scope edits or post-gate changes).
+- Added `continuum pr-packet <task>` — a reviewer-facing markdown packet with
+  changed files, agent contributions, test and review evidence, known risks
+  and rollback notes.
+- Added a governance policy file `.continuum/policy.json` (`continuum policy
+  init`/`show`) enforcing denied files, allowed providers and sensitive globs,
+  with audit events on violations.
+- Added a pre-egress secret scrubber: context packets, delegation packets,
+  external-session context and hosted-provider (`model ask`) prompts are
+  redacted before leaving the machine; `continuum secrets scan <path>` checks
+  files or stdin. Local Ollama traffic is unaffected.
+- Added claim recovery: `continuum claim list`, `claim release --reason` and
+  `claim recover --stale` to release orphaned file claims with an audit trail.
+- Added workflow retry/continue: `continuum workflow list`/`show`/`retry`
+  resumes a failed sequential workflow from the failed step without recreating
+  completed tasks.
+- Fixed the Windows autostart filename to be project-scoped so installing or
+  removing the service for one project no longer clobbers another's entry.
+- Fixed `continuum init` to write `.continuum/.gitignore` so machine-local
+  state never dirties the project tree or blocks `worktree merge`.
+- Hardened `worktree merge` to remove the merged worktree and delete its
+  branch, made `continuum doctor` exit zero when only the daemon is stopped,
+  and added a per-session token guarding Control Center mutation endpoints.
+- Reconciled the roadmap: closed PTY-aware wrappers (#2) and macOS/Linux
+  service installers (#6); documentation corrected (`current_state.md`,
+  starter preset list, packaged PNG asset).
+
 ## 0.7.3 - Alpha
 
 - Added `continuum chat` for one-shot messages to Claude, Codex or Gemini with
