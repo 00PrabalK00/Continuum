@@ -1,6 +1,6 @@
 {
   "name": "continuum-agent-memory",
-  "version": "0.7.3",
+  "version": "0.8.0",
   "description": "Local shared memory and opt-in sequential orchestration for AI coding agents.",
   "license": "MIT",
   "bin": {
