@@ -27,6 +27,7 @@ from .core import (
     write_text,
 )
 from .mcp_server import serve_stdio
+from .objective import AGENT_PROVIDERS, ObjectiveError, plan_objective
 from .orchestration import OrchestrationError, Orchestrator
 from .policy import PolicyError, write_starter_policy
 from .secrets_scan import scan_text
@@ -1179,6 +1180,98 @@ def evidence(args: argparse.Namespace) -> int:
     return 0
 
 
+AGENT_TO_PROVIDER = {"claude": "claude_code", "codex": "codex", "gemini": "gemini_cli"}
+
+
+def _disabled_objective_agents(store: MemoryStore, agents: set[str]) -> list[str]:
+    """Return lane agents whose backing provider is not enabled (for --execute)."""
+    config = ProviderManager(store.state_dir).read()["providers"]
+    disabled = []
+    for agent in sorted(agents):
+        provider = AGENT_TO_PROVIDER.get(agent, agent)
+        if not config.get(provider, {}).get("enabled"):
+            disabled.append(agent)
+    return disabled
+
+
+def objective(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    if not store.config_file.exists():
+        store.initialize(DEFAULT_CONTEXT_LIMIT, DEFAULT_THRESHOLD)
+    if args.execute:
+        # Mirror `team run`'s graceful refusal: never launch providers that the
+        # project has not explicitly enabled. No traceback, exit non-zero.
+        agents = set(_parse_objective_agents(args.agent)) or set(AGENT_PROVIDERS)
+        disabled = _disabled_objective_agents(store, agents)
+        if disabled:
+            raise SystemExit(
+                "Objective stopped: --execute needs enabled agent provider(s) for "
+                f"{', '.join(disabled)}. Run `continuum providers add <provider>` "
+                "(e.g. claude_code, codex, gemini_cli) or omit --execute to plan only."
+            )
+    try:
+        result = plan_objective(
+            store,
+            args.goal,
+            team=args.team,
+            task_type=args.task_type,
+            agent_specs=args.agent or [],
+            path_specs=args.path or [],
+            depends_on=args.depends_on or [],
+            tests=args.tests,
+            review_policy=args.review_policy,
+            mode=args.mode,
+            context_mode=args.context_mode,
+        )
+    except ObjectiveError as error:
+        raise SystemExit(f"Objective stopped: {error}") from error
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=True))
+        return 0
+    render_objective(result)
+    if args.execute:
+        print()
+        print("Providers are enabled, but Continuum does not auto-launch parallel lanes.")
+        print("Run the NEXT COMMANDS above to drive each lane with full control.")
+    return 0
+
+
+def _parse_objective_agents(specs: list[str] | None) -> list[str]:
+    agents = []
+    for raw in specs or []:
+        if "=" in raw:
+            agents.append(raw.split("=", 1)[1].strip())
+        elif ":" in raw:
+            agents.append(raw.split(":", 1)[1].strip())
+    return agents
+
+
+def render_objective(result: dict[str, object]) -> None:
+    print(f"Objective: {result['goal']}")
+    print(f"Task type: {result['task_type']} (team {result['team']})")
+    print(f"Mode: {result['mode']}  review-policy: {result['review_policy']}  tests: {result['tests'] or 'not set'}")
+    if result["scheduled"]:
+        print(f"Schedule: {result['schedule_id']}")
+    print("Lanes:")
+    for lane in result["lanes"]:
+        deps = ", ".join(lane.get("depends_on", [])) or "none"
+        owned = ", ".join(lane.get("paths", [])) or "none"
+        print(f"  {lane['role']} -> {lane['agent']}  owns: {owned}  depends-on: {deps}")
+        if lane.get("task_id"):
+            print(f"    task: {lane['task_id']}")
+        if lane.get("branch"):
+            print(f"    branch: {lane['branch']}")
+            print(f"    worktree: {lane['worktree']}")
+            print(f"    context: {lane['context_path']}")
+    print("Timeline (dependency order):")
+    print("  " + " -> ".join(result["timeline"]))
+    for note in result.get("notes", []):
+        print(f"Note: {note}")
+    print("NEXT COMMANDS:")
+    for command in result["next_commands"]:
+        print(f"  {command}")
+
+
 def pr_packet(args: argparse.Namespace) -> int:
     record = gather_evidence(store_from(args), args.task_id)
     markdown = render_packet(record)
@@ -1549,6 +1642,52 @@ def parser() -> argparse.ArgumentParser:
     packet_cmd.add_argument("--output", help="Write the packet to this file instead of stdout.")
     packet_cmd.set_defaults(func=pr_packet)
 
+    objective_cmd = commands.add_parser(
+        "objective",
+        parents=[common],
+        help="Turn one goal into a coordinated, controlled multi-agent plan.",
+    )
+    objective_cmd.add_argument("goal", help="The objective to plan, for example \"Add billing\".")
+    objective_cmd.add_argument("--team", default="default_dev_team", help="Team whose route classifier infers the plan.")
+    objective_cmd.add_argument("--task-type", help="Override the inferred route classification.")
+    objective_cmd.add_argument(
+        "--agent",
+        action="append",
+        default=[],
+        metavar="role=agent",
+        help="Lane spec role=agent (agent in claude, codex, gemini). Repeatable. If omitted, derived from the routed roles.",
+    )
+    objective_cmd.add_argument(
+        "--path",
+        action="append",
+        default=[],
+        metavar="role=glob,glob",
+        help="Owned paths for a lane as role=glob,glob. Lanes without paths get tasks but no worktree.",
+    )
+    objective_cmd.add_argument(
+        "--depends-on",
+        action="append",
+        default=[],
+        metavar="role:role",
+        help="Lane dependency as role:depends_on_role. Repeatable.",
+    )
+    objective_cmd.add_argument("--tests", help="Required test command recorded for each lane.")
+    objective_cmd.add_argument("--review-policy", choices=["all", "risky", "none"], default="all")
+    objective_cmd.add_argument(
+        "--mode",
+        choices=["plan", "schedule"],
+        default="plan",
+        help="plan = tasks + packets + next-commands; schedule = also create worktree lanes.",
+    )
+    objective_cmd.add_argument("--context-mode", choices=["compact", "normal", "deep"], default="compact")
+    objective_cmd.add_argument(
+        "--execute",
+        action="store_true",
+        help="Only if providers are enabled; otherwise refuses gracefully. Does not auto-launch lanes.",
+    )
+    objective_cmd.add_argument("--json", action="store_true", help="Emit the plan as JSON.")
+    objective_cmd.set_defaults(func=objective)
+
     policy_cmd = commands.add_parser("policy", help="Manage the governance policy (.continuum/policy.json).")
     policy_commands = policy_cmd.add_subparsers(dest="policy_command", required=True)
     init_policy = policy_commands.add_parser("init", parents=[common], help="Write a starter policy.json.")
@@ -1612,7 +1751,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("--context-limit must be positive")
     try:
         return int(args.func(args))
-    except (EvidenceError, ExternalSessionError, PolicyError, ProviderError, ServiceError, TeamError, WorktreeError, ValueError) as error:
+    except (EvidenceError, ExternalSessionError, ObjectiveError, PolicyError, ProviderError, ServiceError, TeamError, WorktreeError, ValueError) as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1
 
