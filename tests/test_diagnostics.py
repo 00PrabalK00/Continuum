@@ -108,13 +108,29 @@ class DiagnosticsTest(unittest.TestCase):
             check = next(item for item in results if item["name"] == "MCP server boot")
             self.assertEqual(check["status"], "PASS")
 
-    def test_doctor_reports_daemon_stopped_when_no_pid(self):
+    def test_doctor_reports_daemon_stopped_as_info_not_failure(self):
         with tempfile.TemporaryDirectory() as temporary:
             store = MemoryStore(Path(temporary) / "project")
             store.initialize(1000, 0.8)
             results = run_doctor(store)
             check = next(item for item in results if item["name"] == "Daemon process")
-            self.assertIn(check["status"], ("FAIL", "INFO"))
+            # A stopped daemon is normal runtime state, so it must be INFO (never FAIL),
+            # otherwise it would fail the doctor exit code used as a CI health gate.
+            self.assertEqual(check["status"], "INFO")
+            self.assertIn("stopped", check["detail"])
+
+    def test_doctor_exit_code_zero_when_daemon_stopped(self):
+        from argparse import Namespace
+
+        from continuum.cli import doctor
+
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "project"
+            store = MemoryStore(project)
+            store.initialize(1000, 0.8)
+            args = Namespace(project=str(project), vault=None)
+            # Install/config checks pass and the daemon is stopped, so doctor must exit 0.
+            self.assertEqual(doctor(args), 0)
 
     def test_doctor_reports_node_entrypoint_status(self):
         with tempfile.TemporaryDirectory() as temporary:

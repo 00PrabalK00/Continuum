@@ -226,8 +226,29 @@ class WorktreeManager:
         metadata[task_ref.upper()] = record
         self._write(metadata)
         self.store.set_task_status(task_ref, "DONE", record.get("completion_note") or "Merged worktree.")
-        self.store.event("worktree_merged", {"task_id": task_ref.upper(), "branch": record["branch"]})
+        cleanup_error = self._cleanup_merged_worktree(record)
+        if cleanup_error:
+            record["cleanup_warning"] = cleanup_error
+            metadata[task_ref.upper()] = record
+            self._write(metadata)
+        self.store.event(
+            "worktree_merged",
+            {"task_id": task_ref.upper(), "branch": record["branch"], "cleanup": cleanup_error or "ok"},
+        )
         return record
+
+    def _cleanup_merged_worktree(self, record: dict[str, Any]) -> str | None:
+        """Remove the now-merged worktree directory and delete its branch.
+
+        The merge already succeeded and metadata is written, so a cleanup hiccup
+        must not fail the whole merge. Returns an error string on partial failure.
+        """
+        try:
+            self._git("-C", str(self.store.project), "worktree", "remove", record["path"])
+            self._git("-C", str(self.store.project), "branch", "-d", record["branch"])
+            return None
+        except WorktreeError as error:
+            return str(error)
 
     def discard(self, task_ref: str, force: bool = False) -> dict[str, Any]:
         metadata = self._read()
