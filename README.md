@@ -311,6 +311,7 @@ Starter presets:
 
 ```text
 default_dev_team
+local_agent_team
 local_only
 review_heavy
 fast_bugfix
@@ -467,7 +468,7 @@ Project-local state:
   events.jsonl        # event history
   events.sqlite3      # event and embedding database
   current.md          # latest compact state
-  current_state.md    # alias for current.md
+  current_state.md    # expanded current-state view (events + active task)
   latest_handoff.md   # most recent handoff
   session_logs/       # agent session output (created on first run)
 ```

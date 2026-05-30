@@ -9,7 +9,7 @@
 - Continuum Control Center local web UI for real project, team, provider, memory, run and handoff state.
 - Deterministic `continuum status` and `continuum doctor` release diagnostics.
 - Read-only Control Center boundary with CLI-owned mutations and opt-in starter configuration.
-- Supplied Continuum brand mark integrated as packaged SVG in README and Control Center.
+- Supplied Continuum brand mark integrated as packaged PNG in README and Control Center.
 - Control Center latest-handoff view corrected and covered by static-asset regression tests.
 - v0.1 release boundary, multi-agent demo documentation and cross-platform install smoke workflow.
 - Hidden-directory file claims preserve paths such as `.github/workflows/test.yml`.

@@ -26,7 +26,7 @@ class ServiceManager:
     def location(self) -> Path:
         if self.system == "Windows":
             appdata = Path(os.environ.get("APPDATA", str(self.home / "AppData/Roaming")))
-            return appdata / "Microsoft/Windows/Start Menu/Programs/Startup" / "Continuum Daemon.cmd"
+            return appdata / "Microsoft/Windows/Start Menu/Programs/Startup" / f"Continuum Daemon {self.store.project_id}.cmd"
         if self.system == "Darwin":
             return self.home / "Library/LaunchAgents" / f"dev.continuum.{self.store.project_id}.plist"
         if self.system == "Linux":
