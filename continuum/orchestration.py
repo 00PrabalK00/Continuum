@@ -22,7 +22,7 @@ class Orchestrator:
     def __init__(self, store: MemoryStore, runner: Runner | None = None) -> None:
         self.store = store
         self.teams = TeamManager(store)
-        self.providers = ProviderManager(store.state_dir)
+        self.providers = ProviderManager(store.state_dir, store=store)
         self.runner = runner or self._run_provider
 
     def plan(self, team_name: str, request: str, task_type: str | None = None) -> dict[str, Any]:

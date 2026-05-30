@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .core import compact_text, write_text
+from .secrets_scan import redact_text, summarize_findings
 
 DEFAULT_PROVIDERS: dict[str, dict[str, Any]] = {
     "ollama": {
@@ -53,9 +54,47 @@ class ProviderError(RuntimeError):
 
 
 class ProviderManager:
-    def __init__(self, state_dir: Path) -> None:
+    def __init__(self, state_dir: Path, store: Any | None = None) -> None:
         self.state_dir = state_dir
         self.config_file = state_dir / "providers.json"
+        # Optional MemoryStore used to record `secret_redacted` audit events at
+        # the egress boundary. Redaction still happens without it; only the
+        # audit trail requires a store.
+        self.store = store
+
+    @staticmethod
+    def _egresses_remotely(name: str, provider: dict[str, Any]) -> bool:
+        """True when a model provider sends user text off-machine over the network.
+
+        Local providers (Ollama, `type: local`) keep already-local memory on the
+        machine and must not be altered. CLI agents are handled separately and
+        do not flow through this path.
+        """
+        if name == "ollama":
+            return False
+        return provider.get("type") not in {"local", "cli"}
+
+    def _scrub_outbound(self, name: str, provider: dict[str, Any], text: str, *, context: str) -> str:
+        """Redact secrets from prompt text before it egresses to a remote provider.
+
+        Redact-and-continue: the call is never blocked. A `secret_redacted` audit
+        event (count + types only, never the raw secret) is recorded when a store
+        is available so the redaction is inspectable.
+        """
+        if not text or not self._egresses_remotely(name, provider):
+            return text
+        cleaned, findings = redact_text(text)
+        if findings and self.store is not None:
+            self.store.event(
+                "secret_redacted",
+                {
+                    "context": context,
+                    "provider": name,
+                    "count": len(findings),
+                    "types": summarize_findings(findings),
+                },
+            )
+        return cleaned
 
     def ensure_config(self) -> None:
         if not self.config_file.exists():
@@ -169,6 +208,7 @@ class ProviderManager:
         if not provider.get("enabled"):
             raise ProviderError(f"Provider is disabled: {name}. Run `continuum providers add {name}`.")
         selected_model = model or provider.get("chat_model") or provider.get("default_model")
+        prompt = self._scrub_outbound(name, provider, prompt, context="model_ask")
         result = self._json_request(
             provider["base_url"].rstrip("/") + "/chat/completions",
             {
@@ -188,6 +228,10 @@ class ProviderManager:
         provider = self.provider(name)
         if name != "ollama":
             raise ProviderError("Embedding storage currently supports Ollama only.")
+        # Embedding only ever targets local Ollama (the guard above rejects every
+        # other provider), so no text egresses off-machine here and no scrubbing
+        # is required. If a remote embedding backend is added, route it through
+        # `_scrub_outbound` like `ask`.
         selected_model = model or provider.get("embedding_model")
         result = self._json_request(
             provider["base_url"].rstrip("/") + "/embeddings",
