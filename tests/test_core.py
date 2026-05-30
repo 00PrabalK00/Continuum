@@ -60,6 +60,25 @@ class MemoryStoreTest(unittest.TestCase):
             self.assertLessEqual(len(store.resume_context("normal")), 2000 * 4)
             self.assertLessEqual(len(store.resume_context("deep")), 6000 * 4)
 
+    def test_latest_task_prefers_meaningful_handoff_over_wrapped_session_summary(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "app")
+            store.initialize(1000, 0.8)
+            store.event("handoff", {"task": "Tune training_v2 routing", "next_step": "run step8"})
+            store.event(
+                "handoff",
+                {
+                    "task": "Wrapped `gemini` session `20260530-225758-gemini` completed.",
+                    "next_step": "Review the output and record the next action.",
+                },
+            )
+
+            task = store.latest_task()
+
+            assert task is not None
+            self.assertEqual(task[0], "Tune training_v2 routing")
+            self.assertEqual(task[1], "run step8")
+
     def test_task_file_claims_reject_conflicts_and_release_when_done(self):
         with tempfile.TemporaryDirectory() as temporary:
             store = MemoryStore(Path(temporary) / "app")

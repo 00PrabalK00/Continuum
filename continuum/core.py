@@ -43,6 +43,12 @@ IGNORE_DIRS = {
     "dist",
     "build",
 }
+SYNTHETIC_TASK_PATTERNS = (
+    re.compile(r"^Wrapped `[^`]+` session `[^`]+` completed\.$"),
+    re.compile(r"^Interactive `[^`]+` session `[^`]+` completed\.$"),
+    re.compile(r"^`[^`]+` reached its estimated context checkpoint\.$"),
+    re.compile(r"^`[^`]+` reached its estimated context checkpoint in an interactive terminal\.$"),
+)
 
 AGENT_MEMORY_BLOCK = """## Continuum Shared Memory
 
@@ -1078,10 +1084,20 @@ The planner role is preserving architecture intent and constraints while the exe
         return {"role": role, "mode": mode, "estimated_tokens": estimate_tokens(text), "text": text}
 
     def latest_task(self) -> tuple[str, str | None] | None:
+        fallback: tuple[str, str | None] | None = None
         for item in reversed(self.recent_events(100)):
             if item["kind"] == "handoff":
-                return item["payload"].get("task", ""), item["payload"].get("next_step")
-        return None
+                task = item["payload"].get("task", "")
+                latest = (task, item["payload"].get("next_step"))
+                if fallback is None:
+                    fallback = latest
+                if not self.is_synthetic_task(task):
+                    return latest
+        return fallback
+
+    @staticmethod
+    def is_synthetic_task(task: str) -> bool:
+        return any(pattern.match(task.strip()) for pattern in SYNTHETIC_TASK_PATTERNS)
 
     def write_metadata_and_index(self) -> None:
         if not self.notes_dir or not self.index_file or not self.vault_dir:
