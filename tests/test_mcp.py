@@ -130,6 +130,126 @@ class McpServerTest(unittest.TestCase):
             response = json.loads(result.getvalue())
             self.assertEqual(response["result"]["serverInfo"]["name"], "continuum")
 
+    def test_get_startup_context_returns_compact_state(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "project")
+            store.initialize(1000, 0.8)
+            store.event("decision", {"summary": "use pytest"})
+            result = handle_request(store, {"jsonrpc": "2.0", "id": 10, "method": "tools/call", "params": {"name": "get_startup_context", "arguments": {}}})
+            self.assertIn("text", result["result"]["content"][0])
+            self.assertGreater(len(result["result"]["content"][0]["text"]), 0)
+
+    def test_get_current_state_returns_state_file(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "project")
+            store.initialize(1000, 0.8)
+            result = handle_request(store, {"jsonrpc": "2.0", "id": 11, "method": "tools/call", "params": {"name": "get_current_state", "arguments": {}}})
+            self.assertIn("text", result["result"]["content"][0])
+
+    def test_search_memory_returns_matching_events(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "project")
+            store.initialize(1000, 0.8)
+            store.event("decision", {"summary": "authentication retry logic"})
+            store.event("decision", {"summary": "ui color scheme"})
+            result = handle_request(store, {"jsonrpc": "2.0", "id": 12, "method": "tools/call", "params": {"name": "search_memory", "arguments": {"query": "authentication"}}})
+            text = result["result"]["content"][0]["text"]
+            self.assertIn("authentication", text.lower())
+
+    def test_search_memory_returns_no_match_message(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "project")
+            store.initialize(1000, 0.8)
+            result = handle_request(store, {"jsonrpc": "2.0", "id": 13, "method": "tools/call", "params": {"name": "search_memory", "arguments": {"query": "nonexistent"}}})
+            self.assertIn("No matching", result["result"]["content"][0]["text"])
+
+    def test_expand_memory_returns_event_detail(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "project")
+            store.initialize(1000, 0.8)
+            store.event("decision", {"summary": "use async"})
+            events = store.recent_events(10)
+            decision_id = next(e["id"] for e in events if e["kind"] == "decision")
+            result = handle_request(store, {"jsonrpc": "2.0", "id": 14, "method": "tools/call", "params": {"name": "expand_memory", "arguments": {"memory_id": decision_id}}})
+            self.assertIn("use async", result["result"]["content"][0]["text"])
+
+    def test_expand_memory_returns_not_found(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "project")
+            store.initialize(1000, 0.8)
+            result = handle_request(store, {"jsonrpc": "2.0", "id": 15, "method": "tools/call", "params": {"name": "expand_memory", "arguments": {"memory_id": 9999}}})
+            self.assertIn("not found", result["result"]["content"][0]["text"])
+
+    def test_get_raw_log_returns_log_content(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "project")
+            store.initialize(1000, 0.8)
+            log_dir = store.state_dir / "session_logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            (log_dir / "test.log").write_text("line1\nline2\n", encoding="utf-8")
+            result = handle_request(store, {"jsonrpc": "2.0", "id": 16, "method": "tools/call", "params": {"name": "get_raw_log", "arguments": {"filename": "test.log"}}})
+            self.assertIn("line1", result["result"]["content"][0]["text"])
+
+    def test_get_raw_log_returns_not_found(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "project")
+            store.initialize(1000, 0.8)
+            result = handle_request(store, {"jsonrpc": "2.0", "id": 17, "method": "tools/call", "params": {"name": "get_raw_log", "arguments": {"filename": "missing.log"}}})
+            self.assertIn("not found", result["result"]["content"][0]["text"])
+
+    def test_get_open_tasks_lists_non_final_tasks(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "project")
+            store.initialize(1000, 0.8)
+            store.create_task("Fix auth")
+            result = handle_request(store, {"jsonrpc": "2.0", "id": 18, "method": "tools/call", "params": {"name": "get_open_tasks", "arguments": {}}})
+            self.assertIn("T0001", result["result"]["content"][0]["text"])
+
+    def test_get_open_tasks_returns_no_tasks_message(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "project")
+            store.initialize(1000, 0.8)
+            result = handle_request(store, {"jsonrpc": "2.0", "id": 19, "method": "tools/call", "params": {"name": "get_open_tasks", "arguments": {}}})
+            self.assertIn("No open tasks", result["result"]["content"][0]["text"])
+
+    def test_get_context_packet_returns_bounded_text(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "project")
+            store.initialize(1000, 0.8)
+            store.write_handoff("fix auth", "run tests")
+            result = handle_request(store, {"jsonrpc": "2.0", "id": 20, "method": "tools/call", "params": {"name": "get_context_packet", "arguments": {"role": "coder", "mode": "compact"}}})
+            self.assertIn("Estimated context:", result["result"]["content"][0]["text"])
+
+    def test_get_workflows_returns_empty_message(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "project")
+            store.initialize(1000, 0.8)
+            result = handle_request(store, {"jsonrpc": "2.0", "id": 21, "method": "tools/call", "params": {"name": "get_workflows", "arguments": {}}})
+            self.assertIn("No workflows", result["result"]["content"][0]["text"])
+
+    def test_unknown_tool_returns_error(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "project")
+            store.initialize(1000, 0.8)
+            result = handle_request(store, {"jsonrpc": "2.0", "id": 22, "method": "tools/call", "params": {"name": "nonexistent_tool", "arguments": {}}})
+            self.assertIn("error", result)
+            self.assertIn("Unknown tool", result["error"]["message"])
+
+    def test_unknown_method_returns_error(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "project")
+            store.initialize(1000, 0.8)
+            result = handle_request(store, {"jsonrpc": "2.0", "id": 23, "method": "invalid/method", "params": {}})
+            self.assertIn("error", result)
+            self.assertIn("Method not found", result["error"]["message"])
+
+    def test_no_id_returns_none(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "project")
+            store.initialize(1000, 0.8)
+            result = handle_request(store, {"jsonrpc": "2.0", "method": "tools/list"})
+            self.assertIsNone(result)
+
     def test_mcp_reads_attached_external_session_context_packet(self):
         with tempfile.TemporaryDirectory() as temporary:
             store = MemoryStore(Path(temporary) / "project")
