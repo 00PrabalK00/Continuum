@@ -25,6 +25,19 @@
 
 - [ ] Improve wrapper review output capture when a provider returns a plan-only completion marker.
 
+## Product Strategy Backlog
+
+- [x] Ship `continuum objective` as the first one-command planning primitive for [#36](https://github.com/00PrabalK00/Continuum/issues/36).
+- [x] Ship `continuum evidence` and `continuum pr-packet` as the first evidence-pack and PR-packet primitives.
+- [x] Ship `continuum context enrich`, `context diff` and `context score` as first context-intelligence primitives for [#31](https://github.com/00PrabalK00/Continuum/issues/31) and [#32](https://github.com/00PrabalK00/Continuum/issues/32).
+- [x] Ship policy, command risk, secret scanning, audit export and MCP trust controls for [#33](https://github.com/00PrabalK00/Continuum/issues/33).
+- [x] [#27 Promote evidence/events/session logs into Agent Flight Recorder run records.](https://github.com/00PrabalK00/Continuum/issues/27)
+- [x] [#28 Build the Control Center Workflow Timeline MVP.](https://github.com/00PrabalK00/Continuum/issues/28)
+- [x] [#29 Build the Multi-Agent Worktree Board.](https://github.com/00PrabalK00/Continuum/issues/29)
+- [x] [#30 Build the Context Packet Studio UI.](https://github.com/00PrabalK00/Continuum/issues/30)
+- [x] [#34 Add cost-aware routing and Agent ROI evidence.](https://github.com/00PrabalK00/Continuum/issues/34)
+- [x] [#35 Add the with/without Continuum benchmark harness.](https://github.com/00PrabalK00/Continuum/issues/35)
+
 ## Release Issues
 
 - [ ] [#8 Publish the npm package and verify the npx first-run flow.](https://github.com/00PrabalK00/Continuum/issues/8)

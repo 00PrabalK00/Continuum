@@ -16,10 +16,15 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from .context_intel import gather_context_intel, score_intel
 from .core import MemoryStore, compact_text, write_text
+from .evidence import EvidenceError, gather_evidence
+from .flight import FlightRecordError, gather_flight_record
 from .orchestration import OrchestrationError, Orchestrator
 from .providers import ProviderError, ProviderManager
+from .roi import roi_summary
 from .teams import TeamError, TeamManager
+from .worktrees import WorktreeError, WorktreeManager
 
 UI_DIR = Path(__file__).resolve().parent / "ui"
 
@@ -133,6 +138,121 @@ class ControlCenter:
     def events(self) -> list[dict[str, Any]]:
         return list(reversed(self.store.recent_events(35))) if self.store.db_file.exists() else []
 
+    def flight_records(self) -> list[dict[str, Any]]:
+        records = []
+        for task in self.tasks():
+            try:
+                record = gather_flight_record(self.store, task["task_id"])
+            except FlightRecordError:
+                continue
+            records.append(
+                {
+                    "task_id": record["task_id"],
+                    "objective": record["objective"],
+                    "agent": record["agent"],
+                    "status": record["status"],
+                    "final_status": record["final_status"],
+                    "branch": record["branch"],
+                    "files_allowed": record["files_allowed"],
+                    "files_touched": record["files_touched"],
+                    "risks": record["risks"],
+                    "next_action": record["next_action"],
+                    "context_packet": record["context_packet"],
+                    "test_evidence": record["test_evidence"],
+                    "review_notes": record["review_notes"],
+                }
+            )
+        return records
+
+    def flight_record(self, task_ref: str) -> dict[str, Any]:
+        return gather_flight_record(self.store, task_ref)
+
+    def timeline(self) -> dict[str, Any]:
+        workflows = self.store.list_workflows(limit=20) if self.store.db_file.exists() else []
+        tasks = self.tasks()
+        schedules = self._worktree_schedules()
+        blocks = []
+        for task in tasks:
+            blocks.append(
+                {
+                    "id": task["task_id"],
+                    "lane": task.get("agent") or "Unassigned",
+                    "title": task["title"],
+                    "status": task["status"],
+                    "created_at": task["created_at"],
+                    "updated_at": task["updated_at"],
+                    "claimed_files": [lock["path"] for lock in task.get("locked_files", [])],
+                    "branch": task.get("branch"),
+                }
+            )
+        for schedule in schedules:
+            for lane in schedule.get("lanes", []):
+                blocks.append(
+                    {
+                        "id": lane["task_id"],
+                        "lane": lane.get("agent") or lane.get("role") or "worktree",
+                        "title": f"{schedule['objective']} [{lane.get('role', '-')}]",
+                        "status": lane.get("task_status") or lane.get("status"),
+                        "created_at": schedule.get("created_at"),
+                        "updated_at": lane.get("created_at") or schedule.get("created_at"),
+                        "claimed_files": lane.get("owned_paths", []),
+                        "branch": lane.get("branch"),
+                        "dependencies": lane.get("dependencies", []),
+                        "context_packet": lane.get("context_path"),
+                        "test_status": lane.get("test_result"),
+                        "review_status": lane.get("review_status"),
+                        "merge_ready": lane.get("merge_ready", False),
+                    }
+                )
+        lanes = sorted({block["lane"] for block in blocks})
+        return {"lanes": lanes, "blocks": blocks, "workflows": workflows, "schedules": schedules}
+
+    def worktree_board(self) -> dict[str, Any]:
+        manager = WorktreeManager(self.store)
+        records = manager.list() if self.store.db_file.exists() else []
+        schedules = self._worktree_schedules()
+        scheduled_ids = {
+            lane["task_id"]
+            for schedule in schedules
+            for lane in schedule.get("lanes", [])
+        }
+        standalone = [record for record in records if record.get("task_id") not in scheduled_ids]
+        return {"schedules": schedules, "standalone": standalone}
+
+    def context_packets(self) -> list[dict[str, Any]]:
+        packets = []
+        for task in self.tasks():
+            worktree = WorktreeManager(self.store).record(task["task_id"]) if self.store.db_file.exists() else None
+            try:
+                score = score_intel(self.store, task["task_id"])
+                intel = gather_context_intel(self.store, task["task_id"])
+            except Exception:
+                score = {}
+                intel = {}
+            context_path = (worktree or {}).get("context_path")
+            packets.append(
+                {
+                    "task_id": task["task_id"],
+                    "role": (worktree or {}).get("role") or task.get("agent") or "coder",
+                    "agent": (worktree or {}).get("agent") or task.get("agent"),
+                    "context_path": context_path,
+                    "estimated_tokens": score.get("estimated_tokens"),
+                    "source_count": score.get("source_count"),
+                    "staleness_hours": score.get("staleness_hours"),
+                    "risk_level": score.get("risk_level"),
+                    "missing_info": score.get("missing_info", []),
+                    "files": intel.get("files", []),
+                    "symbols": intel.get("symbols", []),
+                    "tests": intel.get("tests", []),
+                    "decisions": intel.get("decisions", []),
+                    "blockers": intel.get("blockers", []),
+                }
+            )
+        return packets
+
+    def roi(self) -> dict[str, Any]:
+        return roi_summary(self.store)
+
     def overview(self) -> dict[str, Any]:
         teams = self.teams()
         tasks = self.tasks()
@@ -146,6 +266,18 @@ class ControlCenter:
             "tasks": tasks[:6],
             "events": events[:8],
         }
+
+    def _worktree_schedules(self) -> list[dict[str, Any]]:
+        if not self.store.db_file.exists():
+            return []
+        manager = WorktreeManager(self.store)
+        schedules = []
+        for schedule in manager.schedules():
+            try:
+                schedules.append(manager.schedule_status(schedule["schedule_id"]))
+            except WorktreeError:
+                schedules.append(schedule)
+        return schedules
 
     def create_team(self, preset: str) -> dict[str, Any]:
         path = TeamManager(self.store).init(preset)
@@ -229,15 +361,22 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
             "/api/teams": app.teams,
             "/api/tasks": app.tasks,
             "/api/events": app.events,
+            "/api/flight-records": app.flight_records,
+            "/api/timeline": app.timeline,
+            "/api/worktree-board": app.worktree_board,
+            "/api/context-packets": app.context_packets,
+            "/api/roi": app.roi,
         }
         try:
             if path == "/api/memory":
                 self.send_json(app.memory(query.get("q", [""])[0]))
+            elif path == "/api/flight-record":
+                self.send_json(app.flight_record(query.get("task", [""])[0]))
             elif path in handlers:
                 self.send_json(handlers[path]())
             else:
                 self.send_json({"error": "Unknown endpoint"}, HTTPStatus.NOT_FOUND)
-        except (ProviderError, TeamError, ValueError) as error:
+        except (EvidenceError, FlightRecordError, ProviderError, TeamError, ValueError, WorktreeError) as error:
             self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
 
     def do_POST(self) -> None:  # noqa: N802

@@ -1193,12 +1193,23 @@ The planner role is preserving architecture intent and constraints while the exe
             parameters.append(self.parse_workflow_ref(workflow_ref))
         where = " WHERE " + " AND ".join(conditions) if conditions else ""
         rows = connection.execute(
-            f"SELECT id, created_at, sender, recipient, kind, body, token_estimate FROM messages{where} ORDER BY id DESC LIMIT ?",
+            f"""SELECT id, created_at, workflow_id, task_id, sender, recipient, kind, body, token_estimate
+                FROM messages{where} ORDER BY id DESC LIMIT ?""",
             (*parameters, limit),
         ).fetchall()
         connection.close()
         return [
-            {"message_id": f"MSG{row[0]:04d}", "created_at": row[1], "sender": row[2], "recipient": row[3], "kind": row[4], "body": row[5], "estimated_tokens": row[6]}
+            {
+                "message_id": f"MSG{row[0]:04d}",
+                "created_at": row[1],
+                "workflow_id": self.workflow_ref(row[2]) if row[2] else None,
+                "task_id": self.task_ref(row[3]) if row[3] else None,
+                "sender": row[4],
+                "recipient": row[5],
+                "kind": row[6],
+                "body": row[7],
+                "estimated_tokens": row[8],
+            }
             for row in reversed(rows)
         ]
 

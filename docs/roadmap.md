@@ -115,6 +115,50 @@ Tracked as [#6 macOS and Linux service installers](https://github.com/00PrabalK0
 - [#9 Publish the Python package to PyPI](https://github.com/00PrabalK00/Continuum/issues/9)
 - [#10 Record the v0.1 context continuity demo video](https://github.com/00PrabalK00/Continuum/issues/10)
 
+## Product Strategy Backlog
+
+See [Product Strategy](product-strategy.md) for the market framing and product
+direction behind these issues.
+
+Already shipped on the current branch:
+
+- `continuum objective` for coordinated objective planning.
+- `continuum evidence` and `continuum pr-packet` for trust artifacts.
+- `continuum context enrich`, `continuum context diff` and `continuum context
+  score` for inspectable context routing.
+- `continuum policy`, `continuum command classify`, `continuum secrets scan`,
+  `continuum audit export` and `continuum mcp trust` for governance controls.
+
+Phase 1 should make the core workflow undeniable:
+
+- [x] [#27 Agent Flight Recorder](https://github.com/00PrabalK00/Continuum/issues/27):
+  promote evidence, events and session logs into replayable run records.
+- [x] [#28 Workflow Timeline MVP](https://github.com/00PrabalK00/Continuum/issues/28):
+  add the Control Center timeline over real scheduling state.
+- [x] [#29 Multi-Agent Worktree Board](https://github.com/00PrabalK00/Continuum/issues/29):
+  add the screenshot-ready lane board for isolated worktrees.
+- [x] [#30 Context Packet Studio](https://github.com/00PrabalK00/Continuum/issues/30):
+  add UI inspection and comparison for context packets.
+- [#36 `continuum objective` one-command demo flow](https://github.com/00PrabalK00/Continuum/issues/36):
+  harden the shipped planner into the main demo workflow.
+
+Phase 2 should make context routing smarter:
+
+- [#31 Symbol-aware context builder](https://github.com/00PrabalK00/Continuum/issues/31):
+  deepen current context enrichment into automatic packet construction.
+- [#32 Context diff and context score](https://github.com/00PrabalK00/Continuum/issues/32):
+  persist current diff and score output as first-class packet metadata.
+
+Phase 3 should productize governance and safety:
+
+- [#33 MCP trust registry](https://github.com/00PrabalK00/Continuum/issues/33):
+  harden the shipped registry and gate more MCP boundaries through it.
+
+Phase 4 should prove cost and quality:
+
+- [x] [#34 Cost-aware model routing and Agent ROI evidence](https://github.com/00PrabalK00/Continuum/issues/34)
+- [x] [#35 Benchmark harness with and without Continuum](https://github.com/00PrabalK00/Continuum/issues/35)
+
 ## Non-Goals
 
 - Replacing coding agents

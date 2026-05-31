@@ -6,6 +6,7 @@ from pathlib import Path
 from continuum.cli import main
 from continuum.core import MemoryStore
 from continuum.evidence import EvidenceError, gather_evidence, render_packet
+from continuum.flight import gather_flight_record, render_flight_record
 from continuum.worktrees import WorktreeManager
 
 
@@ -150,6 +151,27 @@ class EvidenceTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertTrue(out.exists())
         self.assertIn("## Rollback", out.read_text(encoding="utf-8"))
+
+    def test_flight_record_includes_context_evidence_and_messages(self):
+        task = self._full_evidence_task()
+        self.store.send_message("tester", "claude", "review result", task_ref=task["task_id"])
+
+        record = gather_flight_record(self.store, task["task_id"])
+        markdown = render_flight_record(record)
+
+        self.assertEqual(record["task_id"], task["task_id"])
+        self.assertEqual(record["final_status"], "merge_ready")
+        self.assertEqual(record["files_allowed"], ["app.py"])
+        self.assertIn("app.py", record["files_touched"])
+        self.assertEqual(record["test_evidence"]["result"], "PASS")
+        self.assertEqual(record["review_notes"]["result"], "APPROVED")
+        self.assertEqual(len(record["messages"]), 1)
+        self.assertIn("Agent Flight Record", markdown)
+
+    def test_flight_record_cli_json_exit_zero(self):
+        task = self._full_evidence_task()
+        code = main(["flight-record", task["task_id"], "--project", str(self.project), "--json"])
+        self.assertEqual(code, 0)
 
 
 if __name__ == "__main__":
