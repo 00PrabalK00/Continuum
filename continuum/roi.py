@@ -41,8 +41,11 @@ def roi_summary(store: MemoryStore) -> dict[str, Any]:
 
     provider_usage: dict[str, dict[str, Any]] = {}
     for event in events:
-        provider = event["payload"].get("provider") or event["payload"].get("agent")
-        model = event["payload"].get("model")
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        provider = payload.get("provider") or payload.get("agent")
+        model = payload.get("model")
         if not provider:
             continue
         bucket = provider_usage.setdefault(str(provider), {"provider": str(provider), "models": set(), "events": 0})
