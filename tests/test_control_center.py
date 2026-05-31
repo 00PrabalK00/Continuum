@@ -7,10 +7,13 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from continuum import control_center
 from continuum.control_center import ControlCenter, ControlCenterServer
 from continuum.providers import ProviderManager
 from continuum.teams import TeamManager
 from continuum.worktrees import WorktreeManager
+
+UI_APP_JS = Path(control_center.__file__).resolve().parent / "ui" / "app.js"
 
 
 class ControlCenterTest(unittest.TestCase):
@@ -257,6 +260,243 @@ class ControlCenterTest(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
                 thread.join(timeout=2)
+
+
+    def _git_project(self, root: Path) -> Path:
+        project = root / "project"
+        project.mkdir()
+        subprocess.run(["git", "init"], cwd=project, capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.name", "Continuum Test"], cwd=project, capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=project, capture_output=True, check=True)
+        (project / "app.py").write_text("value = 1\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=project, capture_output=True, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=project, capture_output=True, check=True)
+        return project
+
+    def _serve(self, app: ControlCenter):
+        server = ControlCenterServer(("127.0.0.1", 0), app)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        return server, thread, f"http://127.0.0.1:{server.server_port}"
+
+    def test_trust_endpoints_on_empty_store_return_200_and_sane_json(self):
+        # No db_file, no tasks: every trust endpoint must serve valid JSON, never 500.
+        with tempfile.TemporaryDirectory() as temporary:
+            app = ControlCenter(Path(temporary) / "project")
+            self.assertFalse(app.store.db_file.exists())
+            server, thread, url = self._serve(app)
+            try:
+                with urllib.request.urlopen(url + "/api/flight-records") as response:
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(json.loads(response.read().decode("utf-8")), [])
+                with urllib.request.urlopen(url + "/api/context-packets") as response:
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(json.loads(response.read().decode("utf-8")), [])
+                with urllib.request.urlopen(url + "/api/timeline") as response:
+                    self.assertEqual(response.status, 200)
+                    timeline = json.loads(response.read().decode("utf-8"))
+                self.assertEqual(timeline, {"lanes": [], "blocks": [], "workflows": [], "schedules": []})
+                with urllib.request.urlopen(url + "/api/worktree-board") as response:
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(json.loads(response.read().decode("utf-8")), {"schedules": [], "standalone": []})
+                with urllib.request.urlopen(url + "/api/roi") as response:
+                    self.assertEqual(response.status, 200)
+                    roi = json.loads(response.read().decode("utf-8"))
+                self.assertEqual(roi["tasks_total"], 0)
+                self.assertEqual(roi["flight_records"], 0)
+                self.assertEqual(roi["cost_per_accepted_change_tokens"], 0)
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
+    def test_flight_record_with_bogus_task_returns_clean_400(self):
+        # FlightRecordError / ValueError must be caught and serialized, never a traceback / 500.
+        with tempfile.TemporaryDirectory() as temporary:
+            app = ControlCenter(Path(temporary) / "project")
+            app.store.initialize(1000, 0.8)
+            server, thread, url = self._serve(app)
+            try:
+                for ref in ("BOGUS", "T9999", ""):
+                    with self.assertRaises(urllib.error.HTTPError) as context:
+                        urllib.request.urlopen(url + f"/api/flight-record?task={ref}")
+                    self.assertEqual(context.exception.code, 400)
+                    body = json.loads(context.exception.read().decode("utf-8"))
+                    self.assertIn("error", body)
+                    self.assertTrue(body["error"])
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
+    def test_timeline_and_board_with_standalone_worktree_only(self):
+        # A standalone worktree (no schedule) must appear on the board and timeline.
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self._git_project(Path(temporary))
+            app = ControlCenter(project)
+            app.store.initialize(1000, 0.8)
+            task = app.store.create_task("Standalone task", "parallel")
+            app.store.claim_files(task["task_id"], "claude", ["app.py"])
+            WorktreeManager(app.store).create(task["task_id"])
+
+            board = app.worktree_board()
+            self.assertEqual(board["schedules"], [])
+            self.assertEqual(board["standalone"][0]["task_id"], task["task_id"])
+            timeline = app.timeline()
+            self.assertTrue(any(block["id"] == task["task_id"] for block in timeline["blocks"]))
+
+    def test_timeline_and_board_with_scheduled_lanes(self):
+        # A worktree schedule yields lanes on the board and lane blocks on the timeline,
+        # and those lanes are not double-counted as standalone.
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self._git_project(Path(temporary))
+            (project / "tests").mkdir()
+            (project / "tests" / "t.py").write_text("x = 1\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=project, capture_output=True, check=True)
+            subprocess.run(["git", "commit", "-m", "tests"], cwd=project, capture_output=True, check=True)
+            app = ControlCenter(project)
+            app.store.initialize(1000, 0.8)
+            manager = WorktreeManager(app.store)
+            schedule = manager.schedule(
+                "Build feature",
+                ["backend:claude:app.py", "qa:codex:tests"],
+            )
+
+            board = app.worktree_board()
+            self.assertEqual(len(board["schedules"]), 1)
+            self.assertEqual(board["schedules"][0]["schedule_id"], schedule["schedule_id"])
+            self.assertEqual(board["standalone"], [])
+            self.assertGreaterEqual(len(board["schedules"][0]["lanes"]), 2)
+            timeline = app.timeline()
+            lane_titles = [block["title"] for block in timeline["blocks"]]
+            self.assertTrue(any("Build feature" in title for title in lane_titles))
+
+    def test_timeline_and_board_empty_when_nothing_scheduled(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            app = ControlCenter(Path(temporary) / "project")
+            app.store.initialize(1000, 0.8)
+            self.assertEqual(app.timeline()["blocks"], [])
+            self.assertEqual(app.worktree_board(), {"schedules": [], "standalone": []})
+
+    def test_context_packets_degrade_when_intel_raises(self):
+        # If score_intel / gather_context_intel raise, context_packets must degrade
+        # gracefully (broad except path) instead of propagating a 500.
+        with tempfile.TemporaryDirectory() as temporary:
+            app = ControlCenter(Path(temporary) / "project")
+            app.store.initialize(1000, 0.8)
+            app.store.create_task("Intel task", "sequential")
+
+            def boom(*args, **kwargs):
+                raise RuntimeError("intel exploded")
+
+            original_score = control_center.score_intel
+            original_gather = control_center.gather_context_intel
+            control_center.score_intel = boom
+            control_center.gather_context_intel = boom
+            try:
+                packets = app.context_packets()
+            finally:
+                control_center.score_intel = original_score
+                control_center.gather_context_intel = original_gather
+
+            self.assertEqual(len(packets), 1)
+            packet = packets[0]
+            self.assertEqual(packet["role"], "coder")
+            self.assertIsNone(packet["estimated_tokens"])
+            self.assertIsNone(packet["risk_level"])
+            self.assertEqual(packet["files"], [])
+            self.assertEqual(packet["missing_info"], [])
+
+    def test_trust_endpoints_are_get_readable_without_token(self):
+        # Read-only trust endpoints must not require the POST mutation token,
+        # while mutations still require it.
+        with tempfile.TemporaryDirectory() as temporary:
+            app = ControlCenter(Path(temporary) / "project")
+            app.store.initialize(1000, 0.8)
+            server, thread, url = self._serve(app)
+            try:
+                for endpoint in (
+                    "/api/flight-records", "/api/timeline", "/api/worktree-board",
+                    "/api/context-packets", "/api/roi",
+                ):
+                    # No X-Continuum-Token header at all.
+                    with urllib.request.urlopen(url + endpoint) as response:
+                        self.assertEqual(response.status, 200)
+                # Mutation on the same server is still gated by the token.
+                request = urllib.request.Request(
+                    url + "/api/teams/create",
+                    data=json.dumps({"preset": "local_only"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"}, method="POST",
+                )
+                with self.assertRaises(urllib.error.HTTPError) as context:
+                    urllib.request.urlopen(request)
+                self.assertEqual(context.exception.code, 403)
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
+    def test_trust_endpoints_preserve_malicious_strings_verbatim_for_ui_escaping(self):
+        # The API is a data layer: it must return user-controlled strings verbatim
+        # (no HTML mangling). XSS-safety is the UI's job via escapeHtml, asserted
+        # separately in test_app_js_escapes_user_controlled_trust_values.
+        payload = '<img src=x onerror=alert(1)>'
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self._git_project(Path(temporary))
+            app = ControlCenter(project)
+            app.store.initialize(1000, 0.8)
+            task = app.store.create_task(payload, "parallel")
+            app.store.claim_files(task["task_id"], payload, ["app.py"])
+            WorktreeManager(app.store).create(task["task_id"])
+
+            records = app.flight_records()
+            self.assertEqual(records[0]["objective"], payload)
+            self.assertEqual(records[0]["agent"], payload)
+            timeline = app.timeline()
+            self.assertTrue(any(block["title"] == payload for block in timeline["blocks"]))
+
+    def test_app_js_escapes_user_controlled_trust_values(self):
+        # Static assertion: every user/task-controlled value rendered in the trust
+        # views must be wrapped in escapeHtml(...) so the malicious payload above
+        # cannot break out of the DOM. We assert the specific risky interpolations.
+        source = UI_APP_JS.read_text(encoding="utf-8")
+        required = [
+            # timelineView
+            "${escapeHtml(block.lane)}",
+            "${escapeHtml(block.id)} ${escapeHtml(block.title)}",
+            "${escapeHtml(block.status",
+            "${escapeHtml(block.branch",
+            # worktreeBoardView
+            "${escapeHtml(schedule.schedule_id)} ${escapeHtml(schedule.status)}",
+            "${escapeHtml(schedule.objective)}",
+            # laneCard
+            "${escapeHtml(lane.task_id)} ${escapeHtml(lane.role",
+            "${escapeHtml(lane.agent",
+            "${escapeHtml(lane.branch",
+            # flightRecordView
+            "${escapeHtml(record.final_status)}",
+            "${escapeHtml(record.task_id)} ${escapeHtml(record.objective)}",
+            "${escapeHtml(record.agent)} | ${escapeHtml(record.branch",
+            # contextPacketView
+            "${escapeHtml(packet.task_id)}",
+            "${escapeHtml(packet.role)}",
+            # data-* attributes (read back into API/inspect calls) must be escaped too
+            'data-task="${escapeHtml(record.task_id)}"',
+            'data-task="${escapeHtml(packet.task_id)}"',
+            'data-task="${escapeHtml(task.task_id)}"',
+        ]
+        for snippet in required:
+            self.assertIn(snippet, source, f"Missing escaped interpolation: {snippet}")
+        # Guard against regressions: no raw (unescaped) interpolation of these
+        # task/user-controlled fields in the trust views.
+        forbidden = [
+            "${block.title}", "${block.lane}", "${block.objective}",
+            "${schedule.objective}", "${record.objective}", "${record.agent}",
+            "${lane.agent}", "${lane.role}", "${lane.branch}",
+            'data-task="${record.task_id}"', 'data-task="${packet.task_id}"',
+        ]
+        for snippet in forbidden:
+            self.assertNotIn(snippet, source, f"Unescaped trust-view interpolation: {snippet}")
 
 
 if __name__ == "__main__":
