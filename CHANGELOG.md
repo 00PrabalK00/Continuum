@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.9.0 - Alpha
+
+Trust UI release: surface the evidence Continuum already records and add
+cost/benefit accounting on top of it.
+
+- Added `continuum flight-record <task>` — a replayable Agent Flight Recorder
+  record built from stored state (context packet, claimed vs touched files,
+  gate evidence, events, messages and risks), never from agent self-reports.
+- Added `continuum roi` — Agent ROI evidence: tokens, cost-per-accepted-change,
+  out-of-scope edits, reruns, manual corrections, provider usage and
+  deterministic routing recommendations.
+- Added `continuum benchmark capture`/`compare` — a with-vs-without harness that
+  diffs task metrics and reports an evidence-based verdict.
+- Added Control Center trust views: Workflow Timeline, Multi-Agent Worktree
+  Board, Agent Flight Recorder, Agent ROI and Context Packet Studio, backed by
+  new read-only `/api/flight-records`, `/api/flight-record`, `/api/timeline`,
+  `/api/worktree-board`, `/api/context-packets` and `/api/roi` endpoints.
+- Extended `store.messages` to carry workflow and task references so flight
+  records and the timeline can attribute messages to their task.
+
 ## 0.8.0 - Alpha
 
 Trust-layer release: make Continuum verify, not trust, what agents claim.

@@ -385,6 +385,86 @@ Discard an isolated task branch:
 continuum worktree discard T0001
 ```
 
+## Plan Objectives And Evidence
+
+Turn one goal into a coordinated plan:
+
+```bash
+continuum objective "Add Stripe billing" \
+  --agent backend=claude \
+  --agent tests=codex \
+  --agent docs=gemini \
+  --path backend=src,billing \
+  --path tests=tests \
+  --tests "python -m unittest" \
+  --mode schedule
+```
+
+The planner creates tasks, context packets, next commands and, in schedule
+mode, isolated worktree lanes where owned paths are known.
+
+Inspect trust evidence for a task:
+
+```bash
+continuum evidence T0001
+continuum evidence T0001 --json
+continuum pr-packet T0001 --output .continuum/pr-packet-T0001.md
+continuum flight-record T0001
+continuum roi
+```
+
+Evidence includes claimed files, changed files, worktree state, test and review
+gates, detected risks and the next safe action.
+
+Inspect context quality:
+
+```bash
+continuum context enrich T0001
+continuum context diff T0001 T0002
+continuum context score T0001
+```
+
+Context intelligence reports relevant files, symbols, linked tests, recent
+commits, decisions, blockers, token estimates, staleness, risk and missing
+information.
+
+Compare the same task with and without Continuum:
+
+```bash
+continuum benchmark capture T0001 --label with-continuum --output .continuum/bench-with.json
+continuum benchmark compare --without bench-without.json --with .continuum/bench-with.json
+```
+
+Benchmark comparisons report tokens used, failed attempts, out-of-scope file
+touches, tests run, context resets, human corrections, changed files and merge
+readiness.
+
+## Governance Controls
+
+Create and inspect a project policy:
+
+```bash
+continuum policy init
+continuum policy show
+```
+
+Classify shell-command risk and scan content before it leaves the machine:
+
+```bash
+continuum command classify "rm -rf build"
+continuum secrets scan .env
+continuum audit export --format md --since 7d
+```
+
+Maintain MCP server and tool trust:
+
+```bash
+continuum mcp trust add local-tools --status untrusted
+continuum mcp trust allow local-tools read_file
+continuum mcp trust deny local-tools shell
+continuum mcp trust list
+```
+
 ## Connect MCP Agents
 
 Start the project-scoped MCP stdio server:
@@ -513,6 +593,11 @@ Agents/
 - [Task Worktrees](docs/worktrees.md)
 - [Parallel Worktrees](docs/parallel-worktrees.md)
 - [Workflow Timeline](docs/workflow-timeline.md)
+
+**Strategy**
+
+- [Product Strategy](docs/product-strategy.md)
+- [Roadmap](docs/roadmap.md)
 
 **Deployment**
 

@@ -1,6 +1,7 @@
 const state = {
   view: "teams", overview: null, project: null, providers: [], teams: [],
-  tasks: [], events: [], memory: null
+  tasks: [], events: [], memory: null, flightRecords: [], timeline: null,
+  worktreeBoard: null, contextPackets: [], roi: null
 };
 const pageMeta = {
   overview: ["Overview", "Monitor the local daemon, memory and planned work."],
@@ -56,9 +57,14 @@ function showError(message) {
   setTimeout(() => toast.classList.remove("show"), 4000);
 }
 async function loadAll() {
-  [state.overview, state.project, state.providers, state.teams, state.tasks, state.events, state.memory] = await Promise.all([
+  [
+    state.overview, state.project, state.providers, state.teams, state.tasks,
+    state.events, state.memory, state.flightRecords, state.timeline,
+    state.worktreeBoard, state.contextPackets, state.roi
+  ] = await Promise.all([
     api("/api/overview"), api("/api/project"), api("/api/providers"), api("/api/teams"),
-    api("/api/tasks"), api("/api/events"), api("/api/memory")
+    api("/api/tasks"), api("/api/events"), api("/api/memory"), api("/api/flight-records"),
+    api("/api/timeline"), api("/api/worktree-board"), api("/api/context-packets"), api("/api/roi")
   ]);
   const daemon = state.overview.daemon;
   document.getElementById("daemon-dot").classList.toggle("running", daemon.running);
@@ -85,9 +91,11 @@ function taskTable(tasks) {
 function bindTasks() {
   document.querySelectorAll(".task-row").forEach(row => row.onclick = () => {
     const task = state.tasks.find(item => item.task_id === row.dataset.task);
+    const flight = state.flightRecords.find(item => item.task_id === task.task_id);
     inspect(task.task_id, field("Task", task.title) + field("Status", task.status) + field("Worker", task.agent || "Unassigned") +
       field("Claimed files", task.locked_files.map(lock => lock.path).join(", ") || "None") +
-      command(`continuum task show ${task.task_id}`));
+      (flight ? field("Flight status", flight.final_status) + field("Next action", flight.next_action) : "") +
+      command(`continuum flight-record ${task.task_id}`));
   });
 }
 function renderOverview() {
@@ -169,13 +177,103 @@ function renderTeams() {
   document.querySelector(".team-role").click();
 }
 function renderRuns() {
-  document.getElementById("content").innerHTML = `${taskTable(state.tasks)}<div class="section"><div class="section-head"><h2>Resume context</h2></div><div class="search"><input id="resume-role" value="coder"><button id="resume-context">Build compact packet</button></div><pre id="resume-output"></pre></div>`;
+  document.getElementById("content").innerHTML = `
+    <div class="section"><div class="section-head"><h2>Workflow Timeline</h2></div>${timelineView()}</div>
+    <div class="section"><div class="section-head"><h2>Multi-Agent Worktree Board</h2></div>${worktreeBoardView()}</div>
+    <div class="section"><div class="section-head"><h2>Agent Flight Recorder</h2></div>${flightRecordView()}</div>
+    <div class="section"><div class="section-head"><h2>Agent ROI</h2></div>${roiView()}</div>
+    <div class="section"><div class="section-head"><h2>Context Packet Studio</h2></div>${contextPacketView()}</div>
+    <div class="section"><div class="section-head"><h2>Tasks</h2></div>${taskTable(state.tasks)}</div>
+    <div class="section"><div class="section-head"><h2>Resume context</h2></div><div class="search"><input id="resume-role" value="coder"><button id="resume-context">Build compact packet</button></div><pre id="resume-output"></pre></div>`;
   bindTasks();
+  bindFlightRecords();
+  bindContextPackets();
   document.getElementById("resume-context").onclick = async () => {
     try { const result = await post("/api/resume-context", {role: document.getElementById("resume-role").value, mode: "compact"}); document.getElementById("resume-output").textContent = result.text; }
     catch (error) { showError(error.message); }
   };
-  inspect("Tasks", command("continuum task list"));
+  inspect("Runs", command("continuum flight-record T0001"));
+}
+function timelineView() {
+  const blocks = state.timeline?.blocks || [];
+  if (!blocks.length) return `<div class="empty"><h3>No workflow timeline yet</h3><p>Plan an objective or schedule worktrees to create timeline state.</p>${command('continuum objective "Build X" --mode schedule')}</div>`;
+  return `<div class="timeline">${blocks.map(block => `
+    <article class="timeline-block">
+      <p class="field-label">${escapeHtml(block.lane)}</p>
+      <h3>${escapeHtml(block.id)} ${escapeHtml(block.title)}</h3>
+      <div class="pills"><span class="pill">${escapeHtml(block.status || "-")}</span><span class="pill">${escapeHtml(block.branch || "no branch")}</span>${block.merge_ready ? '<span class="pill ready">merge ready</span>' : ''}</div>
+      <p class="detail">${escapeHtml((block.claimed_files || []).join(", ") || "No claimed files")}</p>
+    </article>`).join("")}</div>`;
+}
+function worktreeBoardView() {
+  const schedules = state.worktreeBoard?.schedules || [];
+  const standalone = state.worktreeBoard?.standalone || [];
+  if (!schedules.length && !standalone.length) return `<div class="empty"><h3>No worktree lanes</h3><p>Create isolated lanes from the terminal.</p>${command('continuum worktree schedule "Build X" --lane backend:claude:src --lane tests:codex:tests')}</div>`;
+  const scheduled = schedules.map(schedule => `
+    <div class="board-group"><p class="field-label">${escapeHtml(schedule.schedule_id)} ${escapeHtml(schedule.status)}</p><h3>${escapeHtml(schedule.objective)}</h3>
+      <div class="worktree-board">${(schedule.lanes || []).map(laneCard).join("")}</div></div>`).join("");
+  const solo = standalone.length ? `<div class="board-group"><p class="field-label">Standalone worktrees</p><div class="worktree-board">${standalone.map(laneCard).join("")}</div></div>` : "";
+  return scheduled + solo;
+}
+function laneCard(lane) {
+  return `<article class="card lane-card">
+    <p class="status ${lane.merge_ready ? "connected" : "disabled"}">${lane.merge_ready ? "Merge ready" : escapeHtml(lane.status || "Active")}</p>
+    <h3>${escapeHtml(lane.task_id)} ${escapeHtml(lane.role || "")}</h3>
+    <p class="detail">${escapeHtml(lane.agent || "worktree")} | ${escapeHtml(lane.branch || "-")}</p>
+    <p class="detail">${escapeHtml((lane.owned_paths || []).join(", ") || "No owned paths")}</p>
+    <div class="pills"><span class="pill">tests ${escapeHtml(lane.test_result || "-")}</span><span class="pill">review ${escapeHtml(lane.review_status || "-")}</span></div>
+  </article>`;
+}
+function flightRecordView() {
+  if (!state.flightRecords.length) return `<div class="empty"><h3>No flight records</h3><p>Create or assign a task to record auditable agent work.</p>${command('continuum task create "Fix auth"')}</div>`;
+  return `<div class="grid cards">${state.flightRecords.map(record => `
+    <article class="card selectable flight-card" data-task="${record.task_id}">
+      <p class="status ${record.risks.length ? "failed" : "connected"}">${escapeHtml(record.final_status)}</p>
+      <h3>${escapeHtml(record.task_id)} ${escapeHtml(record.objective)}</h3>
+      <p class="detail">${escapeHtml(record.agent)} | ${escapeHtml(record.branch || "no branch")}</p>
+      <p class="detail">${record.files_allowed.length} allowed | ${record.files_touched.length} touched | ${record.risks.length} risks</p>
+    </article>`).join("")}</div>`;
+}
+function contextPacketView() {
+  if (!state.contextPackets.length) return `<div class="empty"><h3>No context packets</h3><p>Build task context or schedule a worktree lane.</p>${command("continuum context build coder")}</div>`;
+  return `<div class="table"><div class="row header"><span>Task</span><span>Role</span><span>Risk</span><span>Sources</span></div>${state.contextPackets.map(packet => `
+    <div class="row selectable context-row" data-task="${packet.task_id}"><span>${escapeHtml(packet.task_id)}</span><span>${escapeHtml(packet.role)}</span><span>${escapeHtml(packet.risk_level || "-")}</span><span>${escapeHtml(packet.source_count ?? "-")}</span></div>`).join("")}</div>`;
+}
+function roiView() {
+  const roi = state.roi || {};
+  return `<div class="grid cards">
+    <article class="card"><p class="label">Tasks</p><p class="value">${escapeHtml(roi.tasks_completed ?? 0)} done</p><p class="detail">${escapeHtml(roi.tasks_failed ?? 0)} failed | ${escapeHtml(roi.tasks_total ?? 0)} total</p></article>
+    <article class="card"><p class="label">Tokens</p><p class="value">${escapeHtml(roi.estimated_tokens ?? 0)}</p><p class="detail">${escapeHtml(roi.cost_per_accepted_change_tokens ?? 0)} per accepted change</p></article>
+    <article class="card"><p class="label">Quality</p><p class="value">${escapeHtml(roi.tests_passed ?? 0)} tests</p><p class="detail">${escapeHtml(roi.files_changed_outside_scope ?? 0)} out-of-scope | ${escapeHtml(roi.review_rejections ?? 0)} rejected</p></article>
+    <article class="card selectable" id="roi-card"><p class="label">Routing</p><p class="value">${escapeHtml((roi.recommendations || []).length)} rules</p><p class="detail">Cost-aware provider guidance</p></article>
+  </div>`;
+}
+function bindFlightRecords() {
+  document.querySelectorAll(".flight-card").forEach(card => card.onclick = async () => {
+    try {
+      const record = await api(`/api/flight-record?task=${encodeURIComponent(card.dataset.task)}`);
+      inspect(record.task_id, field("Objective", record.objective) + field("Agent", record.agent) + field("Final status", record.final_status) +
+        field("Files allowed", record.files_allowed.join(", ") || "None") + field("Files touched", record.files_touched.join(", ") || "None") +
+        field("Risks", record.risks.join(" | ") || "None") + field("Next action", record.next_action) + command(`continuum flight-record ${record.task_id}`));
+    } catch (error) { showError(error.message); }
+  });
+}
+function bindContextPackets() {
+  document.querySelectorAll(".context-row").forEach(row => row.onclick = () => {
+    const packet = state.contextPackets.find(item => item.task_id === row.dataset.task);
+    inspect(`Context ${packet.task_id}`, field("Role", packet.role) + field("Agent", packet.agent || "-") +
+      field("Tokens", packet.estimated_tokens ?? "-") + field("Risk", packet.risk_level || "-") +
+      field("Missing info", packet.missing_info.join(" | ") || "None") + field("Files", packet.files.join(", ") || "None") +
+      command(`continuum context score ${packet.task_id}`));
+  });
+  const roiCard = document.getElementById("roi-card");
+  if (roiCard) roiCard.onclick = () => {
+    const roi = state.roi || {};
+    inspect("Agent ROI", field("Estimated tokens", roi.estimated_tokens ?? 0) + field("Cost per accepted change", roi.cost_per_accepted_change_tokens ?? 0) +
+      field("Manual corrections", roi.manual_corrections ?? 0) + field("Reruns", roi.reruns ?? 0) +
+      `<p class="field-label">Recommendations</p><pre>${escapeHtml((roi.recommendations || []).map(item => `${item.task}: ${item.provider} - ${item.reason}`).join("\\n") || "No recommendations.")}</pre>` +
+      command("continuum roi"));
+  };
 }
 function renderMemory() {
   document.getElementById("content").innerHTML = `<div class="tabs"><button class="active">Current State</button><button>Decisions</button><button>Implemented</button><button>Open Tasks</button><button>Raw Events</button></div>

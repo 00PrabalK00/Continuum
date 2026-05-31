@@ -33,7 +33,9 @@ from .policy import PolicyError, requires_approval, write_starter_policy
 from . import command_risk
 from . import mcp_trust
 from . import audit_export
+from .benchmark import capture_task, compare_captures, load_capture, render_comparison, write_capture
 from .secrets_scan import scan_text
+from .roi import render_roi, roi_summary
 from .providers import DEFAULT_PROVIDERS, ProviderError, ProviderManager
 from .services import ServiceError, ServiceManager
 from .teams import PRESETS, TeamError, TeamManager
@@ -49,6 +51,7 @@ from .context_intel import (
     score_intel,
 )
 from .evidence import EvidenceError, gather_evidence, render_packet
+from .flight import FlightRecordError, gather_flight_record, render_flight_record
 from .external_sessions import ExternalSessionError, ExternalSessionManager
 from .terminal import TerminalUnavailable, run_terminal_process, terminal_backend
 from .adapters import terminal_adapter, terminal_adapter_capabilities
@@ -1344,6 +1347,43 @@ def pr_packet(args: argparse.Namespace) -> int:
     return 0
 
 
+def flight_record(args: argparse.Namespace) -> int:
+    record = gather_flight_record(store_from(args), args.task_id)
+    if args.json:
+        print(json.dumps(record, indent=2, ensure_ascii=True))
+        return 0
+    print(render_flight_record(record))
+    return 0
+
+
+def roi(args: argparse.Namespace) -> int:
+    summary = roi_summary(store_from(args))
+    if args.json:
+        print(json.dumps(summary, indent=2, ensure_ascii=True))
+    else:
+        print(render_roi(summary))
+    return 0
+
+
+def benchmark_capture(args: argparse.Namespace) -> int:
+    capture = capture_task(store_from(args), args.task_id, args.label)
+    if args.output:
+        write_capture(Path(args.output), capture)
+        print(f"Wrote benchmark capture: {args.output}")
+    else:
+        print(json.dumps(capture, indent=2, ensure_ascii=True))
+    return 0
+
+
+def benchmark_compare(args: argparse.Namespace) -> int:
+    comparison = compare_captures(load_capture(Path(args.without)), load_capture(Path(args.with_continuum)))
+    if args.json:
+        print(json.dumps(comparison, indent=2, ensure_ascii=True))
+    else:
+        print(render_comparison(comparison))
+    return 0
+
+
 def service(args: argparse.Namespace) -> int:
     manager = ServiceManager(store_from(args))
     result = getattr(manager, args.action)()
@@ -1848,6 +1888,28 @@ def parser() -> argparse.ArgumentParser:
     packet_cmd.add_argument("--output", help="Write the packet to this file instead of stdout.")
     packet_cmd.set_defaults(func=pr_packet)
 
+    flight_cmd = commands.add_parser("flight-record", parents=[common], help="Show a replayable Agent Flight Recorder record for a task.")
+    flight_cmd.add_argument("task_id")
+    flight_cmd.add_argument("--json", action="store_true", help="Emit the flight record as JSON.")
+    flight_cmd.set_defaults(func=flight_record)
+
+    roi_cmd = commands.add_parser("roi", parents=[common], help="Show cost-aware routing and Agent ROI evidence.")
+    roi_cmd.add_argument("--json", action="store_true", help="Emit ROI evidence as JSON.")
+    roi_cmd.set_defaults(func=roi)
+
+    benchmark_cmd = commands.add_parser("benchmark", help="Capture and compare with-vs-without Continuum task metrics.")
+    benchmark_commands = benchmark_cmd.add_subparsers(dest="benchmark_command", required=True)
+    capture_benchmark = benchmark_commands.add_parser("capture", parents=[common], help="Capture benchmark metrics from a Continuum task.")
+    capture_benchmark.add_argument("task_id")
+    capture_benchmark.add_argument("--label", default="with-continuum")
+    capture_benchmark.add_argument("--output", help="Write the capture JSON to this path.")
+    capture_benchmark.set_defaults(func=benchmark_capture)
+    compare_benchmark = benchmark_commands.add_parser("compare", parents=[common], help="Compare without-Continuum and with-Continuum capture JSON files.")
+    compare_benchmark.add_argument("--without", required=True, help="Baseline capture JSON.")
+    compare_benchmark.add_argument("--with", dest="with_continuum", required=True, help="Continuum capture JSON.")
+    compare_benchmark.add_argument("--json", action="store_true", help="Emit comparison JSON.")
+    compare_benchmark.set_defaults(func=benchmark_compare)
+
     objective_cmd = commands.add_parser(
         "objective",
         parents=[common],
@@ -1996,7 +2058,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("--context-limit must be positive")
     try:
         return int(args.func(args))
-    except (EvidenceError, ExternalSessionError, ObjectiveError, PolicyError, ProviderError, ServiceError, TeamError, WorktreeError, mcp_trust.TrustError, ValueError) as error:
+    except (EvidenceError, ExternalSessionError, FlightRecordError, ObjectiveError, PolicyError, ProviderError, ServiceError, TeamError, WorktreeError, mcp_trust.TrustError, ValueError) as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1
 
