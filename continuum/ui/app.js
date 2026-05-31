@@ -86,7 +86,7 @@ function render() {
 function taskTable(tasks) {
   if (!tasks.length) return `<div class="empty"><h3>No controlled tasks</h3><p>Create work from the terminal.</p>${command('continuum task create "Fix auth"')}</div>`;
   return `<div class="table"><div class="row header"><span>Task</span><span>Worker</span><span>Status</span><span>Files</span></div>${tasks.map(task => `
-    <div class="row selectable task-row" data-task="${task.task_id}"><span>${escapeHtml(task.title)}</span><span>${escapeHtml(task.agent || "Unassigned")}</span><span>${escapeHtml(task.status)}</span><span>${task.locked_files.length} claimed</span></div>`).join("")}</div>`;
+    <div class="row selectable task-row" data-task="${escapeHtml(task.task_id)}"><span>${escapeHtml(task.title)}</span><span>${escapeHtml(task.agent || "Unassigned")}</span><span>${escapeHtml(task.status)}</span><span>${task.locked_files.length} claimed</span></div>`).join("")}</div>`;
 }
 function bindTasks() {
   document.querySelectorAll(".task-row").forEach(row => row.onclick = () => {
@@ -227,7 +227,7 @@ function laneCard(lane) {
 function flightRecordView() {
   if (!state.flightRecords.length) return `<div class="empty"><h3>No flight records</h3><p>Create or assign a task to record auditable agent work.</p>${command('continuum task create "Fix auth"')}</div>`;
   return `<div class="grid cards">${state.flightRecords.map(record => `
-    <article class="card selectable flight-card" data-task="${record.task_id}">
+    <article class="card selectable flight-card" data-task="${escapeHtml(record.task_id)}">
       <p class="status ${record.risks.length ? "failed" : "connected"}">${escapeHtml(record.final_status)}</p>
       <h3>${escapeHtml(record.task_id)} ${escapeHtml(record.objective)}</h3>
       <p class="detail">${escapeHtml(record.agent)} | ${escapeHtml(record.branch || "no branch")}</p>
@@ -237,7 +237,7 @@ function flightRecordView() {
 function contextPacketView() {
   if (!state.contextPackets.length) return `<div class="empty"><h3>No context packets</h3><p>Build task context or schedule a worktree lane.</p>${command("continuum context build coder")}</div>`;
   return `<div class="table"><div class="row header"><span>Task</span><span>Role</span><span>Risk</span><span>Sources</span></div>${state.contextPackets.map(packet => `
-    <div class="row selectable context-row" data-task="${packet.task_id}"><span>${escapeHtml(packet.task_id)}</span><span>${escapeHtml(packet.role)}</span><span>${escapeHtml(packet.risk_level || "-")}</span><span>${escapeHtml(packet.source_count ?? "-")}</span></div>`).join("")}</div>`;
+    <div class="row selectable context-row" data-task="${escapeHtml(packet.task_id)}"><span>${escapeHtml(packet.task_id)}</span><span>${escapeHtml(packet.role)}</span><span>${escapeHtml(packet.risk_level || "-")}</span><span>${escapeHtml(packet.source_count ?? "-")}</span></div>`).join("")}</div>`;
 }
 function roiView() {
   const roi = state.roi || {};

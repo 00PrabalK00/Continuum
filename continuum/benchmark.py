@@ -27,7 +27,17 @@ def capture_task(store: MemoryStore, task_ref: str, label: str) -> dict[str, Any
 
 
 def load_capture(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise ValueError(f"Cannot read benchmark capture {path}: {error.strerror or error}") from error
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"Invalid benchmark capture JSON in {path}: {error}") from error
+    if not isinstance(data, dict):
+        raise ValueError(f"Benchmark capture {path} must contain a JSON object, got {type(data).__name__}.")
+    return data
 
 
 def write_capture(path: Path, capture: dict[str, Any]) -> None:
@@ -35,8 +45,8 @@ def write_capture(path: Path, capture: dict[str, Any]) -> None:
 
 
 def compare_captures(without: dict[str, Any], with_continuum: dict[str, Any]) -> dict[str, Any]:
-    left = without.get("metrics", without)
-    right = with_continuum.get("metrics", with_continuum)
+    left = _metrics_view(without)
+    right = _metrics_view(with_continuum)
     deltas = {}
     for key in METRIC_KEYS:
         deltas[key] = _number(right.get(key)) - _number(left.get(key))
@@ -67,6 +77,19 @@ def render_comparison(comparison: dict[str, Any]) -> str:
         lines.append(f"| {key} | {_number(without.get(key))} | {_number(with_continuum.get(key))} | {comparison['delta'][key]} |")
     lines.append("")
     return "\n".join(lines)
+
+
+def _metrics_view(capture: dict[str, Any]) -> dict[str, Any]:
+    """Return the metrics mapping, falling back to the flat capture.
+
+    Tolerates captures that omit the ``metrics`` key entirely as well as
+    captures where ``metrics`` is present but ``None`` or otherwise not a
+    mapping (e.g. hand-edited or partially-written JSON).
+    """
+    metrics = capture.get("metrics")
+    if isinstance(metrics, dict):
+        return metrics
+    return capture
 
 
 def _number(value: Any) -> float:
