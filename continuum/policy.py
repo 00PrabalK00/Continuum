@@ -20,6 +20,13 @@ Schema (all top-level keys optional):
                                           true.
     max_context_tokens         int|null   Optional hard cap on egress context
                                           token estimate. Absent = no extra cap.
+    approval_required_risk     str        Command risk level at/above which a
+                                          command is flagged approval-required
+                                          ("low"|"med"|"high"). Default "high".
+    network                    str        Network egress mode: "on" (default,
+                                          unchanged behavior), "local_only"
+                                          (only local providers allowed), or
+                                          "off" (no providers may run).
 """
 
 from __future__ import annotations
@@ -32,12 +39,18 @@ from typing import Any
 
 POLICY_FILENAME = "policy.json"
 
+# Command risk levels, ordered low -> high, for `approval_required_risk`.
+RISK_ORDER = ("low", "med", "high")
+NETWORK_MODES = ("on", "local_only", "off")
+
 ALLOWED_KEYS = {
     "allowed_providers",
     "denied_files",
     "sensitive_globs",
     "required_tests_before_merge",
     "max_context_tokens",
+    "approval_required_risk",
+    "network",
     "_comment",  # Reserved for human comments-as-strings in the starter file.
 }
 
@@ -53,6 +66,8 @@ class Policy:
     sensitive_globs: list[str] = field(default_factory=list)
     required_tests_before_merge: bool = True
     max_context_tokens: int | None = None
+    approval_required_risk: str = "high"
+    network: str = "on"
     source: str | None = None  # Path the policy was loaded from, or None for defaults.
 
     def provider_allowed(self, provider: str) -> bool:
@@ -73,6 +88,8 @@ class Policy:
             "sensitive_globs": list(self.sensitive_globs),
             "required_tests_before_merge": self.required_tests_before_merge,
             "max_context_tokens": self.max_context_tokens,
+            "approval_required_risk": self.approval_required_risk,
+            "network": self.network,
         }
 
 
@@ -125,14 +142,43 @@ def parse_policy(data: dict[str, Any], source: str | None = None) -> Policy:
     if max_tokens is not None:
         if not isinstance(max_tokens, int) or isinstance(max_tokens, bool) or max_tokens <= 0:
             raise PolicyError("Policy key `max_context_tokens` must be a positive integer.")
+    approval_risk = data.get("approval_required_risk", "high")
+    if not isinstance(approval_risk, str) or approval_risk not in RISK_ORDER:
+        raise PolicyError(
+            "Policy key `approval_required_risk` must be one of: " + ", ".join(RISK_ORDER) + "."
+        )
+    network = data.get("network", "on")
+    if not isinstance(network, str) or network not in NETWORK_MODES:
+        raise PolicyError(
+            "Policy key `network` must be one of: " + ", ".join(NETWORK_MODES) + "."
+        )
     return Policy(
         allowed_providers=allowed_providers,
         denied_files=denied_files,
         sensitive_globs=sensitive_globs,
         required_tests_before_merge=required,
         max_context_tokens=max_tokens,
+        approval_required_risk=approval_risk,
+        network=network,
         source=source,
     )
+
+
+def requires_approval(command: str, policy: Policy) -> dict[str, Any]:
+    """Decide whether a command needs human approval under `policy`.
+
+    Classifies `command` with the command risk engine and compares its level to
+    the policy's `approval_required_risk` threshold. Returns the classification
+    augmented with an `approval_required` boolean and the `threshold` used.
+    Destructive/credential commands classify as "high" and so are flagged under
+    the default policy.
+    """
+    from .command_risk import classify
+
+    result = classify(command)
+    threshold = policy.approval_required_risk
+    approval_required = RISK_ORDER.index(result["level"]) >= RISK_ORDER.index(threshold)
+    return {**result, "approval_required": approval_required, "threshold": threshold}
 
 
 def policy_path(state_dir: Path) -> Path:
@@ -161,13 +207,18 @@ STARTER_POLICY: dict[str, Any] = {
         "denied_files: globs that may never be claimed/edited. "
         "sensitive_globs: files whose content is excluded from egress context. "
         "required_tests_before_merge: gate merges on a green test result. "
-        "max_context_tokens: optional cap on egress context size."
+        "max_context_tokens: optional cap on egress context size. "
+        "approval_required_risk: command risk level (low|med|high) at/above which "
+        "a command is flagged approval-required. "
+        "network: on (default) | local_only (only local providers) | off (no providers)."
     ),
     "allowed_providers": [],
     "denied_files": [".env", "**/*.pem", "secrets/**"],
     "sensitive_globs": [".env", "**/*.pem", "**/*.key", "secrets/**"],
     "required_tests_before_merge": True,
     "max_context_tokens": None,
+    "approval_required_risk": "high",
+    "network": "on",
 }
 
 
