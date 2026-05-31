@@ -439,6 +439,47 @@ Benchmark comparisons report tokens used, failed attempts, out-of-scope file
 touches, tests run, context resets, human corrections, changed files and merge
 readiness.
 
+### End-To-End Trust Demo
+
+The features above chain into one verifiable flow on any git project. Each step
+reads recorded state rather than agent self-reports, so the final verdict is
+evidence-backed:
+
+```bash
+# 1. Initialize and plan one objective into isolated worktree lanes.
+continuum init
+continuum objective "Add billing" \
+  --agent backend=claude --agent tests=codex \
+  --path backend=src/app.py --path tests=tests/test_app.py \
+  --depends-on tests:backend \
+  --mode schedule
+
+# 2. Make the change inside the lane's worktree, then record the gates.
+#    (Edit + commit happen in the worktree printed by `objective`/`worktree list`.)
+continuum worktree test-result T0001 --pass --note "python -m unittest"
+continuum worktree review T0001 --approve --note "scoped to src/app.py"
+
+# 3. Inspect the evidence, build a reviewer packet and the flight record.
+continuum evidence T0001          # changed files + PASS/APPROVED gates, no risks
+continuum pr-packet T0001
+continuum flight-record T0001     # final status: merge_ready
+
+# 4. Quantify the run: ROI rollup and a with-vs-without benchmark comparison.
+continuum roi                     # flight_records >= 1, merge_ready_tasks >= 1
+continuum benchmark capture T0001 --label with-continuum --output bench-with.json
+continuum benchmark compare --without bench-without.json --with bench-with.json
+```
+
+When the change stays inside each lane's claimed paths and both gates are
+recorded against the current branch HEAD, `flight-record` reports
+`merge_ready`, `roi` counts the merge-ready task, and `benchmark compare`
+against a worse baseline reports "Continuum improved the measured run."
+
+Note: lane scope is matched against changed files by exact path. Own the
+precise files a lane edits (for example `--path backend=src/app.py`) so a
+nested change is not flagged as an out-of-scope edit. `tests/test_demo_flow.py`
+drives this whole flow end to end as an automated check.
+
 ## Governance Controls
 
 Create and inspect a project policy:
