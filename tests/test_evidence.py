@@ -173,6 +173,26 @@ class EvidenceTest(unittest.TestCase):
         code = main(["flight-record", task["task_id"], "--project", str(self.project), "--json"])
         self.assertEqual(code, 0)
 
+    def test_flight_record_bare_task_no_worktree_or_gates(self):
+        """A task with no worktree, claims or gates renders without crashing."""
+        task = self.store.create_task("Bare task", "parallel")
+
+        record = gather_flight_record(self.store, task["task_id"])
+        markdown = render_flight_record(record)
+
+        self.assertEqual(record["files_allowed"], [])
+        self.assertEqual(record["files_touched"], [])
+        self.assertIsNone(record["test_evidence"].get("result"))
+        self.assertIsNone(record["review_notes"].get("result"))
+        self.assertEqual(record["cost_estimate"]["estimated_usd"], None)
+        self.assertIn("Agent Flight Record", markdown)
+        self.assertIn("No command or gate events recorded.", markdown)
+
+    def test_flight_record_bare_task_cli_json_exit_zero(self):
+        task = self.store.create_task("Bare task", "parallel")
+        code = main(["flight-record", task["task_id"], "--project", str(self.project), "--json"])
+        self.assertEqual(code, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
