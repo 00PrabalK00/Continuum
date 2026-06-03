@@ -9,6 +9,25 @@ const env = { ...process.env };
 env.PYTHONPATH = env.PYTHONPATH ? `${root}${path.delimiter}${env.PYTHONPATH}` : root;
 env.PYTHONDONTWRITEBYTECODE = "1";
 const forwarded = process.argv.slice(2);
+
+if (
+  forwarded[0] === "shell" &&
+  process.stdin.isTTY &&
+  process.stdout.isTTY &&
+  env.CONTINUUM_PYTHON_SHELL !== "1"
+) {
+  const shellArgs = forwarded.slice(1);
+  const bun = spawnSync("bun", ["run", path.join(root, "src", "cli.tsx"), ...shellArgs], {
+    stdio: "inherit",
+    env,
+    cwd: process.cwd(),
+  });
+  if (!bun.error || bun.error.code !== "ENOENT") {
+    process.exit(bun.status === null ? 1 : bun.status);
+  }
+  console.error("Continuum Ink shell requires Bun. Falling back to the Python shell.");
+}
+
 const candidates = process.platform === "win32"
   ? [["py", ["-3", "-m", "continuum"]], ["python", ["-m", "continuum"]]]
   : [["python3", ["-m", "continuum"]], ["python", ["-m", "continuum"]]];

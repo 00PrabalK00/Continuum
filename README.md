@@ -14,6 +14,7 @@ Local shared memory and controlled workflows for AI coding agents.
 - Optional: Ollama for local embeddings and summaries.
 - Optional: an OpenRouter API key for hosted model calls.
 - Optional: an Obsidian vault folder for readable mirrored handoffs.
+- Optional: Bun for the TypeScript/React/Ink interactive shell front end.
 
 ## Install
 
@@ -84,6 +85,11 @@ details.
 continuum shell
 continuum shell --agent gemini --color always --animation on
 ```
+
+When launched from the npm entry point in an interactive terminal, `continuum
+shell` prefers the Bun-powered TypeScript/React/Ink shell. If Bun is not
+installed, Continuum falls back to the Python shell with the same slash-command
+semantics.
 
 The shell uses slash commands and automatically scopes actions to the current
 project:

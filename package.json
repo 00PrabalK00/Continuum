@@ -7,8 +7,24 @@
     "continuum": "bin/continuum.js",
     "continuum-agent-memory": "bin/continuum.js"
   },
+  "scripts": {
+    "shell": "bun run src/cli.tsx",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "ink": "^5.2.1",
+    "react": "^18.3.1",
+    "yoga-layout": "^3.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^18.3.23",
+    "typescript": "^5.8.3"
+  },
   "files": [
     "bin/",
+    "src/",
+    "tsconfig.json",
     ".dockerignore",
     "CONTRIBUTORS.md",
     "continuum/*.py",
@@ -34,6 +50,7 @@
     "obsidian"
   ],
   "engines": {
+    "bun": ">=1.1.0",
     "node": ">=18"
   }
 }
