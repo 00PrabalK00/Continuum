@@ -75,6 +75,20 @@ query memory themselves:
 continuum setup
 ```
 
+Optionally configure a third, dedicated LLM that writes the handoffs for you.
+When set, bare `continuum save` summarizes the recorded session into a task
+and next step, and the context-limit checkpoint writes a real continuation
+handoff instead of a placeholder. Any failure falls back to recorded state:
+
+```bash
+continuum handoff-llm set ollama llama3.1:8b          # local
+continuum handoff-llm set openrouter openai/gpt-4o-mini  # hosted
+continuum handoff-llm show
+continuum handoff-llm off
+
+continuum save        # no text: the handoff LLM writes the summary
+```
+
 Everything below this point is the advanced surface: daemons, teams,
 worktrees, governance and evidence. None of it is required for the daily
 save/go/copy loop.

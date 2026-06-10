@@ -51,6 +51,7 @@ from .context_intel import (
     score_intel,
 )
 from .evidence import EvidenceError, gather_evidence, render_packet
+from .handoff_llm import generate_handoff, read_handoff_model, write_handoff_model
 from .flight import FlightRecordError, gather_flight_record, render_flight_record
 from .external_sessions import ExternalSessionError, ExternalSessionManager
 from .terminal import TerminalUnavailable, run_terminal_process, terminal_backend
@@ -138,29 +139,100 @@ def format_age(timestamp: float) -> str:
     return f"{days} day{'s' if days != 1 else ''} ago"
 
 
+def checkpoint_handoff(store: MemoryStore, session_tail: list[str], fallback: tuple[str, str]) -> None:
+    """Write the context-limit checkpoint handoff, via the handoff LLM when configured."""
+    generated = None
+    try:
+        generated = generate_handoff(store, session_tail=session_tail)
+    except ProviderError as error:
+        print(f"\n[Handoff LLM unavailable ({error}); wrote a plain checkpoint handoff.]", file=sys.stderr)
+    store.write_handoff(*(generated or fallback))
+
+
 def quick_save(args: argparse.Namespace) -> int:
     store = store_from(args)
     if not store.config_file.exists():
         store.initialize(DEFAULT_CONTEXT_LIMIT, DEFAULT_THRESHOLD)
     text = " ".join(args.text).strip()
+    generated_by = None
     if text:
         task, _, next_step = text.partition("|")
         task = task.strip()
         next_step = next_step.strip() or None
     else:
-        latest = store.latest_task()
-        if latest is None:
-            raise SystemExit(
-                'Nothing to save yet. Describe what you were doing, for example:\n'
-                '  continuum save "fixed the auth bug | next: test the retry logic"'
-            )
-        task, next_step = latest
+        generated = None
+        try:
+            generated = generate_handoff(store)
+        except ProviderError as error:
+            print(f"Handoff LLM unavailable ({error}); using recorded state instead.", file=sys.stderr)
+        if generated:
+            task, next_step = generated
+            selected = read_handoff_model(store)
+            generated_by = selected["provider"] + (f":{selected['model']}" if selected["model"] else "")
+        else:
+            latest = store.latest_task()
+            if latest is None:
+                raise SystemExit(
+                    'Nothing to save yet. Describe what you were doing, for example:\n'
+                    '  continuum save "fixed the auth bug | next: test the retry logic"'
+                )
+            task, next_step = latest
     store.event("handoff", {"task": task, "next_step": next_step})
     store.write_handoff(task, next_step)
     print(f"Saved: {task}")
     if next_step:
         print(f"Next:  {next_step}")
+    if generated_by:
+        print(f"Summarized by handoff LLM: {generated_by}")
     print("Resume anywhere with `continuum go claude|codex|gemini` or `continuum copy`.")
+    return 0
+
+
+def handoff_llm_set(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    if not store.config_file.exists():
+        store.initialize(DEFAULT_CONTEXT_LIMIT, DEFAULT_THRESHOLD)
+    manager = ProviderManager(store.state_dir, store)
+    providers = manager.read().get("providers", {})
+    if args.provider not in providers:
+        model_names = sorted(name for name, entry in providers.items() if entry.get("kind") == "model")
+        raise SystemExit(f"Unknown provider: {args.provider}. Choose from: {', '.join(model_names)}.")
+    if providers[args.provider].get("kind") != "model":
+        raise SystemExit(
+            f"{args.provider} is an agent CLI. The handoff LLM must be a model provider (ollama, openrouter)."
+        )
+    if not providers[args.provider].get("enabled"):
+        manager.add(args.provider)
+        print(f"Enabled provider: {args.provider}")
+    write_handoff_model(store, args.provider, args.model)
+    label = args.provider + (f" ({args.model})" if args.model else " (provider default model)")
+    print(f"Handoff LLM set: {label}")
+    print("Used for: bare `continuum save` summaries and context-limit checkpoint handoffs.")
+    print(f"Verify connectivity: continuum providers test {args.provider}")
+    return 0
+
+
+def handoff_llm_show(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    selected = read_handoff_model(store) if store.config_file.exists() else None
+    if not selected:
+        print("No handoff LLM configured.")
+        print("Set one: continuum handoff-llm set ollama")
+        print("     or: continuum handoff-llm set openrouter openai/gpt-4o-mini")
+        return 0
+    print(f"Provider: {selected['provider']}")
+    print(f"Model: {selected['model'] or '(provider default)'}")
+    print("Used for: bare `continuum save` summaries and context-limit checkpoint handoffs.")
+    return 0
+
+
+def handoff_llm_off(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    if not store.config_file.exists() or read_handoff_model(store) is None:
+        print("No handoff LLM configured.")
+        return 0
+    write_handoff_model(store, None)
+    print("Handoff LLM disabled. Saves and checkpoints use recorded state only.")
     return 0
 
 
@@ -502,9 +574,13 @@ def run_agent(args: argparse.Namespace, resumed: bool = False, injected_context:
                 if not triggered and tokens >= int(limit * threshold):
                     triggered = True
                     store.event("context_checkpoint", {"summary": f"Estimated tokens: {tokens}"})
-                    store.write_handoff(
-                        f"`{args.agent}` reached its estimated context checkpoint.",
-                        f"Resume with another agent and inspect `{log_file.name}` if needed.",
+                    checkpoint_handoff(
+                        store,
+                        tail,
+                        (
+                            f"`{args.agent}` reached its estimated context checkpoint.",
+                            f"Resume with another agent and inspect `{log_file.name}` if needed.",
+                        ),
                     )
             returncode = process.wait()
     except OSError as error:
@@ -585,9 +661,13 @@ def run_interactive_agent(args: argparse.Namespace, resumed: bool = False, injec
                 if not triggered and tokens >= int(limit * threshold):
                     triggered = True
                     store.event("context_checkpoint", {"summary": f"Estimated tokens: {tokens}"})
-                    store.write_handoff(
-                        f"`{args.agent}` reached its estimated context checkpoint in an interactive terminal.",
-                        f"Resume with another agent and inspect `{log_file.name}` if needed.",
+                    checkpoint_handoff(
+                        store,
+                        tail,
+                        (
+                            f"`{args.agent}` reached its estimated context checkpoint in an interactive terminal.",
+                            f"Resume with another agent and inspect `{log_file.name}` if needed.",
+                        ),
                     )
 
             returncode = run_terminal_process(
@@ -1749,6 +1829,26 @@ def parser() -> argparse.ArgumentParser:
         "setup", parents=[common], help="One-time setup: initialize memory and connect installed agent CLIs."
     )
     setup_cmd.set_defaults(func=setup)
+
+    handoff_llm_cmd = commands.add_parser(
+        "handoff-llm",
+        help="Configure a dedicated third LLM that writes handoffs and checkpoint context.",
+    )
+    handoff_llm_commands = handoff_llm_cmd.add_subparsers(dest="handoff_llm_command", required=True)
+    set_handoff_llm = handoff_llm_commands.add_parser(
+        "set", parents=[common], help="Select the model provider (and optional model) that writes handoffs."
+    )
+    set_handoff_llm.add_argument("provider", help="Model provider name, for example ollama or openrouter.")
+    set_handoff_llm.add_argument("model", nargs="?", help="Optional model ID; defaults to the provider's chat model.")
+    set_handoff_llm.set_defaults(func=handoff_llm_set)
+    show_handoff_llm = handoff_llm_commands.add_parser(
+        "show", parents=[common], help="Show the configured handoff LLM."
+    )
+    show_handoff_llm.set_defaults(func=handoff_llm_show)
+    off_handoff_llm = handoff_llm_commands.add_parser(
+        "off", parents=[common], help="Disable the handoff LLM and return to recorded-state handoffs."
+    )
+    off_handoff_llm.set_defaults(func=handoff_llm_off)
 
     init = commands.add_parser("init", parents=[common], help="Initialize memory for a project.")
     init.add_argument("--context-limit", type=int, default=DEFAULT_CONTEXT_LIMIT)

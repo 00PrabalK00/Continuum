@@ -17,6 +17,13 @@ commands with zero required setup.
   config snippets for Codex and Gemini.
 - Bare `continuum` now prints a compact status card (task, next step, save
   age, daily commands) instead of an argparse error.
+- Added `continuum handoff-llm set|show|off` — configure a dedicated third LLM
+  (ollama or openrouter, any model) used only for context creation and
+  handoff writing. When set, bare `continuum save` summarizes recorded session
+  material into a task/next-step pair, and the context-limit checkpoint writes
+  a real continuation handoff from the session tail instead of a synthetic
+  placeholder. Provider failures always fall back to recorded-state handoffs;
+  hosted calls go through the existing secret-scrubbing egress path.
 
 ## 0.9.0 - Alpha
 
