@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.10.0 - Alpha
+
+Simple front door release: the daily handoff loop is now three flag-free
+commands with zero required setup.
+
+- Added `continuum save "<task> | <next step>"` — plain-words handoff with no
+  flags; auto-initializes the project on first use.
+- Added `continuum go <agent> [mode]` — open claude/codex/gemini with the saved
+  context already injected; interactive by default in a TTY, auto-creates a
+  starter handoff when none exists.
+- Added `continuum copy [mode]` — print the paste-ready context and copy it to
+  the system clipboard for use with any AI chat, including web UIs.
+- Added `continuum setup` — one-shot initialization that detects installed
+  agent CLIs, registers the Continuum MCP server with Claude Code and prints
+  config snippets for Codex and Gemini.
+- Bare `continuum` now prints a compact status card (task, next step, save
+  age, daily commands) instead of an argparse error.
+
 ## 0.9.0 - Alpha
 
 Trust UI release: surface the evidence Continuum already records and add

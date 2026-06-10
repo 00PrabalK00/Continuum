@@ -88,6 +88,194 @@ def handoff(args: argparse.Namespace) -> int:
     return 0
 
 
+def copy_to_clipboard(text: str) -> bool:
+    """Copy text to the system clipboard. Returns False when no clipboard tool exists."""
+    import tempfile
+
+    if os.name == "nt":
+        handle = tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".txt", delete=False)
+        try:
+            handle.write(text)
+            handle.close()
+            command = [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                f"Get-Content -Raw -Encoding UTF8 '{handle.name}' | Set-Clipboard",
+            ]
+            completed = subprocess.run(command, capture_output=True, check=False)
+            return completed.returncode == 0
+        except OSError:
+            return False
+        finally:
+            Path(handle.name).unlink(missing_ok=True)
+    if sys.platform == "darwin":
+        command = ["pbcopy"]
+    else:
+        for candidate in (["wl-copy"], ["xclip", "-selection", "clipboard"], ["xsel", "--clipboard", "--input"]):
+            if shutil.which(candidate[0]):
+                command = candidate
+                break
+        else:
+            return False
+    try:
+        completed = subprocess.run(command, input=text.encode("utf-8"), capture_output=True, check=False)
+    except OSError:
+        return False
+    return completed.returncode == 0
+
+
+def format_age(timestamp: float) -> str:
+    seconds = max(0, time.time() - timestamp)
+    if seconds < 90:
+        return "just now"
+    if seconds < 3600:
+        return f"{int(seconds // 60)} minutes ago"
+    if seconds < 86400:
+        hours = int(seconds // 3600)
+        return f"{hours} hour{'s' if hours != 1 else ''} ago"
+    days = int(seconds // 86400)
+    return f"{days} day{'s' if days != 1 else ''} ago"
+
+
+def quick_save(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    if not store.config_file.exists():
+        store.initialize(DEFAULT_CONTEXT_LIMIT, DEFAULT_THRESHOLD)
+    text = " ".join(args.text).strip()
+    if text:
+        task, _, next_step = text.partition("|")
+        task = task.strip()
+        next_step = next_step.strip() or None
+    else:
+        latest = store.latest_task()
+        if latest is None:
+            raise SystemExit(
+                'Nothing to save yet. Describe what you were doing, for example:\n'
+                '  continuum save "fixed the auth bug | next: test the retry logic"'
+            )
+        task, next_step = latest
+    store.event("handoff", {"task": task, "next_step": next_step})
+    store.write_handoff(task, next_step)
+    print(f"Saved: {task}")
+    if next_step:
+        print(f"Next:  {next_step}")
+    print("Resume anywhere with `continuum go claude|codex|gemini` or `continuum copy`.")
+    return 0
+
+
+def copy_context(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    if not store.config_file.exists():
+        store.initialize(DEFAULT_CONTEXT_LIMIT, DEFAULT_THRESHOLD)
+    context = store.resume_context(args.mode).strip()
+    if not context:
+        raise SystemExit('No saved context yet. Run `continuum save "<what you were doing>"` first.')
+    prompt = (
+        "Context from my previous AI session, recorded by Continuum. "
+        "Read it and continue helping me from exactly where it left off.\n\n" + context
+    )
+    print(prompt)
+    if copy_to_clipboard(prompt):
+        print(
+            f"\n[Copied to clipboard - about {estimate_tokens(prompt)} tokens. Paste it into any AI chat.]",
+            file=sys.stderr,
+        )
+    else:
+        print("\n[No clipboard tool found — copy the text above manually.]", file=sys.stderr)
+    return 0
+
+
+def go(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    if not store.config_file.exists():
+        store.initialize(DEFAULT_CONTEXT_LIMIT, DEFAULT_THRESHOLD)
+    if not (store.state_dir / "latest_handoff.md").exists():
+        task = store.latest_task() or (
+            "New session in this project; no prior context recorded.",
+            "Continue from the user's next message.",
+        )
+        store.write_handoff(*task)
+    args.agent_args = []
+    args.context_limit = None
+    args.threshold = None
+    args.interactive = (
+        not args.no_interactive and sys.stdin.isatty() and sys.stdout.isatty()
+    )
+    return resume(args)
+
+
+def setup(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    store.initialize(DEFAULT_CONTEXT_LIMIT, DEFAULT_THRESHOLD)
+    ProviderManager(store.state_dir).ensure_config()
+    print(f"Initialized: {store.project}")
+    found = [agent for agent in AGENTS if shutil.which(agent)]
+    missing = [agent for agent in AGENTS if agent not in found]
+    print(f"Agent CLIs found: {', '.join(found) or 'none'}")
+    if missing:
+        print(f"Not installed: {', '.join(missing)}")
+    if "claude" in found:
+        try:
+            command = agent_command(
+                "claude",
+                ["mcp", "add", "continuum", "--", "continuum", "mcp", "serve", "--project", str(store.project)],
+            )
+            completed = subprocess.run(command, capture_output=True, text=True, cwd=str(store.project), check=False)
+            output = (completed.stdout + completed.stderr).strip()
+            if completed.returncode == 0:
+                print("Claude Code: Continuum MCP server registered.")
+            elif "already exists" in output.lower():
+                print("Claude Code: Continuum MCP server already registered.")
+            else:
+                print(f"Claude Code MCP registration skipped: {output.splitlines()[0] if output else 'unknown error'}")
+        except (OSError, FileNotFoundError) as error:
+            print(f"Claude Code MCP registration skipped: {error}")
+    if "codex" in found:
+        print("Codex: add to .codex/config.toml ->")
+        print('  [mcpServers.continuum]')
+        print('  command = "continuum"')
+        print(f'  args = ["mcp", "serve", "--project", "{store.project.as_posix()}"]')
+    if "gemini" in found:
+        print("Gemini: add to .gemini/settings.json ->")
+        print(
+            '  { "mcpServers": { "continuum": { "command": "continuum",'
+            f' "args": ["mcp", "serve", "--project", "{store.project.as_posix()}"] }} }} }}'
+        )
+    print()
+    print("Daily commands:")
+    print('  continuum save "did X | next do Y"   save context before switching AI')
+    print("  continuum go claude|codex|gemini      open the next AI with that context")
+    print("  continuum copy                        copy context for any AI chat (web included)")
+    return 0
+
+
+def quick_status(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    project_name = store.project.name or str(store.project)
+    if not store.config_file.exists():
+        print(f"Continuum - {project_name} (not initialized)")
+        print('Start: continuum save "<what you are working on>"   (auto-initializes)')
+        print("Agent CLI setup: continuum setup")
+        return 0
+    print(f"Continuum - {project_name}")
+    latest = store.latest_task()
+    if latest:
+        print(f"Task: {latest[0]}")
+        if latest[1]:
+            print(f"Next: {latest[1]}")
+    else:
+        print("Task: nothing recorded yet")
+    handoff_file = store.state_dir / "latest_handoff.md"
+    if handoff_file.exists():
+        print(f"Saved: {format_age(handoff_file.stat().st_mtime)}")
+    print()
+    print('Save context:   continuum save "did X | next do Y"')
+    print("Hand to agent:  continuum go claude|codex|gemini")
+    print("Paste anywhere: continuum copy")
+    return 0
+
+
 def daemon(args: argparse.Namespace) -> int:
     store = store_from(args)
     if not store.config_file.exists():
@@ -1528,10 +1716,39 @@ def audit_export_cmd(args: argparse.Namespace) -> int:
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="continuum", description="Local context continuity for AI coding agents.")
     root.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    commands = root.add_subparsers(dest="command", required=True)
+    commands = root.add_subparsers(dest="command", required=False)
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--project", default=".", help="Project working directory (default: current directory).")
     common.add_argument("--vault", help="Obsidian folder used for compact mirrored notes.")
+
+    save_cmd = commands.add_parser(
+        "save",
+        parents=[common],
+        help='Save context in plain words before switching AI: continuum save "did X | next do Y".',
+    )
+    save_cmd.add_argument("text", nargs="*", help="What you were doing. Use ' | ' to separate the next step.")
+    save_cmd.set_defaults(func=quick_save)
+
+    go_cmd = commands.add_parser(
+        "go", parents=[common], help="Open an agent with your saved context already injected."
+    )
+    go_cmd.add_argument("agent", choices=AGENTS)
+    go_cmd.add_argument("mode", nargs="?", choices=["compact", "normal", "deep"], default="compact")
+    go_cmd.add_argument(
+        "--no-interactive", action="store_true", help="Run the agent in print mode instead of a live terminal."
+    )
+    go_cmd.set_defaults(func=go)
+
+    copy_cmd = commands.add_parser(
+        "copy", parents=[common], help="Print saved context and copy it to the clipboard for any AI chat."
+    )
+    copy_cmd.add_argument("mode", nargs="?", choices=["compact", "normal", "deep"], default="compact")
+    copy_cmd.set_defaults(func=copy_context)
+
+    setup_cmd = commands.add_parser(
+        "setup", parents=[common], help="One-time setup: initialize memory and connect installed agent CLIs."
+    )
+    setup_cmd.set_defaults(func=setup)
 
     init = commands.add_parser("init", parents=[common], help="Initialize memory for a project.")
     init.add_argument("--context-limit", type=int, default=DEFAULT_CONTEXT_LIMIT)
@@ -2052,6 +2269,8 @@ def parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
+    if getattr(args, "func", None) is None:
+        return quick_status(argparse.Namespace(project=".", vault=None))
     if getattr(args, "threshold", None) is not None and not 0 < args.threshold <= 1:
         raise SystemExit("--threshold must be greater than 0 and at most 1")
     if getattr(args, "context_limit", None) is not None and args.context_limit <= 0:

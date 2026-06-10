@@ -35,6 +35,50 @@ npx -y github:00PrabalK00/Continuum up
 npx -y github:00PrabalK00/Continuum ui --open
 ```
 
+## Daily Use: Three Commands
+
+Continuum's day-to-day surface is three commands. No setup is required —
+the first `save` initializes the project automatically.
+
+Before you stop or switch AI, describe where you are in plain words
+(everything after `|` becomes the next step):
+
+```bash
+continuum save "fixed the auth bug | next: test the retry logic"
+```
+
+Then continue with whichever AI you want:
+
+```bash
+# Open an agent CLI with the saved context already injected:
+continuum go claude
+continuum go codex
+continuum go gemini
+
+# Or paste the context into ANY AI chat (ChatGPT, claude.ai, anything):
+continuum copy
+```
+
+Running bare `continuum` shows where you left off:
+
+```text
+Continuum - my-project
+Task: fixed the auth bug
+Next: test the retry logic
+Saved: 2 hours ago
+```
+
+One-time optional step — connect installed agent CLIs over MCP so they can
+query memory themselves:
+
+```bash
+continuum setup
+```
+
+Everything below this point is the advanced surface: daemons, teams,
+worktrees, governance and evidence. None of it is required for the daily
+save/go/copy loop.
+
 ## Initialize A Project
 
 Run these commands inside the project whose context you want Continuum to
