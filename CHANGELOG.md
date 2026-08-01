@@ -39,6 +39,10 @@ longer tied to a fixed set of agent CLIs.
   stalled agent hung the caller indefinitely instead of timing out.
 - An agent that stops on a sign-in or approval question is now reported as
   such, with the question it asked, instead of as an unexplained timeout.
+- `continuum setup` now registers the Continuum MCP server for Codex and
+  Gemini as well as Claude Code, writing project-local `.codex/config.toml`
+  and `.gemini/settings.json` entries instead of printing snippets to paste.
+  Existing settings are merged, not replaced, and re-running is a no-op.
 - Fixed silent context truncation on Windows. Agents that resolve to a
   `.cmd`/`.bat` shim run through cmd.exe, which ends the command line at the
   first newline, so the injected handoff arrived as its first line only —

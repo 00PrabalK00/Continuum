@@ -93,6 +93,44 @@ continuum agent list
 `claude`, `codex` and `gemini` ship with tuned specs, so they need no
 registration.
 
+### Agents that talk to each other
+
+Once the agents are connected over MCP, an agent can reach any other installed
+agent through Continuum. Ask Claude Code to consult Codex and it calls
+Continuum's `ask_agent` tool; Codex answers with the same bounded project
+context and its reply comes back inline. The same works in the other
+direction, and for any CLI in the registry:
+
+```text
+You:    Use Continuum to ask Codex whether the retry fix is safe to ship.
+Claude: (calls list_agents, then ask_agent with agent="codex")
+        Codex says the fix is safe but wants a regression test first.
+```
+
+The MCP tools are `list_agents` (who can be reached) and `ask_agent` (put a
+request to one of them). Both halves of every exchange are recorded in shared
+memory, so either agent can read the conversation later. From a terminal the
+same thing is:
+
+```bash
+continuum ask codex "is the retry fix safe to ship?"
+```
+
+Use it to delegate work, get a second opinion, or keep going in another agent
+when one is near its context limit. Each call is a single non-interactive run
+with a timeout; an agent that is not signed in, or that stops to ask a
+question, is reported with the question it asked rather than hanging.
+
+Connecting the agents is one command, run once per project:
+
+```bash
+continuum setup
+```
+
+That registers Continuum's MCP server with Claude Code, and writes
+project-local `.codex/config.toml` and `.gemini/settings.json` entries so those
+agents can reach it too.
+
 ### Optional extras
 
 Save an explicit handoff yourself at any point — useful mid-session, or after

@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 from . import __version__
 from .core import (
@@ -368,6 +369,49 @@ def go(args: argparse.Namespace) -> int:
     return resume(args)
 
 
+def mcp_server_args(store: MemoryStore) -> list[str]:
+    # Forward slashes so the same path is valid in TOML, JSON and on Windows,
+    # where a backslash would otherwise read as a TOML escape sequence.
+    return ["mcp", "serve", "--project", store.project.as_posix()]
+
+
+def register_codex_mcp(store: MemoryStore) -> str:
+    """Add the Continuum MCP server to this project's Codex config.
+
+    Written project-local so an agent reaching other agents is scoped to the
+    project it was set up in, and the user's global Codex config is untouched.
+    """
+    path = store.project / ".codex" / "config.toml"
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    if "[mcp_servers.continuum]" in existing or "[mcpServers.continuum]" in existing:
+        return "Codex: Continuum MCP server already registered."
+    arguments = ", ".join(f'"{item}"' for item in mcp_server_args(store))
+    block = f'\n[mcp_servers.continuum]\ncommand = "continuum"\nargs = [{arguments}]\n'
+    write_text(path, (existing.rstrip("\n") + "\n" if existing.strip() else "") + block.lstrip("\n"))
+    return f"Codex: Continuum MCP server registered in {path}."
+
+
+def register_gemini_mcp(store: MemoryStore) -> str:
+    """Add the Continuum MCP server to this project's Gemini settings."""
+    path = store.project / ".gemini" / "settings.json"
+    settings: dict[str, Any] = {}
+    if path.exists():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            settings = loaded if isinstance(loaded, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return f"Gemini MCP registration skipped: {path} is not readable JSON."
+    servers = settings.get("mcpServers")
+    if not isinstance(servers, dict):
+        servers = {}
+    if "continuum" in servers:
+        return "Gemini: Continuum MCP server already registered."
+    servers["continuum"] = {"command": "continuum", "args": mcp_server_args(store)}
+    settings["mcpServers"] = servers
+    write_text(path, json.dumps(settings, indent=2) + "\n")
+    return f"Gemini: Continuum MCP server registered in {path}."
+
+
 def setup(args: argparse.Namespace) -> int:
     store = store_from(args)
     store.initialize(DEFAULT_CONTEXT_LIMIT, DEFAULT_THRESHOLD)
@@ -396,16 +440,9 @@ def setup(args: argparse.Namespace) -> int:
         except (OSError, FileNotFoundError) as error:
             print(f"Claude Code MCP registration skipped: {error}")
     if "codex" in found:
-        print("Codex: add to .codex/config.toml ->")
-        print('  [mcpServers.continuum]')
-        print('  command = "continuum"')
-        print(f'  args = ["mcp", "serve", "--project", "{store.project.as_posix()}"]')
+        print(register_codex_mcp(store))
     if "gemini" in found:
-        print("Gemini: add to .gemini/settings.json ->")
-        print(
-            '  { "mcpServers": { "continuum": { "command": "continuum",'
-            f' "args": ["mcp", "serve", "--project", "{store.project.as_posix()}"] }} }} }}'
-        )
+        print(register_gemini_mcp(store))
     print()
     print("Daily commands:")
     print("  continuum go            open the next AI with your context; saves on exit")

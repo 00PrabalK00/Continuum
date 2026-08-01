@@ -189,6 +189,71 @@ class DelegationMcpTest(unittest.TestCase):
                     call_tool(store, "ask_agent", {"agent": "nosuch", "request": "hi"})
 
 
+class McpRegistrationTest(unittest.TestCase):
+    def store(self, temporary: str) -> MemoryStore:
+        store = MemoryStore(Path(temporary) / "repo")
+        store.initialize(100000, 0.8)
+        return store
+
+    def test_codex_config_is_valid_toml_and_idempotent(self):
+        import tomllib
+
+        from continuum.cli import register_codex_mcp
+
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(temporary)
+            first = register_codex_mcp(store)
+            path = store.project / ".codex" / "config.toml"
+            with path.open("rb") as handle:
+                parsed = tomllib.load(handle)
+            self.assertEqual(parsed["mcp_servers"]["continuum"]["command"], "continuum")
+            self.assertIn("registered in", first)
+            self.assertIn("already registered", register_codex_mcp(store))
+
+    def test_codex_config_keeps_existing_settings(self):
+        import tomllib
+
+        from continuum.cli import register_codex_mcp
+
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(temporary)
+            path = store.project / ".codex" / "config.toml"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('model = "gpt-5"\n', encoding="utf-8")
+            register_codex_mcp(store)
+            with path.open("rb") as handle:
+                parsed = tomllib.load(handle)
+            self.assertEqual(parsed["model"], "gpt-5")
+            self.assertIn("continuum", parsed["mcp_servers"])
+
+    def test_gemini_settings_are_merged_not_replaced(self):
+        import json as json_module
+
+        from continuum.cli import register_gemini_mcp
+
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(temporary)
+            path = store.project / ".gemini" / "settings.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json_module.dumps({"theme": "dark"}), encoding="utf-8")
+            register_gemini_mcp(store)
+            parsed = json_module.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(parsed["theme"], "dark")
+            self.assertEqual(parsed["mcpServers"]["continuum"]["command"], "continuum")
+            self.assertIn("already registered", register_gemini_mcp(store))
+
+    def test_unreadable_gemini_settings_are_reported_not_overwritten(self):
+        from continuum.cli import register_gemini_mcp
+
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(temporary)
+            path = store.project / ".gemini" / "settings.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("{not json", encoding="utf-8")
+            self.assertIn("skipped", register_gemini_mcp(store))
+            self.assertEqual(path.read_text(encoding="utf-8"), "{not json")
+
+
 class AskCommandTest(unittest.TestCase):
     def test_ask_prints_the_reply(self):
         with tempfile.TemporaryDirectory() as temporary:
