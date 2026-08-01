@@ -1,3 +1,4 @@
+import os
 import tempfile
 import time
 import sys
@@ -515,6 +516,97 @@ class CliTest(unittest.TestCase):
                 self.assertEqual(main(["providers", "list", "--project", str(project)]), 0)
             self.assertIn("ollama", output.getvalue())
             self.assertIn("enabled", output.getvalue())
+
+
+class SimpleFrontDoorTest(unittest.TestCase):
+    def test_save_splits_task_and_next_step(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            output = StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(
+                    main(["save", "--project", str(project), "fixed auth bug | test the retry logic"]), 0
+                )
+            text = output.getvalue()
+            self.assertIn("Saved: fixed auth bug", text)
+            self.assertIn("test the retry logic", text)
+            handoff = (project / ".continuum" / "latest_handoff.md").read_text(encoding="utf-8")
+            self.assertIn("fixed auth bug", handoff)
+            self.assertIn("test the retry logic", handoff)
+
+    def test_save_auto_initializes_uninitialized_project(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            with redirect_stdout(StringIO()):
+                self.assertEqual(main(["save", "--project", str(project), "first note"]), 0)
+            self.assertTrue((project / ".continuum" / "config.json").exists())
+
+    def test_save_without_text_or_history_explains_usage(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            with redirect_stdout(StringIO()):
+                with self.assertRaises(SystemExit) as raised:
+                    main(["save", "--project", str(project)])
+            self.assertIn("continuum save", str(raised.exception))
+
+    def test_copy_prints_paste_ready_context(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            output = StringIO()
+            with redirect_stdout(output), redirect_stderr(output):
+                self.assertEqual(main(["save", "--project", str(project), "renamed the API client"]), 0)
+                with patch("continuum.cli.copy_to_clipboard", return_value=False):
+                    self.assertEqual(main(["copy", "--project", str(project)]), 0)
+            text = output.getvalue()
+            self.assertIn("previous AI session", text)
+            self.assertIn("renamed the API client", text)
+            self.assertIn("copy the text above manually", text)
+
+    def test_bare_invocation_prints_status_card(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            project.mkdir()
+            previous = Path.cwd()
+            output = StringIO()
+            try:
+                os.chdir(project)
+                with redirect_stdout(output):
+                    self.assertEqual(main([]), 0)
+            finally:
+                os.chdir(previous)
+            text = output.getvalue()
+            self.assertIn("not initialized", text)
+            self.assertIn("continuum save", text)
+
+    def test_bare_invocation_shows_saved_task(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            project.mkdir()
+            previous = Path.cwd()
+            output = StringIO()
+            try:
+                os.chdir(project)
+                with redirect_stdout(output):
+                    self.assertEqual(main(["save", "fix login timeout | rerun login test"]), 0)
+                    self.assertEqual(main([]), 0)
+            finally:
+                os.chdir(previous)
+            text = output.getvalue()
+            self.assertIn("Task: fix login timeout", text)
+            self.assertIn("Next: rerun login test", text)
+            self.assertIn("continuum go", text)
+
+    def test_setup_initializes_and_reports_missing_clis(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            output = StringIO()
+            with redirect_stdout(output):
+                with patch("continuum.cli.shutil.which", return_value=None):
+                    self.assertEqual(main(["setup", "--project", str(project)]), 0)
+            text = output.getvalue()
+            self.assertIn("Agent CLIs found: none", text)
+            self.assertIn("Daily commands", text)
+            self.assertTrue((project / ".continuum" / "config.json").exists())
 
 
 if __name__ == "__main__":

@@ -1,5 +1,24 @@
 # Quickstart
 
+## The Daily Loop
+
+Three commands cover everyday use. The first `save` auto-initializes the
+project; nothing else is required.
+
+```bash
+# Before stopping or switching AI — plain words, "|" separates the next step:
+continuum save "fixed the auth bug | next: test the retry logic"
+
+# Continue in an agent CLI with the context injected:
+continuum go claude        # or codex, gemini
+
+# Or paste into any AI chat (web ChatGPT, claude.ai, ...):
+continuum copy
+```
+
+Bare `continuum` prints where you left off. Optional one-time
+`continuum setup` connects installed agent CLIs over MCP.
+
 ## Target npm Flow
 
 After npm publishing is complete, the main user path is:
