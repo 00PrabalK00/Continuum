@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.11.0 - Alpha
+
+Agent-agnostic release: the daily loop is one command, and Continuum is no
+longer tied to a fixed set of agent CLIs.
+
+- Wrapped sessions now write a continuation handoff when the agent exits, so
+  the manual save is no longer part of the loop. A context-limit checkpoint
+  earlier in the same session is kept rather than summarized twice; a non-zero
+  exit is recorded as the next action.
+- `continuum go` no longer requires an agent name. With none given it picks an
+  installed agent other than the one that just ran — the common case after a
+  context limit — and prints which it chose and why.
+- Added `continuum/agents.py`, a launch registry. Any command-line agent on
+  PATH works with `continuum go <name>`; unrecognized names are adopted with
+  the trailing-argument convention and remembered in `.continuum/agents.json`.
+  `claude`, `codex` and `gemini` keep their tuned specs.
+- Added `continuum agent add|list|remove` for CLIs that take their prompt
+  another way: `--inject arg|subcommand|flag|stdin`.
+- Interactive sessions fall back to a generic terminal adapter for agents
+  without a tuned one, instead of refusing to launch.
+- Removed the fixed agent choice lists from `go`, `run`, `resume`, `chat`,
+  `task assign`, `task claim`, `worktree resume` and `shell`.
+- `continuum --help` now lists only the daily commands. Every other command
+  still runs unchanged and is listed by the new `continuum help --all`.
+
 ## 0.10.0 - Alpha
 
 Simple front door release: the daily handoff loop is now three flag-free

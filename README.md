@@ -35,27 +35,29 @@ npx -y github:00PrabalK00/Continuum up
 npx -y github:00PrabalK00/Continuum ui --open
 ```
 
-## Daily Use: Three Commands
+## Daily Use: One Command
 
-Continuum's day-to-day surface is three commands. No setup is required —
-the first `save` initializes the project automatically.
-
-Before you stop or switch AI, describe where you are in plain words
-(everything after `|` becomes the next step):
+Work through Continuum and it records the handoff for you. There is no setup
+step and nothing to type before you stop:
 
 ```bash
-continuum save "fixed the auth bug | next: test the retry logic"
+continuum go
 ```
 
-Then continue with whichever AI you want:
+That opens an agent with your previous context already injected, records the
+session, and writes a fresh continuation handoff when the agent exits. When
+the agent runs out of context, run it again — Continuum hands the same work to
+the next available agent:
 
 ```bash
-# Open an agent CLI with the saved context already injected:
-continuum go claude
-continuum go codex
-continuum go gemini
+continuum go            # picks an agent you did not just use
+continuum go codex      # or name one explicitly
+```
 
-# Or paste the context into ANY AI chat (ChatGPT, claude.ai, anything):
+For AI that has no CLI — web ChatGPT, claude.ai, anything else — copy the same
+context to your clipboard instead:
+
+```bash
 continuum copy
 ```
 
@@ -68,30 +70,59 @@ Next: test the retry logic
 Saved: 2 hours ago
 ```
 
-One-time optional step — connect installed agent CLIs over MCP so they can
-query memory themselves:
+### Any agent CLI
+
+`continuum go <name>` works with any command-line agent on your PATH, not a
+fixed list. An unrecognized name is adopted on first use with the convention
+most CLIs accept — the context arrives as the final argument:
+
+```bash
+continuum go hermes
+continuum go opencode
+```
+
+Agents that take their prompt another way can be described once:
+
+```bash
+continuum agent add myagent --inject flag --flag --task        # myagent --task "<context>"
+continuum agent add otheragent --inject subcommand --subcommand run  # otheragent run "<context>"
+continuum agent add piped --inject stdin                       # context written to stdin
+continuum agent list
+```
+
+`claude`, `codex` and `gemini` ship with tuned specs, so they need no
+registration.
+
+### Optional extras
+
+Save an explicit handoff yourself at any point — useful mid-session, or after
+work done outside a Continuum-launched agent:
+
+```bash
+continuum save "fixed the auth bug | next: test the retry logic"
+```
+
+Connect installed agent CLIs over MCP so they can query memory themselves:
 
 ```bash
 continuum setup
 ```
 
-Optionally configure a third, dedicated LLM that writes the handoffs for you.
-When set, bare `continuum save` summarizes the recorded session into a task
-and next step, and the context-limit checkpoint writes a real continuation
-handoff instead of a placeholder. Any failure falls back to recorded state:
+Configure a third, dedicated LLM to write the handoffs. When set, session
+exits, context-limit checkpoints and bare `continuum save` all get a real
+written summary instead of recorded state. Any failure falls back:
 
 ```bash
 continuum handoff-llm set ollama llama3.1:8b          # local
 continuum handoff-llm set openrouter openai/gpt-4o-mini  # hosted
 continuum handoff-llm show
 continuum handoff-llm off
-
-continuum save        # no text: the handoff LLM writes the summary
 ```
 
 Everything below this point is the advanced surface: daemons, teams,
 worktrees, governance and evidence. None of it is required for the daily
-save/go/copy loop.
+loop, and none of it appears in `continuum --help` — list it with
+`continuum help --all`.
 
 ## Initialize A Project
 

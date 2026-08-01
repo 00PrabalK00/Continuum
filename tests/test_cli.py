@@ -9,7 +9,18 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-from continuum.cli import down, injected_resume_args, main, pid_is_running, suppress_agent_display_line, up
+from continuum import agents
+from continuum.cli import (
+    down,
+    finalize_handoff,
+    injected_resume_args,
+    main,
+    parser,
+    pid_is_running,
+    suppress_agent_display_line,
+    up,
+)
+from continuum.core import MemoryStore
 from continuum.providers import ProviderError, ProviderManager
 
 
@@ -576,7 +587,7 @@ class SimpleFrontDoorTest(unittest.TestCase):
                 os.chdir(previous)
             text = output.getvalue()
             self.assertIn("not initialized", text)
-            self.assertIn("continuum save", text)
+            self.assertIn("continuum go", text)
 
     def test_bare_invocation_shows_saved_task(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -607,6 +618,139 @@ class SimpleFrontDoorTest(unittest.TestCase):
             self.assertIn("Agent CLIs found: none", text)
             self.assertIn("Daily commands", text)
             self.assertTrue((project / ".continuum" / "config.json").exists())
+
+
+class AgentRegistryTest(unittest.TestCase):
+    def store(self, project: Path) -> MemoryStore:
+        store = MemoryStore(project)
+        store.initialize(100000, 0.8)
+        return store
+
+    def test_unknown_cli_on_path_is_adopted_with_the_default_convention(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(Path(temporary) / "repo")
+            with patch("continuum.agents.shutil.which", return_value="/usr/bin/hermes"):
+                spec = agents.resolve(store, "hermes")
+            self.assertEqual(spec["command"], "hermes")
+            self.assertEqual(spec["inject"], "arg")
+            self.assertIn("hermes", agents.read_custom(store))
+            self.assertEqual(agents.launch_args(spec, [], "CONTEXT")[-1], "CONTEXT")
+
+    def test_unknown_cli_not_on_path_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(Path(temporary) / "repo")
+            with patch("continuum.agents.shutil.which", return_value=None):
+                with self.assertRaises(agents.AgentError):
+                    agents.resolve(store, "nope")
+
+    def test_registered_spec_controls_prompt_injection(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(Path(temporary) / "repo")
+            agents.write_agent(store, "opencode", {"inject": "flag", "flag": "--task"})
+            spec = agents.read_agents(store)["opencode"]
+            self.assertEqual(agents.launch_args(spec, [], "CONTEXT")[:2], ["--task", "CONTEXT"])
+            agents.write_agent(store, "runner", {"inject": "stdin"})
+            piped = agents.read_agents(store)["runner"]
+            self.assertEqual(agents.launch_args(piped, ["--quiet"], "CONTEXT"), ["--quiet"])
+            self.assertEqual(agents.stdin_prompt(piped, "CONTEXT"), "CONTEXT")
+
+    def test_builtin_conventions_are_preserved(self):
+        prompt = "CONTEXT"
+        self.assertEqual(injected_resume_args("codex", [], prompt), ["exec", prompt])
+        self.assertEqual(injected_resume_args("gemini", [], prompt)[:2], ["--prompt", prompt])
+        self.assertEqual(injected_resume_args("claude", ["--model", "opus"], prompt)[-1], prompt)
+
+    def test_pick_agent_prefers_an_agent_other_than_the_last_one(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(Path(temporary) / "repo")
+            with patch("continuum.agents.shutil.which", return_value="/usr/bin/agent"):
+                self.assertEqual(agents.pick_agent(store, exclude="claude"), "codex")
+                self.assertEqual(agents.pick_agent(store, exclude=None), "claude")
+
+    def test_pick_agent_without_any_installed_cli_explains_the_fix(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(Path(temporary) / "repo")
+            with patch("continuum.agents.shutil.which", return_value=None):
+                with self.assertRaises(agents.AgentError) as caught:
+                    agents.pick_agent(store)
+            self.assertIn("continuum copy", str(caught.exception))
+
+    def test_agent_add_and_list_report_the_registered_spec(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            output = StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(
+                    main(["agent", "add", "hermes", "--inject", "subcommand", "--subcommand", "run",
+                          "--project", str(project)]),
+                    0,
+                )
+                self.assertEqual(main(["agent", "list", "--project", str(project)]), 0)
+            text = output.getvalue()
+            self.assertIn("Registered agent: hermes", text)
+            self.assertIn("hermes: subcommand run (project", text)
+
+
+class ExitHandoffTest(unittest.TestCase):
+    def test_session_exit_writes_a_handoff_without_a_manual_save(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            output = StringIO()
+            with (
+                patch("continuum.cli.agent_command", return_value=[sys.executable, "-c", "print('worked')"]),
+                redirect_stdout(output),
+            ):
+                self.assertEqual(main(["run", "--project", str(project), "claude"]), 0)
+            text = output.getvalue()
+            self.assertIn("Saved:", text)
+            self.assertIn("continuum go", text)
+            self.assertTrue((project / ".continuum" / "latest_handoff.md").exists())
+
+    def test_nonzero_exit_is_recorded_as_the_next_action(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            output = StringIO()
+            with (
+                patch("continuum.cli.agent_command", return_value=[sys.executable, "-c", "raise SystemExit(3)"]),
+                redirect_stdout(output),
+            ):
+                self.assertEqual(main(["run", "--project", str(project), "claude"]), 3)
+            handoff = (project / ".continuum" / "latest_handoff.md").read_text(encoding="utf-8")
+            self.assertIn("exited with code 3", handoff)
+
+    def test_checkpoint_handoff_is_not_overwritten_on_exit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            store = MemoryStore(project)
+            store.initialize(100000, 0.8)
+            store.write_handoff("checkpoint task", "checkpoint next")
+            with redirect_stdout(StringIO()):
+                finalize_handoff(store, "claude", "session-1", ["output\n"], 0, True)
+            handoff = (project / ".continuum" / "latest_handoff.md").read_text(encoding="utf-8")
+            self.assertIn("checkpoint task", handoff)
+
+
+class HelpSurfaceTest(unittest.TestCase):
+    def test_top_level_help_lists_only_the_daily_commands(self):
+        text = parser().format_help()
+        self.assertIn("{go,copy,save,setup,agent,help,ui}", text)
+        self.assertNotIn("flight-record", text)
+        self.assertNotIn("pr-packet", text)
+        self.assertIn("continuum help --all", text)
+
+    def test_help_all_still_lists_the_advanced_surface(self):
+        output = StringIO()
+        with redirect_stdout(output):
+            self.assertEqual(main(["help", "--all"]), 0)
+        text = output.getvalue()
+        self.assertIn("worktree", text)
+        self.assertIn("flight-record", text)
+
+    def test_hidden_commands_still_run(self):
+        output = StringIO()
+        with redirect_stdout(output):
+            self.assertEqual(main(["adapters", "list"]), 0)
+        self.assertIn("claude", output.getvalue())
 
 
 if __name__ == "__main__":

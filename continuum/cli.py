@@ -56,8 +56,26 @@ from .flight import FlightRecordError, gather_flight_record, render_flight_recor
 from .external_sessions import ExternalSessionError, ExternalSessionManager
 from .terminal import TerminalUnavailable, run_terminal_process, terminal_backend
 from .adapters import terminal_adapter, terminal_adapter_capabilities
+from .agents import (
+    BUILTIN_AGENTS,
+    INJECT_MODES,
+    AgentError,
+    default_spec as default_agent_spec,
+    installed_agents,
+    launch_args as agent_launch_args,
+    normalize_spec as normalize_agent_spec,
+    pick_agent,
+    read_agents,
+    read_custom as read_custom_agents,
+    resolve as resolve_agent,
+    stdin_prompt as agent_stdin_prompt,
+    suppresses as agent_suppresses,
+    write_agent,
+)
 
-AGENTS = ("claude", "gemini", "codex")
+# Agents with tuned launch specs. Any other CLI on PATH is adopted on first
+# use, so this is a starting point rather than the supported set.
+AGENTS = tuple(BUILTIN_AGENTS)
 
 
 def store_from(args: argparse.Namespace) -> MemoryStore:
@@ -149,6 +167,47 @@ def checkpoint_handoff(store: MemoryStore, session_tail: list[str], fallback: tu
     store.write_handoff(*(generated or fallback))
 
 
+def finalize_handoff(
+    store: MemoryStore,
+    agent: str,
+    session_id: str,
+    session_tail: list[str],
+    returncode: int,
+    checkpoint_triggered: bool,
+) -> None:
+    """Record the continuation handoff when a wrapped agent session ends.
+
+    This is what removes the manual save from the daily loop: every session
+    that Continuum launches leaves a usable handoff behind on its own. A
+    checkpoint fired late in the same session already summarized the same
+    material, so it is kept rather than paid for twice.
+    """
+    if checkpoint_triggered:
+        return
+    fallback = store.latest_task() or (
+        f"Wrapped `{agent}` session `{session_id}` completed.",
+        "Review the output and record the next action.",
+    )
+    if returncode != 0:
+        fallback = (
+            f"`{agent}` session `{session_id}` exited with code {returncode}.",
+            "Inspect the recorded session log, then continue or rerun the agent.",
+        )
+    generated = None
+    if session_tail:
+        try:
+            generated = generate_handoff(store, session_tail=session_tail)
+        except ProviderError as error:
+            print(f"[Handoff LLM unavailable ({error}); kept the recorded handoff.]", file=sys.stderr)
+    task = generated or fallback
+    store.event("handoff", {"task": task[0], "next_step": task[1], "session": session_id})
+    store.write_handoff(*task)
+    print(f"Saved: {task[0]}")
+    if task[1]:
+        print(f"Next:  {task[1]}")
+    print("Continue anywhere with `continuum go`.")
+
+
 def quick_save(args: argparse.Namespace) -> int:
     store = store_from(args)
     if not store.config_file.exists():
@@ -184,7 +243,7 @@ def quick_save(args: argparse.Namespace) -> int:
         print(f"Next:  {next_step}")
     if generated_by:
         print(f"Summarized by handoff LLM: {generated_by}")
-    print("Resume anywhere with `continuum go claude|codex|gemini` or `continuum copy`.")
+    print("Resume anywhere with `continuum go` or `continuum copy`.")
     return 0
 
 
@@ -258,10 +317,41 @@ def copy_context(args: argparse.Namespace) -> int:
     return 0
 
 
+def last_session(store: MemoryStore) -> dict:
+    path = store.state_dir / "token_usage.json"
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def choose_agent(store: MemoryStore) -> tuple[str, str]:
+    """Pick the agent for a bare `continuum go` and explain the choice."""
+    previous = last_session(store)
+    last_agent = str(previous.get("agent") or "") or None
+    installed = installed_agents(store)
+    if last_agent and previous.get("checkpoint_triggered"):
+        reason = f"{last_agent} reached its context checkpoint last session"
+    elif last_agent and len(installed) > 1:
+        reason = f"{last_agent} ran last session"
+    else:
+        reason = "only installed agent" if len(installed) == 1 else "first installed agent"
+    return pick_agent(store, exclude=last_agent), reason
+
+
 def go(args: argparse.Namespace) -> int:
     store = store_from(args)
     if not store.config_file.exists():
         store.initialize(DEFAULT_CONTEXT_LIMIT, DEFAULT_THRESHOLD)
+    if not args.agent:
+        args.agent, reason = choose_agent(store)
+        print(f"Handing off to {args.agent} ({reason}).")
+    # Resolve before any context is rendered so an unusable agent name fails
+    # immediately instead of after printing a handoff nothing will receive.
+    resolve_agent(store, args.agent)
     if not (store.state_dir / "latest_handoff.md").exists():
         task = store.latest_task() or (
             "New session in this project; no prior context recorded.",
@@ -282,11 +372,12 @@ def setup(args: argparse.Namespace) -> int:
     store.initialize(DEFAULT_CONTEXT_LIMIT, DEFAULT_THRESHOLD)
     ProviderManager(store.state_dir).ensure_config()
     print(f"Initialized: {store.project}")
-    found = [agent for agent in AGENTS if shutil.which(agent)]
-    missing = [agent for agent in AGENTS if agent not in found]
+    found = installed_agents(store)
+    missing = [agent for agent in read_agents(store) if agent not in found]
     print(f"Agent CLIs found: {', '.join(found) or 'none'}")
     if missing:
-        print(f"Not installed: {', '.join(missing)}")
+        print(f"Not installed: {', '.join(sorted(missing))}")
+    print("Any other agent CLI works too: `continuum go <name>` adopts it on first use.")
     if "claude" in found:
         try:
             command = agent_command(
@@ -316,9 +407,9 @@ def setup(args: argparse.Namespace) -> int:
         )
     print()
     print("Daily commands:")
-    print('  continuum save "did X | next do Y"   save context before switching AI')
-    print("  continuum go claude|codex|gemini      open the next AI with that context")
-    print("  continuum copy                        copy context for any AI chat (web included)")
+    print("  continuum go            open the next AI with your context; saves on exit")
+    print("  continuum copy          copy context for any AI chat (web included)")
+    print("  continuum               show where you left off")
     return 0
 
 
@@ -327,8 +418,8 @@ def quick_status(args: argparse.Namespace) -> int:
     project_name = store.project.name or str(store.project)
     if not store.config_file.exists():
         print(f"Continuum - {project_name} (not initialized)")
-        print('Start: continuum save "<what you are working on>"   (auto-initializes)')
-        print("Agent CLI setup: continuum setup")
+        print("Start: continuum go        (auto-initializes and opens an agent)")
+        print("Paste into a web chat instead: continuum copy")
         return 0
     print(f"Continuum - {project_name}")
     latest = store.latest_task()
@@ -342,9 +433,65 @@ def quick_status(args: argparse.Namespace) -> int:
     if handoff_file.exists():
         print(f"Saved: {format_age(handoff_file.stat().st_mtime)}")
     print()
-    print('Save context:   continuum save "did X | next do Y"')
-    print("Hand to agent:  continuum go claude|codex|gemini")
+    print("Continue:       continuum go            (saves again on exit)")
     print("Paste anywhere: continuum copy")
+    return 0
+
+
+def agent_list(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    known = read_agents(store)
+    custom = read_custom_agents(store)
+    for name in sorted(known):
+        spec = known[name]
+        state = "installed" if shutil.which(str(spec["command"])) else "not installed"
+        origin = "project" if name in custom else "built-in"
+        detail = spec.get("flag") or spec.get("subcommand") or ""
+        print(f"{name}: {spec['inject']}{' ' + str(detail) if detail else ''} ({origin}, {state})")
+    print()
+    print("Any command on PATH also works without registration: continuum go <name>")
+    return 0
+
+
+def agent_add(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    if not store.config_file.exists():
+        store.initialize(DEFAULT_CONTEXT_LIMIT, DEFAULT_THRESHOLD)
+    spec = {
+        "command": args.command or args.name,
+        "inject": args.inject,
+        "flag": args.flag,
+        "subcommand": args.subcommand,
+    }
+    write_agent(store, args.name, spec)
+    print(f"Registered agent: {args.name} ({args.inject})")
+    if shutil.which(str(spec["command"])) is None:
+        print(f"Note: {spec['command']} is not on PATH yet.")
+    print(f"Use it with: continuum go {args.name}")
+    return 0
+
+
+def agent_remove(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    if args.name not in read_custom_agents(store):
+        raise SystemExit(f"No project-local agent spec named {args.name}.")
+    write_agent(store, args.name, None)
+    print(f"Removed agent spec: {args.name}")
+    return 0
+
+
+def show_help(args: argparse.Namespace) -> int:
+    if getattr(args, "all", False):
+        parser(collapse=False).print_help()
+        return 0
+    print("Continuum - local context continuity for AI coding agents.")
+    print()
+    print("  continuum          show where you left off")
+    print("  continuum go       open the next AI with that context; saves again on exit")
+    print("  continuum copy     copy the context for any AI chat, web included")
+    print()
+    print("`continuum go <name>` works with any agent CLI on PATH.")
+    print("Every other command: continuum help --all")
     return 0
 
 
@@ -473,52 +620,30 @@ def logs(args: argparse.Namespace) -> int:
     return 0
 
 
-def agent_command(agent: str, passthrough: list[str]) -> list[str]:
-    executable = shutil.which(agent)
+def agent_spec(value: str | dict) -> dict:
+    """Accept either a resolved launch spec or a bare agent name."""
+    if isinstance(value, dict):
+        return value
+    return normalize_agent_spec(value, BUILTIN_AGENTS.get(value, default_agent_spec(value)))
+
+
+def agent_command(agent: str | dict, passthrough: list[str]) -> list[str]:
+    spec = agent_spec(agent)
+    name = str(spec["command"])
+    executable = shutil.which(name)
     if not executable:
-        raise FileNotFoundError(f"Agent CLI is not installed or not in PATH: {agent}")
+        raise FileNotFoundError(f"Agent CLI is not installed or not in PATH: {name}")
     if executable.lower().endswith(".ps1"):
         return ["powershell", "-ExecutionPolicy", "Bypass", "-File", executable, *passthrough]
     return [executable, *passthrough]
 
 
-def injected_resume_args(agent: str, passthrough: list[str], prompt: str) -> list[str]:
-    if agent == "gemini":
-        merged_args = list(passthrough)
-        if not any(value in {"--approval-mode"} or value.startswith("--approval-mode=") for value in merged_args):
-            merged_args.extend(["--approval-mode", "plan"])
-        if not any(value in {"-o", "--output-format"} or value.startswith("--output-format=") for value in merged_args):
-            merged_args.extend(["--output-format", "text"])
-        for index, value in enumerate(merged_args):
-            if value in {"-p", "--prompt", "-i", "--prompt-interactive"}:
-                if index + 1 >= len(merged_args):
-                    raise ValueError(f"Missing value after Gemini prompt option: {value}")
-                merged = list(merged_args)
-                merged[index + 1] = prompt + "\n\nAdditional user instruction:\n" + merged_args[index + 1]
-                return merged
-            if value.startswith("--prompt=") or value.startswith("--prompt-interactive="):
-                option, requested = value.split("=", 1)
-                merged = list(merged_args)
-                merged[index] = option + "=" + prompt + "\n\nAdditional user instruction:\n" + requested
-                return merged
-        return ["--prompt", prompt, *merged_args]
-    if agent == "codex":
-        if passthrough and passthrough[0] == "exec":
-            return [*passthrough, prompt]
-        return ["exec", *passthrough, prompt]
-    return [*passthrough, prompt]
+def injected_resume_args(agent: str | dict, passthrough: list[str], prompt: str) -> list[str]:
+    return agent_launch_args(agent_spec(agent), passthrough, prompt)
 
 
-def suppress_agent_display_line(agent: str, line: str) -> bool:
-    if agent != "gemini":
-        return False
-    stripped = line.strip()
-    return (
-        stripped.startswith("Warning: 256-color support not detected.")
-        or stripped.startswith("Ripgrep is not available.")
-        or ("[DEP0190] DeprecationWarning" in stripped)
-        or stripped.startswith("(Use `node --trace-deprecation")
-    )
+def suppress_agent_display_line(agent: str | dict, line: str) -> bool:
+    return agent_suppresses(agent_spec(agent), line)
 
 
 def run_agent(args: argparse.Namespace, resumed: bool = False, injected_context: str | None = None) -> int:
@@ -533,11 +658,14 @@ def run_agent(args: argparse.Namespace, resumed: bool = False, injected_context:
     threshold = args.threshold if args.threshold is not None else float(
         config.get("checkpoint_threshold", DEFAULT_THRESHOLD)
     )
+    spec = resolve_agent(store, args.agent)
     agent_args = list(args.agent_args)
     if agent_args and agent_args[0] == "--":
         agent_args.pop(0)
+    stdin_text = None
     if injected_context:
-        agent_args = injected_resume_args(args.agent, agent_args, injected_context)
+        agent_args = agent_launch_args(spec, agent_args, injected_context)
+        stdin_text = agent_stdin_prompt(spec, injected_context)
     session_id = dt.datetime.now().strftime("%Y%m%d-%H%M%S") + f"-{args.agent}"
     log_file = store.state_dir / "session_logs" / f"{session_id}.log"
     action = "resume" if resumed else "run"
@@ -550,21 +678,24 @@ def run_agent(args: argparse.Namespace, resumed: bool = False, injected_context:
     triggered = False
     tail: list[str] = []
     try:
-        command = agent_command(args.agent, agent_args)
+        command = agent_command(spec, agent_args)
         cwd = Path(getattr(args, "cwd", store.project))
         with log_file.open("w", encoding="utf-8") as output:
             process = subprocess.Popen(
                 command,
                 cwd=str(cwd),
-                stdin=None,
+                stdin=subprocess.PIPE if stdin_text is not None else None,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
                 errors="replace",
             )
+            if stdin_text is not None and process.stdin is not None:
+                process.stdin.write(stdin_text)
+                process.stdin.close()
             assert process.stdout is not None
             for line in process.stdout:
-                if not suppress_agent_display_line(args.agent, line):
+                if not agent_suppresses(spec, line):
                     print(line, end="")
                 output.write(line)
                 output.flush()
@@ -598,11 +729,7 @@ def run_agent(args: argparse.Namespace, resumed: bool = False, injected_context:
     write_text(store.state_dir / "token_usage.json", json.dumps(usage, indent=2) + "\n")
     store.event("agent_exit", {"summary": f"{args.agent} exited with {returncode}", "returncode": returncode})
     store.write_session_note(session_id, args.agent, returncode, tokens, tail)
-    task = store.latest_task() or (
-        f"Wrapped `{args.agent}` session `{session_id}` completed.",
-        "Review the output and record the next action.",
-    )
-    store.write_handoff(*task)
+    finalize_handoff(store, args.agent, session_id, tail, returncode, triggered)
     return returncode
 
 
@@ -618,6 +745,7 @@ def run_interactive_agent(args: argparse.Namespace, resumed: bool = False, injec
     threshold = args.threshold if args.threshold is not None else float(
         config.get("checkpoint_threshold", DEFAULT_THRESHOLD)
     )
+    spec = resolve_agent(store, args.agent)
     agent_args = list(args.agent_args)
     if agent_args and agent_args[0] == "--":
         agent_args.pop(0)
@@ -646,7 +774,7 @@ def run_interactive_agent(args: argparse.Namespace, resumed: bool = False, injec
     triggered = False
     tail: list[str] = []
     try:
-        command = agent_command(args.agent, agent_args)
+        command = agent_command(spec, agent_args)
         with log_file.open("w", encoding="utf-8") as output:
             def capture(chunk: str) -> None:
                 nonlocal tokens, triggered, tail
@@ -703,11 +831,7 @@ def run_interactive_agent(args: argparse.Namespace, resumed: bool = False, injec
         {"summary": f"{args.agent} interactive terminal exited with {returncode}", "returncode": returncode},
     )
     store.write_session_note(session_id, args.agent, returncode, tokens, tail)
-    task = store.latest_task() or (
-        f"Interactive `{args.agent}` session `{session_id}` completed.",
-        "Review the terminal output and record the next action.",
-    )
-    store.write_handoff(*task)
+    finalize_handoff(store, args.agent, session_id, tail, returncode, triggered)
     return returncode
 
 
@@ -1793,8 +1917,27 @@ def audit_export_cmd(args: argparse.Namespace) -> int:
     return 0
 
 
-def parser() -> argparse.ArgumentParser:
-    root = argparse.ArgumentParser(prog="continuum", description="Local context continuity for AI coding agents.")
+# Commands listed by `continuum --help`. Everything else still runs exactly as
+# before; it is reached through `continuum help --all`, the Control Center or
+# the MCP server rather than through the top-level help.
+DAILY_COMMANDS = ("go", "copy", "save", "setup", "agent", "help", "ui")
+
+
+def collapse_help(commands: argparse._SubParsersAction) -> None:
+    """Keep the daily loop visible in `--help` without removing any command."""
+    kept = [action for action in commands._choices_actions if action.dest in DAILY_COMMANDS]
+    order = {name: index for index, name in enumerate(DAILY_COMMANDS)}
+    commands._choices_actions = sorted(kept, key=lambda action: order.get(action.dest, len(order)))
+    commands.metavar = "{" + ",".join(action.dest for action in commands._choices_actions) + "}"
+
+
+def parser(collapse: bool = True) -> argparse.ArgumentParser:
+    root = argparse.ArgumentParser(
+        prog="continuum",
+        description="Local context continuity for AI coding agents.",
+        epilog="Advanced commands (teams, worktrees, governance, evidence): continuum help --all",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     root.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     commands = root.add_subparsers(dest="command", required=False)
     common = argparse.ArgumentParser(add_help=False)
@@ -1810,9 +1953,15 @@ def parser() -> argparse.ArgumentParser:
     save_cmd.set_defaults(func=quick_save)
 
     go_cmd = commands.add_parser(
-        "go", parents=[common], help="Open an agent with your saved context already injected."
+        "go",
+        parents=[common],
+        help="Open an agent with your saved context injected; saves a new handoff when it exits.",
     )
-    go_cmd.add_argument("agent", choices=AGENTS)
+    go_cmd.add_argument(
+        "agent",
+        nargs="?",
+        help="Agent CLI to open. Any command on PATH works. Omit to continue with the next available agent.",
+    )
     go_cmd.add_argument("mode", nargs="?", choices=["compact", "normal", "deep"], default="compact")
     go_cmd.add_argument(
         "--no-interactive", action="store_true", help="Run the agent in print mode instead of a live terminal."
@@ -1829,6 +1978,32 @@ def parser() -> argparse.ArgumentParser:
         "setup", parents=[common], help="One-time setup: initialize memory and connect installed agent CLIs."
     )
     setup_cmd.set_defaults(func=setup)
+
+    help_cmd = commands.add_parser("help", help="Show the daily commands, or every command with --all.")
+    help_cmd.add_argument("--all", action="store_true", help="List every command, including the advanced surface.")
+    help_cmd.set_defaults(func=show_help)
+
+    agent_cmd = commands.add_parser(
+        "agent", help="Describe how Continuum launches agent CLIs it does not already know."
+    )
+    agent_commands = agent_cmd.add_subparsers(dest="agent_command", required=True)
+    list_agents = agent_commands.add_parser("list", parents=[common], help="List known agent CLIs and their specs.")
+    list_agents.set_defaults(func=agent_list)
+    add_agent = agent_commands.add_parser("add", parents=[common], help="Register or re-describe an agent CLI.")
+    add_agent.add_argument("name", help="Name used with `continuum go <name>`.")
+    add_agent.add_argument("--command", help="Executable to run, when it differs from the name.")
+    add_agent.add_argument(
+        "--inject",
+        choices=INJECT_MODES,
+        default="arg",
+        help="How the bounded handoff reaches the agent (default: arg).",
+    )
+    add_agent.add_argument("--flag", help="Prompt flag, for --inject flag (for example --prompt).")
+    add_agent.add_argument("--subcommand", help="Prompt subcommand, for --inject subcommand (for example exec).")
+    add_agent.set_defaults(func=agent_add)
+    remove_agent = agent_commands.add_parser("remove", parents=[common], help="Forget a project-local agent spec.")
+    remove_agent.add_argument("name")
+    remove_agent.set_defaults(func=agent_remove)
 
     handoff_llm_cmd = commands.add_parser(
         "handoff-llm",
@@ -1876,7 +2051,7 @@ def parser() -> argparse.ArgumentParser:
 
     for name, handler in (("run", run), ("resume", resume)):
         command = commands.add_parser(name, parents=[common], help=f"{name.title()} an agent through Continuum.")
-        command.add_argument("agent", choices=AGENTS)
+        command.add_argument("agent", help="Agent CLI to run. Any command on PATH works.")
         if name == "resume":
             command.add_argument("mode", choices=["compact", "normal", "deep"], nargs="?", default="compact")
         command.add_argument("--context-limit", type=int)
@@ -1892,7 +2067,7 @@ def parser() -> argparse.ArgumentParser:
         command.set_defaults(func=handler)
 
     chat_command = commands.add_parser("chat", parents=[common], help="Send one message to an agent with bounded Continuum context.")
-    chat_command.add_argument("agent", choices=AGENTS)
+    chat_command.add_argument("agent", help="Agent CLI to run. Any command on PATH works.")
     chat_command.add_argument("mode_or_message", nargs="?")
     chat_command.add_argument("--interactive", "--pty", dest="interactive", action="store_true")
     chat_command.add_argument("message", nargs="*")
@@ -1953,12 +2128,12 @@ def parser() -> argparse.ArgumentParser:
     show_task.set_defaults(func=task_show)
     assign = task_commands.add_parser("assign", parents=[common], help="Assign a worker agent.")
     assign.add_argument("task_id")
-    assign.add_argument("agent", choices=AGENTS)
+    assign.add_argument("agent")
     assign.add_argument("--branch")
     assign.set_defaults(func=task_assign)
     claim = task_commands.add_parser("claim", parents=[common], help="Exclusively claim files for a task.")
     claim.add_argument("task_id")
-    claim.add_argument("agent", choices=AGENTS)
+    claim.add_argument("agent")
     claim.add_argument("files", nargs="+")
     claim.add_argument("--expires-at")
     claim.set_defaults(func=task_claim)
@@ -2169,7 +2344,7 @@ def parser() -> argparse.ArgumentParser:
     diff_worktree.set_defaults(func=worktree_diff)
     resume_worktree = worktree_commands.add_parser("resume", parents=[common], help="Resume an agent inside a task worktree with shared Continuum context.")
     resume_worktree.add_argument("task_id")
-    resume_worktree.add_argument("agent", choices=AGENTS)
+    resume_worktree.add_argument("agent")
     resume_worktree.add_argument("mode", choices=["compact", "normal", "deep"], nargs="?", default="compact")
     resume_worktree.add_argument("--interactive", "--pty", dest="interactive", action="store_true")
     resume_worktree.set_defaults(func=worktree_resume)
@@ -2360,10 +2535,12 @@ def parser() -> argparse.ArgumentParser:
         )
     )
     shell = commands.add_parser("shell", parents=[common], help="Open the interactive slash-command console.")
-    shell.add_argument("--agent", choices=AGENTS, default="codex")
+    shell.add_argument("--agent", default="codex")
     shell.add_argument("--color", choices=["auto", "always", "never"], default="auto")
     shell.add_argument("--animation", choices=["auto", "on", "off"], default="auto")
     shell.set_defaults(func=interactive_shell)
+    if collapse:
+        collapse_help(commands)
     return root
 
 

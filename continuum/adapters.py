@@ -197,11 +197,27 @@ ADAPTERS: dict[str, type[AgentTerminalAdapter]] = {
 }
 
 
+class GenericTerminalAdapter(AgentTerminalAdapter):
+    """Fallback profile for any agent CLI without a tuned adapter.
+
+    Passes the bounded context as a trailing positional argument, which is the
+    convention most command-line agents accept, and observes the shared ready,
+    approval and error patterns.
+    """
+
+    display_name = "Agent CLI"
+    context_strategy = "initial positional prompt"
+
+    def __init__(self, project: Path, agent: str = "agent") -> None:
+        super().__init__(project)
+        self.agent = agent
+
+
 def terminal_adapter(agent: str, project: Path) -> AgentTerminalAdapter:
-    try:
-        return ADAPTERS[agent](project)
-    except KeyError as error:
-        raise ValueError(f"Unsupported interactive terminal adapter: {agent}") from error
+    factory = ADAPTERS.get(agent)
+    if factory is not None:
+        return factory(project)
+    return GenericTerminalAdapter(project, agent)
 
 
 def terminal_adapter_capabilities(project: Path) -> list[dict[str, str]]:
