@@ -14,9 +14,11 @@ from continuum.cli import (
     down,
     finalize_handoff,
     injected_resume_args,
+    launches_through_shell,
     main,
     parser,
     pid_is_running,
+    shell_safe_context,
     suppress_agent_display_line,
     up,
 )
@@ -728,6 +730,72 @@ class ExitHandoffTest(unittest.TestCase):
                 finalize_handoff(store, "claude", "session-1", ["output\n"], 0, True)
             handoff = (project / ".continuum" / "latest_handoff.md").read_text(encoding="utf-8")
             self.assertIn("checkpoint task", handoff)
+
+
+class ShellShimContextTest(unittest.TestCase):
+    """Windows runs .cmd/.bat shims through cmd.exe, which ends the command
+    line at the first newline. A multi-line handoff passed as an argument
+    arrives truncated to its first line, so those agents get a pointer to the
+    handoff file instead."""
+
+    def test_shim_executables_are_detected(self):
+        with patch("continuum.cli.shutil.which", return_value=r"C:\npm\gemini.CMD"):
+            self.assertTrue(launches_through_shell({"command": "gemini"}))
+        with patch("continuum.cli.shutil.which", return_value=r"C:\bin\codex.EXE"):
+            self.assertFalse(launches_through_shell({"command": "codex"}))
+
+    def test_shim_context_is_one_line_and_names_the_handoff(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            store = MemoryStore(project)
+            store.initialize(100000, 0.8)
+            store.write_handoff("fix checkout", "add a regression test")
+            context = shell_safe_context(store, "line one\nline two\nline three")
+            self.assertNotIn("\n", context)
+            self.assertIn("latest_handoff.md", context)
+
+    def test_multiline_context_is_not_passed_as_an_argument_to_a_shim(self):
+        captured: dict[str, list[str]] = {}
+
+        def record(agent, passthrough):
+            captured["args"] = list(passthrough)
+            return [sys.executable, "-c", "pass"]
+
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            store = MemoryStore(project)
+            store.initialize(100000, 0.8)
+            store.write_handoff("fix checkout", "add a regression test")
+            output = StringIO()
+            with (
+                patch("continuum.cli.agent_command", side_effect=record),
+                patch("continuum.cli.launches_through_shell", return_value=True),
+                redirect_stdout(output),
+            ):
+                self.assertEqual(main(["resume", "--project", str(project), "claude"]), 0)
+            self.assertTrue(captured["args"], "the agent received no arguments")
+            for value in captured["args"]:
+                self.assertNotIn("\n", value)
+            self.assertIn("shell shim", output.getvalue())
+
+    def test_stdin_agents_keep_the_full_context_through_a_shim(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            store = MemoryStore(project)
+            store.initialize(100000, 0.8)
+            agents.write_agent(store, "piped", {"inject": "stdin"})
+            output = StringIO()
+            script = "import sys; data = sys.stdin.read(); print('CHARS', len(data))"
+            with (
+                patch("continuum.cli.agent_command", return_value=[sys.executable, "-c", script]),
+                patch("continuum.cli.launches_through_shell", return_value=True),
+                redirect_stdout(output),
+            ):
+                self.assertEqual(main(["resume", "--project", str(project), "piped"]), 0)
+            text = output.getvalue()
+            self.assertNotIn("shell shim", text)
+            chars = int(text.split("CHARS")[1].split()[0])
+            self.assertGreater(chars, 200)
 
 
 class HelpSurfaceTest(unittest.TestCase):

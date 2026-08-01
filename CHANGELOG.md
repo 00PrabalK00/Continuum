@@ -24,6 +24,13 @@ longer tied to a fixed set of agent CLIs.
   `task assign`, `task claim`, `worktree resume` and `shell`.
 - `continuum --help` now lists only the daily commands. Every other command
   still runs unchanged and is listed by the new `continuum help --all`.
+- Fixed silent context truncation on Windows. Agents that resolve to a
+  `.cmd`/`.bat` shim run through cmd.exe, which ends the command line at the
+  first newline, so the injected handoff arrived as its first line only —
+  `gemini` from npm is such a shim. Those agents now receive a one-line
+  pointer to `.continuum/latest_handoff.md` and read the full handoff
+  themselves. Agents using stdin injection are unaffected and keep the
+  inline context.
 
 ## 0.10.0 - Alpha
 

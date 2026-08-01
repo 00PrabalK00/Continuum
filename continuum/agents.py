@@ -164,8 +164,9 @@ def pick_agent(store: "MemoryStore", exclude: str | None = None) -> str:
     installed = installed_agents(store)
     if not installed:
         raise AgentError(
-            "No agent CLI found on PATH. Install one (claude, codex, gemini, or any other) "
-            "and rerun, or use `continuum copy` to paste the context into a web chat."
+            "No known agent CLI is installed. Name yours once with `continuum go <name>` and "
+            "Continuum will remember it; any command on PATH works. Without a CLI, use "
+            "`continuum copy` to paste the context into a web chat."
         )
     for name in installed:
         if name != exclude:

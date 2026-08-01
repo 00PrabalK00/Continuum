@@ -627,6 +627,32 @@ def agent_spec(value: str | dict) -> dict:
     return normalize_agent_spec(value, BUILTIN_AGENTS.get(value, default_agent_spec(value)))
 
 
+def launches_through_shell(spec: dict) -> bool:
+    """True when the agent resolves to a `.cmd`/`.bat` shim.
+
+    Windows runs those through cmd.exe, which ends the command line at the
+    first newline: a multi-line prompt passed as an argument arrives truncated
+    to its first line. npm-installed agent CLIs are shims of exactly this kind.
+    """
+    executable = shutil.which(str(spec.get("command"))) or ""
+    return executable.lower().endswith((".cmd", ".bat"))
+
+
+def shell_safe_context(store: MemoryStore, prompt: str) -> str:
+    """Rewrite a multi-line prompt as a one-line pointer to the handoff file.
+
+    Passing the handoff itself would lose everything after its first line. The
+    same content is already on disk, so the agent is pointed at it and reads it
+    with its own tools instead.
+    """
+    handoff = (store.state_dir / "latest_handoff.md").resolve()
+    return (
+        f"Read the bounded Continuum handoff at {handoff} before acting, then continue the "
+        "existing task from its current state. Use targeted Continuum MCP/context retrieval "
+        "when more detail is needed; do not restart work or request all history."
+    )
+
+
 def agent_command(agent: str | dict, passthrough: list[str]) -> list[str]:
     spec = agent_spec(agent)
     name = str(spec["command"])
@@ -664,6 +690,9 @@ def run_agent(args: argparse.Namespace, resumed: bool = False, injected_context:
         agent_args.pop(0)
     stdin_text = None
     if injected_context:
+        if "\n" in injected_context and spec["inject"] != "stdin" and launches_through_shell(spec):
+            injected_context = shell_safe_context(store, injected_context)
+            print(f"{args.agent} runs through a shell shim; injected a pointer to the handoff file instead.")
         agent_args = agent_launch_args(spec, agent_args, injected_context)
         stdin_text = agent_stdin_prompt(spec, injected_context)
     session_id = dt.datetime.now().strftime("%Y%m%d-%H%M%S") + f"-{args.agent}"
@@ -749,6 +778,9 @@ def run_interactive_agent(args: argparse.Namespace, resumed: bool = False, injec
     agent_args = list(args.agent_args)
     if agent_args and agent_args[0] == "--":
         agent_args.pop(0)
+    if injected_context and "\n" in injected_context and launches_through_shell(spec):
+        injected_context = shell_safe_context(store, injected_context)
+        print(f"{args.agent} runs through a shell shim; injected a pointer to the handoff file instead.")
     adapter = terminal_adapter(args.agent, store.project)
     agent_args = adapter.prepare_args(agent_args, injected_context)
     session_id = dt.datetime.now().strftime("%Y%m%d-%H%M%S") + f"-{args.agent}-terminal"
