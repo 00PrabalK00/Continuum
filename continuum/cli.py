@@ -51,6 +51,7 @@ from .context_intel import (
     score_intel,
 )
 from .evidence import EvidenceError, gather_evidence, render_packet
+from .delegation import DEFAULT_TIMEOUT as DELEGATION_TIMEOUT, DelegationError, ask as delegation_ask
 from .handoff_llm import generate_handoff, read_handoff_model, write_handoff_model
 from .flight import FlightRecordError, gather_flight_record, render_flight_record
 from .external_sessions import ExternalSessionError, ExternalSessionManager
@@ -462,6 +463,7 @@ def agent_add(args: argparse.Namespace) -> int:
         "inject": args.inject,
         "flag": args.flag,
         "subcommand": args.subcommand,
+        "oneshot_args": args.oneshot_args,
     }
     write_agent(store, args.name, spec)
     print(f"Registered agent: {args.name} ({args.inject})")
@@ -477,6 +479,24 @@ def agent_remove(args: argparse.Namespace) -> int:
         raise SystemExit(f"No project-local agent spec named {args.name}.")
     write_agent(store, args.name, None)
     print(f"Removed agent spec: {args.name}")
+    return 0
+
+
+def ask_agent_cmd(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    if not store.config_file.exists():
+        store.initialize(DEFAULT_CONTEXT_LIMIT, DEFAULT_THRESHOLD)
+    result = delegation_ask(
+        store,
+        args.agent,
+        " ".join(args.request),
+        sender=args.sender,
+        mode=args.mode,
+        timeout=args.timeout,
+    )
+    print(f"Reply from {result['agent']} ({result['reply_tokens']} estimated tokens):")
+    print()
+    print(result["reply"])
     return 0
 
 
@@ -2032,7 +2052,23 @@ def parser(collapse: bool = True) -> argparse.ArgumentParser:
     )
     add_agent.add_argument("--flag", help="Prompt flag, for --inject flag (for example --prompt).")
     add_agent.add_argument("--subcommand", help="Prompt subcommand, for --inject subcommand (for example exec).")
+    add_agent.add_argument(
+        "--oneshot-arg",
+        action="append",
+        dest="oneshot_args",
+        help="Argument this CLI needs for a single non-interactive reply (repeatable, for example -p).",
+    )
     add_agent.set_defaults(func=agent_add)
+    ask_cmd = commands.add_parser(
+        "ask", parents=[common], help="Ask another agent CLI a question with shared context and print its reply."
+    )
+    ask_cmd.add_argument("agent", help="Agent CLI to consult.")
+    ask_cmd.add_argument("request", nargs="+", help="What the other agent should do or answer.")
+    ask_cmd.add_argument("--sender", default="user", help="Name recorded as the caller.")
+    ask_cmd.add_argument("--mode", choices=["compact", "normal", "deep"], default="compact")
+    ask_cmd.add_argument("--timeout", type=int, default=DELEGATION_TIMEOUT)
+    ask_cmd.set_defaults(func=ask_agent_cmd)
+
     remove_agent = agent_commands.add_parser("remove", parents=[common], help="Forget a project-local agent spec.")
     remove_agent.add_argument("name")
     remove_agent.set_defaults(func=agent_remove)
@@ -2586,7 +2622,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("--context-limit must be positive")
     try:
         return int(args.func(args))
-    except (EvidenceError, ExternalSessionError, FlightRecordError, ObjectiveError, PolicyError, ProviderError, ServiceError, TeamError, WorktreeError, mcp_trust.TrustError, ValueError) as error:
+    except (DelegationError, EvidenceError, ExternalSessionError, FlightRecordError, ObjectiveError, PolicyError, ProviderError, ServiceError, TeamError, WorktreeError, mcp_trust.TrustError, ValueError) as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1
 

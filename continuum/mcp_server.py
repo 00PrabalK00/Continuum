@@ -152,6 +152,35 @@ def tool_definitions() -> list[dict[str, Any]]:
             },
         },
         {
+            "name": "list_agents",
+            "description": (
+                "List the agent CLIs Continuum can reach on this machine. Use before ask_agent "
+                "to see which other AI agents are available to consult."
+            ),
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "ask_agent",
+            "description": (
+                "Put a request to a different AI agent CLI and return its full reply. The other "
+                "agent receives the same bounded project context you have, so describe what you "
+                "want rather than restating the project. Use it to delegate work, get a second "
+                "opinion, or continue in another agent when you are near your context limit. The "
+                "exchange is recorded in shared memory, so the other agent can read it later."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "agent": {"type": "string", "description": "Agent CLI name, from list_agents."},
+                    "request": {"type": "string", "description": "What you want the other agent to do or answer."},
+                    "sender": {"type": "string", "description": "Your own agent name, for the record."},
+                    "mode": {"type": "string", "enum": ["compact", "normal", "deep"]},
+                    "timeout_seconds": {"type": "integer", "minimum": 10, "maximum": 1800},
+                },
+                "required": ["agent", "request"],
+            },
+        },
+        {
             "name": "get_external_sessions",
             "description": "List manually launched agent sessions explicitly attached to this project.",
             "inputSchema": {"type": "object", "properties": {}},
@@ -255,6 +284,33 @@ def call_tool(store: MemoryStore, name: str, arguments: dict[str, Any]) -> dict[
             str(arguments.get("task_id", "")), "DONE", str(arguments.get("summary", ""))
         )
         text = f"{completed['task_id']} DONE; file claims released."
+    elif name == "list_agents":
+        from .agents import installed_agents, read_agents
+
+        known = read_agents(store)
+        installed = set(installed_agents(store))
+        rows = [
+            f"{agent}: {'available' if agent in installed else 'not installed'} (prompt via {spec['inject']})"
+            for agent, spec in sorted(known.items())
+        ]
+        text = "\n".join(rows) or "No agent CLIs are registered."
+        if not installed:
+            text += "\nNone are installed on this machine, so ask_agent cannot reach any of them."
+    elif name == "ask_agent":
+        from .delegation import DEFAULT_TIMEOUT, DelegationError, ask
+
+        try:
+            result = ask(
+                store,
+                str(arguments.get("agent", "")).strip(),
+                str(arguments.get("request", "")),
+                str(arguments.get("sender") or "agent"),
+                str(arguments.get("mode") or "compact"),
+                int(arguments.get("timeout_seconds") or DEFAULT_TIMEOUT),
+            )
+        except DelegationError as error:
+            raise ValueError(str(error)) from error
+        text = f"Reply from {result['agent']} ({result['reply_tokens']} estimated tokens):\n\n{result['reply']}"
     elif name == "get_external_sessions":
         sessions = store.list_external_sessions(20)
         text = "\n".join(

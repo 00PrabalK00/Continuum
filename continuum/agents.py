@@ -37,11 +37,13 @@ BUILTIN_AGENTS: dict[str, dict[str, Any]] = {
     "claude": {
         "command": "claude",
         "inject": "arg",
+        "oneshot_args": ["-p"],
     },
     "codex": {
         "command": "codex",
         "inject": "subcommand",
         "subcommand": "exec",
+        "oneshot_args": [],
     },
     "gemini": {
         "command": "gemini",
@@ -49,6 +51,7 @@ BUILTIN_AGENTS: dict[str, dict[str, Any]] = {
         "flag": "--prompt",
         "prompt_flags": ["-p", "--prompt", "-i", "--prompt-interactive"],
         "default_args": ["--approval-mode", "plan", "--output-format", "text"],
+        "oneshot_args": [],
         "suppress": [
             "Warning: 256-color support not detected.",
             "Ripgrep is not available.",

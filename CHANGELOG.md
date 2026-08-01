@@ -24,6 +24,21 @@ longer tied to a fixed set of agent CLIs.
   `task assign`, `task claim`, `worktree resume` and `shell`.
 - `continuum --help` now lists only the daily commands. Every other command
   still runs unchanged and is listed by the new `continuum help --all`.
+- Added cross-agent delegation. `continuum/delegation.py` runs one agent CLI
+  from inside another with the same bounded project context and returns its
+  reply, and the MCP server exposes it as `ask_agent` plus `list_agents`. An
+  agent connected over MCP can now consult any other installed agent —
+  Claude Code asking Codex, Codex asking Claude, in any direction — and both
+  halves of the exchange are recorded in shared memory. `continuum ask <agent>
+  <request>` does the same from a terminal.
+- Agent specs gained `oneshot_args` for the flags a CLI needs to answer a
+  single prompt non-interactively (`claude -p`), settable with
+  `continuum agent add --oneshot-arg`.
+- Delegation kills the agent's whole process tree on timeout. Killing only the
+  direct child left shim grandchildren holding the output pipes open, so a
+  stalled agent hung the caller indefinitely instead of timing out.
+- An agent that stops on a sign-in or approval question is now reported as
+  such, with the question it asked, instead of as an unexplained timeout.
 - Fixed silent context truncation on Windows. Agents that resolve to a
   `.cmd`/`.bat` shim run through cmd.exe, which ends the command line at the
   first newline, so the injected handoff arrived as its first line only —
