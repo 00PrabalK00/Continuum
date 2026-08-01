@@ -15,8 +15,9 @@ session, including the shell-shim fallback on Windows.
 from __future__ import annotations
 
 import os
+import sqlite3
 import subprocess
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from .agents import AgentError, launch_args, resolve, stdin_prompt
 from .core import compact_text, estimate_tokens
@@ -39,6 +40,21 @@ DELEGATION_PREAMBLE = (
 
 class DelegationError(ValueError):
     """Raised when another agent cannot be consulted."""
+
+
+def record(write: Callable[[], Any]) -> bool:
+    """Attempt one bookkeeping write, reporting whether memory accepted it.
+
+    An agent that sandboxes its MCP servers read-only — Codex does by default —
+    gives Continuum a memory store it cannot write to. Consulting another agent
+    still works there, so the exchange goes ahead and only the record of it is
+    lost; the caller is told so rather than the whole call failing.
+    """
+    try:
+        write()
+    except (sqlite3.OperationalError, OSError, PermissionError):
+        return False
+    return True
 
 
 def terminate_tree(process: "subprocess.Popen[str]") -> None:
@@ -121,6 +137,24 @@ def failure_detail(stderr: str, returncode: int) -> str:
     return lines[-1] if lines else f"no output (exit code {returncode})"
 
 
+def sandbox_hint(error: Exception) -> str:
+    """Explain a permission denial that comes from the calling agent's sandbox.
+
+    An agent that runs its MCP servers sandboxed cannot spawn another agent from
+    inside one. The refusal arrives as a bare permission error, which says
+    nothing about the sandbox that caused it.
+    """
+    denied = getattr(error, "winerror", None) == 5 or getattr(error, "errno", None) in {1, 13}
+    if not denied:
+        return ""
+    return (
+        " The calling agent appears to be sandboxing Continuum, which blocks it from starting "
+        "another agent. Relax that agent's sandbox for this run — for Codex, "
+        "`codex --sandbox danger-full-access` — or run the request from a terminal with "
+        "`continuum ask`."
+    )
+
+
 def build_prompt(store: "MemoryStore", sender: str, message: str, mode: str) -> str:
     context = store.resume_context(mode)
     return (
@@ -179,9 +213,11 @@ def ask(
     arguments = launch_args(spec, passthrough, prompt)
     stdin_text = stdin_prompt(spec, prompt)
 
-    store.event(
-        "delegation_request",
-        {"summary": f"{sender} -> {agent}: {message[:160]}", "agent": agent, "sender": sender},
+    recorded = record(
+        lambda: store.event(
+            "delegation_request",
+            {"summary": f"{sender} -> {agent}: {message[:160]}", "agent": agent, "sender": sender},
+        )
     )
     try:
         returncode, stdout, stderr = run_agent_once(
@@ -199,34 +235,40 @@ def ask(
                 f"{agent} did not reply within {timeout} seconds and was stopped. "
                 f"Check that `{spec['command']}` answers a single prompt non-interactively."
             )
-        store.event(
-            "delegation_failed",
-            {"summary": f"{agent} timed out after {timeout}s: {stalled or 'no output'}", "agent": agent},
+        record(
+            lambda: store.event(
+                "delegation_failed",
+                {"summary": f"{agent} timed out after {timeout}s: {stalled or 'no output'}", "agent": agent},
+            )
         )
         raise DelegationError(detail) from error
     except (OSError, FileNotFoundError) as error:
-        store.event("delegation_failed", {"summary": f"{agent} failed to launch: {error}", "agent": agent})
-        raise DelegationError(f"{agent} could not be launched: {error}") from error
+        record(lambda: store.event("delegation_failed", {"summary": f"{agent} failed to launch: {error}", "agent": agent}))
+        raise DelegationError(f"{agent} could not be launched: {error}{sandbox_hint(error)}") from error
 
     reply = clean_reply(stdout)
     if not reply:
-        store.event(
-            "delegation_failed",
-            {"summary": f"{agent} produced no reply (exit {returncode})", "agent": agent},
+        record(
+            lambda: store.event(
+                "delegation_failed",
+                {"summary": f"{agent} produced no reply (exit {returncode})", "agent": agent},
+            )
         )
         raise DelegationError(f"{agent} exited with code {returncode}: {failure_detail(stderr, returncode)}")
 
-    store.send_message(sender, agent, message, "instruction", None, None)
-    store.send_message(agent, sender, reply, "result", None, None)
-    store.event(
-        "delegation_reply",
-        {
-            "summary": f"{agent} -> {sender}: {reply[:160]}",
-            "agent": agent,
-            "sender": sender,
-            "returncode": returncode,
-        },
-    )
+    recorded = record(lambda: store.send_message(sender, agent, message, "instruction", None, None)) and recorded
+    recorded = record(lambda: store.send_message(agent, sender, reply, "result", None, None)) and recorded
+    recorded = record(
+        lambda: store.event(
+            "delegation_reply",
+            {
+                "summary": f"{agent} -> {sender}: {reply[:160]}",
+                "agent": agent,
+                "sender": sender,
+                "returncode": returncode,
+            },
+        )
+    ) and recorded
     return {
         "agent": agent,
         "sender": sender,
@@ -234,5 +276,6 @@ def ask(
         "prompt_tokens": estimate_tokens(prompt),
         "reply_tokens": estimate_tokens(reply),
         "returncode": returncode,
+        "recorded": recorded,
         "reply": reply,
     }

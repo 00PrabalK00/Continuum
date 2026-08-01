@@ -354,6 +354,9 @@ def go(args: argparse.Namespace) -> int:
     # Resolve before any context is rendered so an unusable agent name fails
     # immediately instead of after printing a handoff nothing will receive.
     resolve_agent(store, args.agent)
+    connected = ensure_mcp_registered(store, args.agent)
+    if connected:
+        print(connected)
     if not (store.state_dir / "latest_handoff.md").exists():
         task = store.latest_task() or (
             "New session in this project; no prior context recorded.",
@@ -412,6 +415,55 @@ def register_gemini_mcp(store: MemoryStore) -> str:
     return f"Gemini: Continuum MCP server registered in {path}."
 
 
+def register_claude_mcp(store: MemoryStore) -> str:
+    """Register the Continuum MCP server with Claude Code, which owns its own config."""
+    try:
+        command = agent_command(
+            "claude",
+            ["mcp", "add", "continuum", "--", "continuum", "mcp", "serve", "--project", str(store.project)],
+        )
+        completed = subprocess.run(command, capture_output=True, text=True, cwd=str(store.project), check=False)
+    except (OSError, FileNotFoundError) as error:
+        return f"Claude Code MCP registration skipped: {error}"
+    output = (completed.stdout + completed.stderr).strip()
+    if completed.returncode == 0:
+        return "Claude Code: Continuum MCP server registered."
+    if "already exists" in output.lower():
+        return "Claude Code: Continuum MCP server already registered."
+    return f"Claude Code MCP registration skipped: {output.splitlines()[0] if output else 'unknown error'}"
+
+
+MCP_REGISTRARS = {
+    "claude": register_claude_mcp,
+    "codex": register_codex_mcp,
+    "gemini": register_gemini_mcp,
+}
+
+
+def ensure_mcp_registered(store: MemoryStore, agent: str) -> str | None:
+    """Connect one agent to Continuum's MCP server the first time it is launched.
+
+    Launching an agent through Continuum is what makes memory worth exposing to
+    it, so the wiring happens then rather than in a separate setup step. Only
+    the agent being launched is touched, and only once per project.
+    """
+    registrar = MCP_REGISTRARS.get(agent)
+    if registrar is None:
+        return None
+    config = store.read_config()
+    connected = config.get("mcp_connected")
+    connected = list(connected) if isinstance(connected, list) else []
+    if agent in connected:
+        return None
+    message = registrar(store)
+    if "skipped" not in message:
+        connected.append(agent)
+        config["mcp_connected"] = connected
+        config["updated_at"] = utc_now()
+        write_text(store.config_file, json.dumps(config, indent=2) + "\n")
+    return message
+
+
 def setup(args: argparse.Namespace) -> int:
     store = store_from(args)
     store.initialize(DEFAULT_CONTEXT_LIMIT, DEFAULT_THRESHOLD)
@@ -423,26 +475,9 @@ def setup(args: argparse.Namespace) -> int:
     if missing:
         print(f"Not installed: {', '.join(sorted(missing))}")
     print("Any other agent CLI works too: `continuum go <name>` adopts it on first use.")
-    if "claude" in found:
-        try:
-            command = agent_command(
-                "claude",
-                ["mcp", "add", "continuum", "--", "continuum", "mcp", "serve", "--project", str(store.project)],
-            )
-            completed = subprocess.run(command, capture_output=True, text=True, cwd=str(store.project), check=False)
-            output = (completed.stdout + completed.stderr).strip()
-            if completed.returncode == 0:
-                print("Claude Code: Continuum MCP server registered.")
-            elif "already exists" in output.lower():
-                print("Claude Code: Continuum MCP server already registered.")
-            else:
-                print(f"Claude Code MCP registration skipped: {output.splitlines()[0] if output else 'unknown error'}")
-        except (OSError, FileNotFoundError) as error:
-            print(f"Claude Code MCP registration skipped: {error}")
-    if "codex" in found:
-        print(register_codex_mcp(store))
-    if "gemini" in found:
-        print(register_gemini_mcp(store))
+    for agent in found:
+        message = ensure_mcp_registered(store, agent) or f"{agent}: Continuum MCP server already connected."
+        print(message)
     print()
     print("Daily commands:")
     print("  continuum go            open the next AI with your context; saves on exit")
@@ -547,7 +582,13 @@ def show_help(args: argparse.Namespace) -> int:
     print("  continuum go       open the next AI with that context; saves again on exit")
     print("  continuum copy     copy the context for any AI chat, web included")
     print()
-    print("`continuum go <name>` works with any agent CLI on PATH.")
+    print("`continuum go <name>` works with any agent CLI on PATH, and connects it")
+    print("to Continuum's MCP server the first time, so no setup step is needed.")
+    print()
+    print("  continuum ask <agent> <request>   have one agent consult another")
+    print("  continuum agent list              agent CLIs Continuum can reach")
+    print("  continuum ui                      Control Center in a browser")
+    print()
     print("Every other command: continuum help --all")
     return 0
 
@@ -2009,7 +2050,7 @@ def audit_export_cmd(args: argparse.Namespace) -> int:
 # Commands listed by `continuum --help`. Everything else still runs exactly as
 # before; it is reached through `continuum help --all`, the Control Center or
 # the MCP server rather than through the top-level help.
-DAILY_COMMANDS = ("go", "copy", "save", "setup", "agent", "help", "ui")
+DAILY_COMMANDS = ("go", "copy", "help")
 
 
 def collapse_help(commands: argparse._SubParsersAction) -> None:
@@ -2024,7 +2065,10 @@ def parser(collapse: bool = True) -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(
         prog="continuum",
         description="Local context continuity for AI coding agents.",
-        epilog="Advanced commands (teams, worktrees, governance, evidence): continuum help --all",
+        epilog=(
+            "Also useful: continuum ask <agent> <request>, continuum agent list, continuum ui.\n"
+            "Every command, including teams, worktrees, governance and evidence: continuum help --all"
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     root.add_argument("--version", action="version", version=f"%(prog)s {__version__}")

@@ -43,6 +43,22 @@ longer tied to a fixed set of agent CLIs.
   Gemini as well as Claude Code, writing project-local `.codex/config.toml`
   and `.gemini/settings.json` entries instead of printing snippets to paste.
   Existing settings are merged, not replaced, and re-running is a no-op.
+- The first `continuum go <agent>` connects that agent to the MCP server, so
+  cross-agent delegation needs no setup step. `continuum setup` remains as a
+  way to connect every installed agent at once.
+- `continuum --help` is down to the two daily commands plus `help`.
+- Fixed re-initialization discarding recorded work. `continuum init`, and the
+  auto-initialization inside `setup`, overwrote `latest_handoff.md` and
+  `current.md` with the starter text and replaced `config.json` wholesale,
+  dropping the handoff model and connected-agent settings. The status card
+  reads the event log rather than those files, so the loss was invisible until
+  an agent was handed the reset context. Initialization now seeds a handoff
+  only when none exists and merges config instead of replacing it.
+- Delegation survives a read-only memory store. An agent that sandboxes its MCP
+  servers gives Continuum a store it cannot write to; the exchange now goes
+  ahead and the reply notes that it was not recorded, instead of failing.
+- A launch refused by the calling agent's sandbox is reported as such, with the
+  flag that relaxes it, rather than as a bare permission error.
 - Fixed silent context truncation on Windows. Agents that resolve to a
   `.cmd`/`.bat` shim run through cmd.exe, which ends the command line at the
   first newline, so the injected handoff arrived as its first line only —

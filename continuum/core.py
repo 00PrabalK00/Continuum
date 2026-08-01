@@ -198,14 +198,20 @@ class MemoryStore:
         gitignore = self.state_dir / ".gitignore"
         if not gitignore.exists():
             write_text(gitignore, "*\n")
-        config = {
-            "project": str(self.project),
-            "project_id": self.project_id,
-            "vault_dir": str(self.vault_dir) if self.vault_dir else None,
-            "context_limit": context_limit,
-            "checkpoint_threshold": threshold,
-            "updated_at": utc_now(),
-        }
+        # Merge rather than replace: re-initializing an existing project must not
+        # drop settings written since, such as the handoff model or which agents
+        # have been connected to the MCP server.
+        config = self.read_config()
+        config.update(
+            {
+                "project": str(self.project),
+                "project_id": self.project_id,
+                "vault_dir": str(self.vault_dir) if self.vault_dir else None,
+                "context_limit": context_limit,
+                "checkpoint_threshold": threshold,
+                "updated_at": utc_now(),
+            }
+        )
         write_text(self.config_file, json.dumps(config, indent=2) + "\n")
         self.connect().close()
         if self.notes_dir:
@@ -223,10 +229,14 @@ class MemoryStore:
             if not path.exists():
                 write_text(path, initial)
         self.event("initialized", {"notes": str(self.notes_dir) if self.notes_dir else None})
-        self.write_handoff(
-            "Continuum initialized. No active coding task has been recorded.",
-            "Record a task with `continuum handoff` or start an agent with `continuum run`.",
-        )
+        # Only seed a starter handoff for a project that has none. Overwriting it
+        # would discard recorded work, and the status card would keep showing the
+        # lost task because it reads the event log rather than these files.
+        if not (self.state_dir / "latest_handoff.md").exists():
+            self.write_handoff(
+                "Continuum initialized. No active coding task has been recorded.",
+                "Record a task with `continuum handoff` or start an agent with `continuum run`.",
+            )
 
     def connect(self) -> sqlite3.Connection:
         self.state_dir.mkdir(parents=True, exist_ok=True)

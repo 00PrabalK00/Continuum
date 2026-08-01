@@ -121,15 +121,24 @@ when one is near its context limit. Each call is a single non-interactive run
 with a timeout; an agent that is not signed in, or that stops to ask a
 question, is reported with the question it asked rather than hanging.
 
-Connecting the agents is one command, run once per project:
+No setup is needed. The first `continuum go <agent>` connects that agent to
+Continuum's MCP server — registering with Claude Code, or writing a
+project-local `.codex/config.toml` or `.gemini/settings.json` entry — and does
+it once. `continuum setup` still connects every installed agent at once if you
+would rather do it up front.
+
+One caveat, and it is the calling agent's policy rather than Continuum's: an
+agent that sandboxes its MCP servers cannot start another agent from inside
+one. Codex sandboxes read-only by default, so `ask_agent` called from Codex is
+refused until that run relaxes it:
 
 ```bash
-continuum setup
+codex --sandbox danger-full-access
 ```
 
-That registers Continuum's MCP server with Claude Code, and writes
-project-local `.codex/config.toml` and `.gemini/settings.json` entries so those
-agents can reach it too.
+Continuum says so when it happens rather than reporting a bare permission
+error. Calling in the other direction, or from a terminal with `continuum ask`,
+is unaffected.
 
 ### Optional extras
 

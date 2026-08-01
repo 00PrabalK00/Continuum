@@ -311,6 +311,12 @@ def call_tool(store: MemoryStore, name: str, arguments: dict[str, Any]) -> dict[
         except DelegationError as error:
             raise ValueError(str(error)) from error
         text = f"Reply from {result['agent']} ({result['reply_tokens']} estimated tokens):\n\n{result['reply']}"
+        if not result.get("recorded", True):
+            text += (
+                "\n\n[This exchange could not be written to shared memory, so the other agent "
+                "will not see it later. Continuum's memory is read-only from here, usually "
+                "because the agent running it sandboxes its MCP servers.]"
+            )
     elif name == "get_external_sessions":
         sessions = store.list_external_sessions(20)
         text = "\n".join(
