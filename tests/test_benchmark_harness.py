@@ -180,5 +180,26 @@ class ControlIsolationTest(unittest.TestCase):
         self.assertFalse(seen["path"].exists())
 
 
+class DelegationScoringTest(unittest.TestCase):
+    """The delegation arm measures whether one agent can reach another. It
+    scored every trial 0 regardless of the reply, and summarize divided that by
+    the five fidelity probes, so the run published 0% accurate delegation for a
+    cell that never checked an answer."""
+
+    def rows(self, score):
+        return [{"ok": True, "score": score, "seconds": 6.0, "reply_tokens": 1,
+                 "missed": [], "by_probe": {"pong": bool(score)}}]
+
+    def test_a_single_probe_arm_is_not_divided_by_the_five_fidelity_probes(self):
+        self.assertEqual(bench.summarize(self.rows(1), max_score=1)["accuracy_pct"], 100.0)
+
+    def test_the_default_denominator_is_still_the_probe_set(self):
+        self.assertEqual(bench.summarize(self.rows(1))["accuracy_pct"],
+                         round(100.0 / len(bench.PROBES), 1))
+
+    def test_a_reply_that_never_arrived_scores_zero(self):
+        self.assertEqual(bench.summarize(self.rows(0), max_score=1)["accuracy_pct"], 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()

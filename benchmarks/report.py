@@ -192,8 +192,14 @@ def delegation_table(report: dict) -> str:
     rows = []
     for agent, entry in sorted(report.get("delegation", {}).items()):
         if entry.get("completed"):
-            rows.append([agent, seconds(entry), completion(entry)])
-    return table(rows, ["", "round trip", "completed"]) if rows else ""
+            # Delivery, not accuracy: whether the message reached the other
+            # agent and its reply came back. An earlier version of the harness
+            # scored every delegation trial 0 and published it as 0% accurate.
+            delivered = entry.get("accuracy_pct")
+            rows.append([agent, seconds(entry),
+                         f"{delivered:.0f}%" if delivered is not None else "-",
+                         completion(entry)])
+    return table(rows, ["", "round trip", "reply delivered", "completed"]) if rows else ""
 
 
 def headline(report: dict) -> str:
