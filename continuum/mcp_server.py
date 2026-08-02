@@ -8,7 +8,14 @@ from pathlib import Path
 from typing import IO, Any
 
 from . import __version__
-from .core import CONTEXT_BUDGETS, MemoryStore, compact_text
+from .progress import record_progress
+from .core import (
+    CONTEXT_BUDGETS,
+    DEFAULT_CONTEXT_LIMIT,
+    DEFAULT_THRESHOLD,
+    MemoryStore,
+    compact_text,
+)
 
 SERVER_INFO = {"name": "continuum", "version": __version__}
 PROTOCOL_VERSION = "2025-03-26"
@@ -78,6 +85,25 @@ def tool_definitions() -> list[dict[str, Any]]:
                 "type": "object",
                 "properties": {"task": {"type": "string"}, "next_step": {"type": "string"}},
                 "required": ["task", "next_step"],
+            },
+        },
+        {
+            "name": "save_progress",
+            "description": (
+                "Record where this work has got to, so the next session or a different agent "
+                "continues instead of starting over. Call it when the user asks you to save, when "
+                "you finish something worth not losing, and when you notice you are running low "
+                "on context, before you run out. Supply task and next_step when you know them; "
+                "leave them out and Continuum writes the summary itself from what it recorded, "
+                "using a local model when one is configured. Read get_latest_handoff first if you "
+                "are unsure whether this is already recorded."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task": {"type": "string", "description": "What is being worked on and its state."},
+                    "next_step": {"type": "string", "description": "The exact next action."},
+                },
             },
         },
         {
@@ -295,9 +321,18 @@ def call_tool(store: MemoryStore, name: str, arguments: dict[str, Any]) -> dict[
         next_step = str(arguments.get("next_step", "")).strip()
         if not task or not next_step:
             raise ValueError("task and next_step are required")
-        store.event("handoff", {"task": task, "next_step": next_step, "source": "mcp"})
-        store.write_handoff(task, next_step)
-        text = "Handoff written."
+        text = record_progress(store, task, next_step, source="mcp")["message"]
+    elif name == "save_progress":
+        try:
+            saved = record_progress(
+                store,
+                str(arguments.get("task") or "").strip(),
+                str(arguments.get("next_step") or "").strip(),
+                source="agent",
+            )
+        except ValueError as error:
+            raise ValueError(str(error)) from error
+        text = saved["message"]
     elif name == "get_open_tasks":
         tasks = [task for task in store.list_tasks(limit=20) if task["status"] not in {"DONE", "FAILED"}]
         text = "\n".join(
@@ -524,7 +559,7 @@ def serve_stdio(store: MemoryStore, input_stream: IO[str] | None = None, output_
     input_stream = input_stream or sys.stdin
     output_stream = output_stream or sys.stdout
     if not store.config_file.exists():
-        store.initialize(100_000, 0.80)
+        store.initialize(DEFAULT_CONTEXT_LIMIT, DEFAULT_THRESHOLD)
     for line in input_stream:
         if not line.strip():
             continue

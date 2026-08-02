@@ -38,6 +38,7 @@ from . import audit_export
 from .benchmark import capture_task, compare_captures, load_capture, render_comparison, write_capture
 from .secrets_scan import scan_text
 from .roi import render_roi, roi_summary
+from .progress import record_progress
 from .providers import DEFAULT_PROVIDERS, ProviderError, ProviderManager
 from .retrieval import search as retrieval_search
 from .setup_ui import (
@@ -308,39 +309,33 @@ def finalize_handoff(
 
 def quick_save(args: argparse.Namespace) -> int:
     store = store_from(args)
-    if not store.config_file.exists():
-        store.initialize(DEFAULT_CONTEXT_LIMIT, DEFAULT_THRESHOLD)
     text = " ".join(args.text).strip()
-    generated_by = None
+    task, next_step = "", ""
     if text:
         task, _, next_step = text.partition("|")
-        task = task.strip()
-        next_step = next_step.strip() or None
-    else:
-        generated = None
-        try:
-            generated = generate_handoff(store)
-        except ProviderError as error:
-            print(f"Handoff LLM unavailable ({error}); using recorded state instead.", file=sys.stderr)
-        if generated:
-            task, next_step = generated
-            selected = read_handoff_model(store)
-            generated_by = selected["provider"] + (f":{selected['model']}" if selected["model"] else "")
-        else:
-            latest = store.latest_task()
-            if latest is None:
-                raise SystemExit(
-                    'Nothing to save yet. Describe what you were doing, for example:\n'
-                    '  continuum save "fixed the auth bug | next: test the retry logic"'
-                )
-            task, next_step = latest
-    store.event("handoff", {"task": task, "next_step": next_step})
-    store.write_handoff(task, next_step)
-    print(f"Saved: {task}")
-    if next_step:
-        print(f"Next:  {next_step}")
-    if generated_by:
-        print(f"Summarized by handoff LLM: {generated_by}")
+        task, next_step = task.strip(), next_step.strip()
+    # With no text, everything is left to record_progress: it asks the handoff
+    # model, falls back to the recorded state, and knows the difference between
+    # a next step the user just stated and one it carried forward. Repeating
+    # that fallback here is what let the CLI pass a carried step off as new,
+    # which promoted an annotation to the base and made it compound.
+    try:
+        saved = record_progress(store, task, next_step, source="cli")
+    except ValueError:
+        raise SystemExit(
+            'Nothing to save yet. Describe what you were doing, for example:\n'
+            '  continuum save "fixed the auth bug | next: test the retry logic"'
+        ) from None
+    if saved["model_error"]:
+        print(
+            f"Handoff LLM unavailable ({saved['model_error']}); using recorded state instead.",
+            file=sys.stderr,
+        )
+    print(f"Saved: {saved['task']}")
+    if saved["next_step"]:
+        print(f"Next:  {saved['next_step']}")
+    if saved["summarized_by"]:
+        print(f"Summarized by handoff LLM: {saved['summarized_by']}")
     print("Resume anywhere with `continuum go` or `continuum copy`.")
     return 0
 

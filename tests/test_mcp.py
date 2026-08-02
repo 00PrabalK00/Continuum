@@ -36,7 +36,7 @@ class McpServerTest(unittest.TestCase):
             self.assertIn("get_context_packet", names)
             self.assertIn("post_agent_message", names)
             self.assertIn("get_external_sessions", names)
-            self.assertIn("Handoff written", written["result"]["content"][0]["text"])
+            self.assertIn("Recorded: implement mcp", written["result"]["content"][0]["text"])
 
     def test_mcp_task_claim_and_complete(self):
         with tempfile.TemporaryDirectory() as temporary:
