@@ -38,6 +38,7 @@ from . import audit_export
 from .benchmark import capture_task, compare_captures, load_capture, render_comparison, write_capture
 from .secrets_scan import scan_text
 from .roi import render_roi, roi_summary
+from .progress import record_progress
 from .providers import DEFAULT_PROVIDERS, ProviderError, ProviderManager
 from .retrieval import search as retrieval_search
 from .setup_ui import (
@@ -334,8 +335,7 @@ def quick_save(args: argparse.Namespace) -> int:
                     '  continuum save "fixed the auth bug | next: test the retry logic"'
                 )
             task, next_step = latest
-    store.event("handoff", {"task": task, "next_step": next_step})
-    store.write_handoff(task, next_step)
+    record_progress(store, task, next_step or "", source="cli")
     print(f"Saved: {task}")
     if next_step:
         print(f"Next:  {next_step}")

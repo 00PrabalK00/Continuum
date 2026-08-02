@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+- Added the `save_progress` MCP tool, so an agent can record where work has got
+  to on its own initiative. It fills in whatever the agent does not supply,
+  asking the configured handoff model for a summary and falling back to the
+  recorded task, so "save my progress" needs no arguments. The agent
+  instructions written by `continuum install` now say when to call it: when the
+  user asks, when something worth keeping is finished, and when the agent
+  notices it is running low on context. Only the agent can see how much context
+  it has left, so that judgement is stated as belonging to the agent rather than
+  to Continuum.
+- Fixed a compounding annotation on every save path except one. A carried
+  forward next step is marked unconfirmed when a session changed files, and only
+  the session-end path recorded the original text to rebuild from. A
+  `continuum save` or an MCP handoff in between promoted the annotated text to
+  the base, so the next session annotated the annotation, and it grew on every
+  cycle. All save paths now go through one function that carries the base.
+- The MCP server no longer hardcodes its context limit and threshold, which
+  diverged from the defaults every other entry point uses.
+
 ## 0.12.0 - Alpha
 
 Search that understands the question, workflows agents can drive, and a setup
