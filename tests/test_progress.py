@@ -77,6 +77,67 @@ class AnnotationStackingTest(unittest.TestCase):
             self.assertEqual(base_next_step(store), "write the retry test")
 
 
+class BaseSelectionTest(unittest.TestCase):
+    """Which next step becomes the base decides what a later session tells the
+    agent to continue, so getting it wrong resurrects abandoned work."""
+
+    def test_the_newest_base_is_used_not_the_oldest(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            for index in (1, 2, 3):
+                store.event("handoff", {"task": f"task {index}", "next_step": f"step {index}"})
+            self.assertEqual(base_next_step(store), "step 3")
+
+    def test_an_explicit_next_step_becomes_the_base(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            started(store)
+            record_progress(store, "moved on", "deploy the fix")
+            payload = store.recent_handoffs(1)[0]["payload"]
+            self.assertEqual(payload["next_step"], "deploy the fix")
+            self.assertEqual(payload["base_next_step"], "deploy the fix")
+
+    def test_a_carried_step_keeps_the_original_base(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            started(store)
+            with patch.object(MemoryStore, "git_or_watch_changes", lambda _s: ["M retry.py"]):
+                with redirect_stdout(StringIO()):
+                    finalize_handoff(store, "claude", "S1", ["out"], 0, False)
+            record_progress(store)
+            payload = store.recent_handoffs(1)[0]["payload"]
+            self.assertEqual(payload["base_next_step"], "write the retry test")
+
+    def test_a_task_only_save_still_records_a_next_step(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            started(store)
+            record_progress(store, "still on retries")
+            payload = store.recent_handoffs(1)[0]["payload"]
+            self.assertTrue(payload["next_step"], "a task-only save must not record next_step as None")
+            self.assertEqual(payload["next_step"], "write the retry test")
+
+    def test_a_task_only_save_uses_the_model_when_configured(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            started(store)
+            with (
+                patch("continuum.progress.generate_handoff", return_value=("ignored", "model next")),
+                patch("continuum.progress.read_handoff_model", return_value={"provider": "ollama", "model": "q"}),
+            ):
+                record_progress(store, "supplied task")
+            payload = store.recent_handoffs(1)[0]["payload"]
+            self.assertEqual(payload["task"], "supplied task")
+            self.assertEqual(payload["next_step"], "model next")
+            self.assertEqual(payload["base_next_step"], "model next")
+
+    def test_a_task_only_save_works_on_an_empty_project(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            record_progress(store, "first thing recorded")
+            self.assertEqual(store.latest_task()[0], "first thing recorded")
+
+
 class SaveProgressToolTest(unittest.TestCase):
     def test_the_tool_is_advertised_with_its_trigger(self):
         tool = next(item for item in tool_definitions() if item["name"] == "save_progress")
