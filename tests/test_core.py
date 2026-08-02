@@ -327,3 +327,25 @@ class EarlierTaskTrailTest(unittest.TestCase):
             for index in range(8):
                 self.record(store, f"decision number {index} about subsystem {index}", "next")
             self.assertLess(estimate_tokens(store.resume_context("compact")), 200)
+
+    def test_a_decision_survives_hundreds_of_intervening_events(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(temporary)
+            self.record(store, "chose Redis for the rate limiter", "wire it up")
+            for index in range(400):
+                store.event("agent_exit", {"summary": f"session {index}", "returncode": 0})
+            self.record(store, "wired up the rate limiter", "load test it")
+            self.assertIn("Redis", store.resume_context("compact"))
+
+    def test_a_long_task_is_not_listed_as_its_own_earlier_entry(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(temporary)
+            long_task = "investigated the checkout regression " + ("and traced every caller " * 80)
+            self.assertGreater(len(long_task), 1200)
+            self.record(store, "earlier real decision", "carry on")
+            store.event("handoff", {"task": long_task, "next_step": "keep going"})
+            store.write_handoff(long_task, "keep going")
+            context = store.resume_context("compact")
+            self.assertIn("earlier real decision", context)
+            earlier = store.earlier_tasks(exclude=compact_text(long_task))
+            self.assertFalse(any(item.startswith("investigated the checkout regression") for item in earlier))
