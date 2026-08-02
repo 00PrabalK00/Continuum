@@ -270,3 +270,60 @@ class MemoryStoreTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EarlierTaskTrailTest(unittest.TestCase):
+    """Compact context carried only the current task, so a decision taken a few
+    sessions earlier vanished once enough events piled on top of it."""
+
+    def store(self, temporary):
+        store = MemoryStore(Path(temporary) / "repo")
+        store.initialize(100000, 0.8)
+        return store
+
+    def record(self, store, task, next_step):
+        store.event("handoff", {"task": task, "next_step": next_step})
+        store.write_handoff(task, next_step)
+
+    def test_an_earlier_decision_survives_later_sessions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(temporary)
+            self.record(store, "picked PostgreSQL over MySQL for the audit log", "write the schema")
+            for index in range(25):
+                store.event("agent_exit", {"summary": f"session {index}", "returncode": 0})
+            self.record(store, "wrote the audit log schema", "add indexes")
+            context = store.resume_context("compact")
+            self.assertIn("PostgreSQL", context)
+            self.assertIn("wrote the audit log schema", context)
+
+    def test_the_current_task_is_not_repeated_as_an_earlier_one(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(temporary)
+            self.record(store, "add retries", "write the test")
+            self.record(store, "add retries", "write the test")
+            self.assertEqual(store.earlier_tasks(exclude="add retries"), [])
+            self.assertNotIn("Earlier:", store.resume_context("compact"))
+
+    def test_synthetic_tasks_are_left_out_of_the_trail(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(temporary)
+            self.record(store, "real decision about caching", "measure it")
+            self.record(store, "Wrapped `claude` session `S1` completed.", "review")
+            self.record(store, "current work", "carry on")
+            earlier = store.earlier_tasks(exclude="current work")
+            self.assertIn("real decision about caching", earlier)
+            self.assertFalse(any("Wrapped" in item for item in earlier))
+
+    def test_the_trail_is_bounded(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(temporary)
+            for index in range(10):
+                self.record(store, f"decision number {index}", "next")
+            self.assertLessEqual(len(store.earlier_tasks(exclude="decision number 9")), 4)
+
+    def test_compact_context_stays_small(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(temporary)
+            for index in range(8):
+                self.record(store, f"decision number {index} about subsystem {index}", "next")
+            self.assertLess(estimate_tokens(store.resume_context("compact")), 200)

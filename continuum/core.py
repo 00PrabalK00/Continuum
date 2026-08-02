@@ -1292,6 +1292,30 @@ The planner role is preserving architecture intent and constraints while the exe
             text = compact_text(text, CONTEXT_BUDGETS[mode] * 4)
         return {"role": role, "mode": mode, "estimated_tokens": estimate_tokens(text), "text": text}
 
+    def earlier_tasks(self, limit: int = 4, exclude: str = "") -> list[str]:
+        """Distinct earlier handoff tasks, most recent first.
+
+        Compact context otherwise carries only the current task, so a decision
+        taken a few sessions ago disappears once enough events pile up on top of
+        it. Keeping a short trail of what was previously being worked on is what
+        lets an agent answer questions about earlier sessions without going and
+        reading the raw event log.
+        """
+        seen: list[str] = []
+        normalized_exclude = exclude.strip().lower()
+        for item in reversed(self.recent_events(200)):
+            if item["kind"] != "handoff":
+                continue
+            task = str(item["payload"].get("task") or "").strip()
+            if not task or self.is_synthetic_task(task):
+                continue
+            if task.lower() == normalized_exclude or task in seen:
+                continue
+            seen.append(task)
+            if len(seen) >= limit:
+                break
+        return seen
+
     def latest_task(self) -> tuple[str, str | None] | None:
         fallback: tuple[str, str | None] | None = None
         for item in reversed(self.recent_events(100)):
@@ -1427,12 +1451,16 @@ Project: `{self.project}`
 Read `.continuum/current_state.md` and `.continuum/latest_handoff.md`. Continue
 the current task from the existing state and complete the next step above.
 """
+        earlier = self.earlier_tasks(exclude=task)
+        earlier_line = (
+            "Earlier: " + compact_text("; ".join(earlier), 420) + "\n" if earlier else ""
+        )
         current = f"""# Current
 
 Task: {compact_text(task, 360)}
 Changes: {compact_text("; ".join(self.git_or_watch_changes()), 260)}
 Blocker: {compact_text((errors[-1] if errors else "None recorded."), 180)}
-Next: {compact_text(next_action, 300)}
+{earlier_line}Next: {compact_text(next_action, 300)}
 """
         state = f"""# Current State
 
