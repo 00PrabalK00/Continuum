@@ -248,24 +248,37 @@ class McpRegistrationTest(unittest.TestCase):
         store.initialize(100000, 0.8)
         return store
 
-    def test_codex_config_is_valid_toml_and_idempotent(self):
-        import tomllib
+    def parse_toml(self, path: Path):
+        """Parse TOML where the runtime can, and check the escaping either way.
 
+        tomllib arrived in 3.11 and Continuum supports 3.9, so on older runtimes
+        this falls back to asserting the property the parser would have caught:
+        a Windows path written with backslashes is not valid TOML, because `\\U`
+        and friends are read as escape sequences.
+        """
+        text = path.read_text(encoding="utf-8")
+        self.assertNotIn("\\", text)
+        try:
+            import tomllib
+        except ImportError:
+            return None
+        with path.open("rb") as handle:
+            return tomllib.load(handle)
+
+    def test_codex_config_is_valid_toml_and_idempotent(self):
         from continuum.cli import register_codex_mcp
 
         with tempfile.TemporaryDirectory() as temporary:
             store = self.store(temporary)
             first = register_codex_mcp(store)
             path = store.project / ".codex" / "config.toml"
-            with path.open("rb") as handle:
-                parsed = tomllib.load(handle)
-            self.assertEqual(parsed["mcp_servers"]["continuum"]["command"], "continuum")
+            parsed = self.parse_toml(path)
+            if parsed is not None:
+                self.assertEqual(parsed["mcp_servers"]["continuum"]["command"], "continuum")
             self.assertIn("registered in", first)
             self.assertIn("already registered", register_codex_mcp(store))
 
     def test_codex_config_keeps_existing_settings(self):
-        import tomllib
-
         from continuum.cli import register_codex_mcp
 
         with tempfile.TemporaryDirectory() as temporary:
@@ -274,10 +287,14 @@ class McpRegistrationTest(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('model = "gpt-5"\n', encoding="utf-8")
             register_codex_mcp(store)
-            with path.open("rb") as handle:
-                parsed = tomllib.load(handle)
-            self.assertEqual(parsed["model"], "gpt-5")
-            self.assertIn("continuum", parsed["mcp_servers"])
+            parsed = self.parse_toml(path)
+            if parsed is not None:
+                self.assertEqual(parsed["model"], "gpt-5")
+                self.assertIn("continuum", parsed["mcp_servers"])
+            else:
+                text = path.read_text(encoding="utf-8")
+                self.assertIn('model = "gpt-5"', text)
+                self.assertIn("[mcp_servers.continuum]", text)
 
     def test_gemini_settings_are_merged_not_replaced(self):
         import json as json_module
