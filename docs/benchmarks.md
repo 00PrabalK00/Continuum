@@ -29,25 +29,44 @@ One scenario, 40 background events on top of the handoff.
 | normal | 412 | 74% smaller |
 | compact | 74 | 95% smaller |
 
-## Fidelity
+## Fidelity: withdrawn, being re-measured
 
-Five probes, three trials per arm, one fresh agent process per trial.
+The accuracy figures previously reported here are withdrawn.
+
+The scorer searched for each accepted answer across the entire reply rather than
+against the numbered question it belonged to. An answer to question 3, "the
+retry test asserts 3 attempts", satisfied the unrelated question 5 probe through
+the word "retry". A reply that answered some questions and skipped others could
+therefore score full marks, and a reply with every answer against the wrong
+question could too.
+
+That flaw affects every accuracy number in the previous version of this page, in
+an unknown direction. They are not reproduced here, because a number that cannot
+be trusted is worse than no number.
+
+Two measurements from the same run do not depend on the scorer, because they are
+wall-clock timings rather than judgements about correctness:
 
 | Arm | Claude | Codex |
 | --- | --- | --- |
-| Continuum injects the context | 100%, SD 0.00, 6.5s | 100%, SD 0.00, 37.6s |
-| No injection, `.continuum/` readable | 100%, SD 0.00, 29.1s | 100%, SD 0.00, 49.0s |
-| No project memory at all | 13.3%, SD 0.47, 20.2s | 20.0%, SD 0.00, 108.0s |
+| Continuum injects the context | 6.5s | 37.6s |
+| No injection, `.continuum/` readable | 29.1s | 49.0s |
 
-The injected prompt is 286 tokens. The other two arms send 82 and let the agent
-find what it needs.
+The injected prompt is 286 tokens. The other arms send 82 and let the agent find
+what it needs, which is what the extra 20 to 30 seconds buys.
 
-The second row is the uncomfortable one. An agent with no injected context
-scores the same, because it opens `.continuum/` itself. Recording the files is
-what produces the accuracy. Injecting them is what makes it fast: 6.5 seconds
-against 29.1 for Claude, 37.6 against 49.0 for Codex.
+The re-measurement fixes the scorer to match per question, and additionally
+adds probes that cannot be satisfied by echoing the context: inference probes
+whose answer is not a literal span, distractor probes where a plausible wrong
+answer appears verbatim, and unanswerable probes where the correct response is
+to say the context does not contain it. It runs 30 trials per cell with
+bootstrap confidence intervals, and reports the completion rate separately so an
+agent that fails to start is not scored as an agent that answered badly.
 
 ## Which source does the agent actually use
+
+Also unaffected by the scoring flaw: this asks one question and reads one word
+out of the reply.
 
 Injected context and the files on disk were made to disagree. The injected
 version said the class was renamed to `BillingGateway`; the files said
@@ -61,6 +80,12 @@ version said the class was renamed to `BillingGateway`; the files said
 Injection wins when the two conflict, for both agents.
 
 ## Categories
+
+These are not affected by the scoring flaw above. Each category asks a single
+question and checks that one reply, so there is no second probe for an answer to
+satisfy by accident. Their weaknesses are the ordinary ones: three trials, and
+matching on substrings, so an agent that echoes the context without
+understanding it still passes.
 
 Three trials each, both agents, after the compact-context fix.
 
@@ -92,12 +117,15 @@ One agent consulting another, three trials, 210 prompt tokens.
 
 ## Caveats
 
-Three trials per cell. There are no confidence intervals here and the floor is
-visibly noisy: Claude's no-memory arm scored 26.7% in one run and 13.3% in the
-next.
+Three trials per cell, and no confidence intervals. The floor was visibly noisy
+even before the scoring flaw was found: the same no-memory arm scored 26.7% in
+one run and 13.3% in the next, which is on its own enough reason not to quote a
+single figure from three trials.
 
 Scoring is substring matching against accepted answers. An agent that echoes
-the injected text without understanding it still passes.
+the injected text without understanding it still passes. Worse, in the five
+probe fidelity run the match was made against the whole reply rather than the
+question it belonged to, which is why those numbers are withdrawn above.
 
 One scenario, one project, two agents. Gemini is not included because it stops
 on a browser sign-in prompt before answering.
@@ -113,5 +141,8 @@ Codex's no-memory arm first reported 0% in 0.3 seconds. Codex refuses to start
 outside a Git repository, so a refusal was recorded as a score of zero. After
 adding a repository it ran, but scored 5/5 once in an empty project, because
 the control directory sat next to the other test projects and Codex spent 156
-seconds finding them. The 20.0% above comes from an isolated temporary
-directory.
+seconds finding them. That arm was re-run in an isolated temporary directory,
+though its accuracy figure is withdrawn along with the rest.
+
+Three separate instrument faults, each found only by looking at how a result was
+produced rather than at the result itself. That is the reason this page exists.

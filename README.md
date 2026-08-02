@@ -130,23 +130,26 @@ continuum agent list
 Measured against real agent CLIs, on a project whose recorded state we control,
 asking five questions answerable only from that record.
 
+**The accuracy figures that were here have been withdrawn while they are
+re-measured.** Review found that the scorer matched each accepted answer against
+the whole reply rather than against the question it belonged to, so an answer to
+one question could satisfy an unrelated one and a reply that skipped a question
+entirely could still score full marks. Any accuracy number it produced is
+unreliable, in an unknown direction.
+
+Two measurements from that run do not depend on the scorer and still stand:
+
 | | Claude | Codex |
 | --- | --- | --- |
-| Continuum injects the context | 100% correct, 6.5s | 100% correct, 37.6s |
-| No context at all | 13.3% | 20.0% |
+| Time to answer with context injected | 6.5s | 37.6s |
+| Time to answer by reading `.continuum/` itself | 29.1s | 49.0s |
 
 Compact context for that project is 74 tokens, against 1,604 tokens of raw
 event history.
 
-An agent that can open `.continuum/` itself also scores 100%, just slower: 29.1
-seconds for Claude instead of 6.5. So recording the files is what produces the
-accuracy, and injecting them is what makes it cheap. When the injected context
-and the files on disk were made to disagree, both agents answered from the
-injected version, 3 times out of 3.
-
-Three trials per number, one scenario, two agents. [docs/benchmarks.md](docs/benchmarks.md)
-has the full method, the knowledge-update and abstention results, and the two
-earlier versions of the harness that produced wrong numbers.
+A re-measurement is underway with per-question scoring, adversarial and
+unanswerable probes, 30 trials per cell and confidence intervals.
+[docs/benchmarks.md](docs/benchmarks.md) records the method and what went wrong.
 
 ---
 
