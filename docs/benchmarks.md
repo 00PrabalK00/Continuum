@@ -1,11 +1,15 @@
 # Benchmarks
 
 These numbers come from running real agent CLIs against a project whose state
-we control, so every question has a known correct answer. The harness is not
-part of the package; it lives outside the repository and is described here so
-the results can be reproduced or disputed.
+we control, so every question has a known correct answer. The harness is
+`benchmarks/agent_memory_bench.py` in this repository, so the results can be
+reproduced or disputed.
 
-Read the caveats at the bottom before quoting anything from this page.
+**This page is being regenerated.** Its accuracy figures were withdrawn, and
+the prose figures below were typed rather than taken from a results file, so
+they cannot be traced to a run. `benchmarks/report.py` replaces this page from
+`benchmarks/results.json` once the re-measurement finishes. Quote nothing from
+it until then.
 
 ## What is measured
 

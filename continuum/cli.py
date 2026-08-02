@@ -315,6 +315,10 @@ def quick_save(args: argparse.Namespace) -> int:
     if text:
         task, _, next_step = text.partition("|")
         task, next_step = task.strip(), next_step.strip()
+        # The documented example is `save "fixed the bug | next: test it"`, and
+        # keeping the label turns every display into "Next: next: test it".
+        if next_step.lower().startswith("next:"):
+            next_step = next_step[len("next:"):].strip()
     # With no text, everything is left to record_progress: it asks the handoff
     # model, falls back to the recorded state, and knows the difference between
     # a next step the user just stated and one it carried forward. Repeating

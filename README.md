@@ -4,6 +4,11 @@
 
 # Continuum
 
+**Git keeps the history of your code. Continuum keeps the working context
+around it.**
+
+Switch AI without starting over.
+
 Your AI runs out of context. Or you switch from Claude to Codex because one hit
 its limit. Either way you start over, re-explaining the codebase, the bug, and
 what you already tried.
@@ -132,31 +137,20 @@ continuum agent list
 
 ## Does it actually work
 
-Measured against real agent CLIs, on a project whose recorded state we control,
-asking five questions answerable only from that record.
+<!-- benchmark-results:start -->
 
-**The accuracy figures that were here have been withdrawn while they are
-re-measured.** Review found that the scorer matched each accepted answer against
-the whole reply rather than against the question it belonged to, so an answer to
-one question could satisfy an unrelated one and a reply that skipped a question
+**The figures that were here have been withdrawn while they are re-measured.**
+Review found that the scorer matched each accepted answer against the whole
+reply rather than against the question it belonged to, so an answer to one
+question could satisfy an unrelated one and a reply that skipped a question
 entirely could still score full marks. Any accuracy number it produced is
 unreliable, in an unknown direction.
-
-What can still be said is how long each run took. These are raw process
-durations, not time to a correct answer: since the scorer accepted replies it
-should not have, some of the runs being timed may not have answered properly.
-
-| | Claude | Codex |
-| --- | --- | --- |
-| Run with context injected | 6.5s | 37.6s |
-| Run with no injection, reading `.continuum/` instead | 29.1s | 49.0s |
-
-Compact context for that project is 74 tokens, against 1,604 tokens of raw
-event history.
 
 A re-measurement is underway with per-question scoring, adversarial and
 unanswerable probes, 30 trials per cell and confidence intervals.
 [docs/benchmarks.md](docs/benchmarks.md) records the method and what went wrong.
+
+<!-- benchmark-results:end -->
 
 ---
 
@@ -230,6 +224,35 @@ continuum ui --open
 
 ---
 
+## How it works
+
+Three layers, and the comparison to Git is the point rather than a metaphor.
+
+Everything an AI does is appended to a log that is never rewritten: sessions
+started, files changed, decisions recorded, errors hit. That log is the history.
+
+Handoffs are checkpoints taken against it, the way a commit is taken against
+your working tree. Each one is a snapshot of where the work stood.
+
+`current.md` is the materialized view of the newest checkpoint, kept small
+enough to hand to an AI without spending its context on your history. That is
+what a new session reads.
+
+| Git | Continuum |
+| --- | --- |
+| Repository | Project memory |
+| Commit | Handoff |
+| HEAD | `current.md` |
+| Log | Decisions, attempts and outcomes |
+| Branch | An agent's or task's own context |
+
+Code has canonical contents. Context does not: it goes stale, it can be
+incomplete, and two agents can believe different things. Continuum records when
+each claim was made and against which state, so a claim can be checked rather
+than assumed. See [Limitations](#limitations) for how far that goes today.
+
+---
+
 ## Your data
 
 Everything stays on your machine, as plain files in your project:
@@ -273,6 +296,60 @@ continuum help --all
 | See what changed | [Changelog](CHANGELOG.md) |
 | Cut a release | [Releasing](docs/releasing.md) |
 | See what is next | [Roadmap](docs/roadmap.md) |
+
+---
+
+## Limitations
+
+Worth knowing before you rely on it.
+
+`current.md` can go stale without saying so. It records what the last session
+believed, not what your working tree now contains, and it does not yet check
+itself against your current commit. If you rewind or rebase, it will not notice.
+
+Context sizes are estimated at four characters per token, not tokenized. The
+estimate is close enough to decide when to checkpoint and not close enough to
+quote.
+
+Continuum cannot ask a provider how much quota you have left. It notices when an
+agent says it has run out and remembers that across sessions, but it never shows
+a percentage, because it does not have one.
+
+Gemini needs its own sign-in before Continuum can drive it, and Codex sandboxes
+its tools by default, which can stop it starting another agent. Continuum
+reports which one is refusing rather than hanging.
+
+The benchmark covers one project and one recorded state, with two agents. It
+shows that a handoff arrives and is used. It does not show how Continuum behaves
+across a long real project.
+
+---
+
+## Contributing
+
+```bash
+git clone https://github.com/00PrabalK00/Continuum.git
+cd Continuum
+python -m pip install -e .
+python -m unittest discover -s tests
+```
+
+The suite is standard-library `unittest` with no dependencies, and CI runs it on
+Linux, macOS and Windows against Python 3.9 and 3.13. Continuum itself has no
+runtime dependencies outside the standard library, and additions are expected to
+keep it that way.
+
+The benchmark is separate because it calls real agent CLIs and spends quota:
+
+```bash
+python benchmarks/agent_memory_bench.py --trials 30 --agents claude,codex
+python benchmarks/report.py --write
+```
+
+The second command regenerates [docs/benchmarks.md](docs/benchmarks.md) and the
+results block above. Neither is edited by hand, so a published figure can always
+be traced to the run that produced it. See
+[benchmarks/README.md](benchmarks/README.md).
 
 ---
 

@@ -190,6 +190,37 @@ class SaveProgressToolTest(unittest.TestCase):
             self.assertEqual(result["task"], "add retries")
 
 
+class SaveSyntaxTest(unittest.TestCase):
+    """The README documents `save "task | next: thing"`. Keeping the label made
+    every later display read "Next: next: thing"."""
+
+    def saved(self, text):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            out = StringIO()
+            with redirect_stdout(out):
+                main(["save", "--project", str(store.project), text])
+            return store.latest_task(), out.getvalue()
+
+    def test_the_documented_next_label_is_not_repeated_back(self):
+        (task, step), printed = self.saved("fixed the auth bug | next: test the retry logic")
+        self.assertEqual(task, "fixed the auth bug")
+        self.assertEqual(step, "test the retry logic")
+        self.assertNotIn("next: next:", printed.lower())
+
+    def test_the_label_is_optional(self):
+        self.assertEqual(self.saved("fixed it | test the retry logic")[0][1],
+                         "test the retry logic")
+
+    def test_the_label_is_matched_whatever_its_case(self):
+        self.assertEqual(self.saved("fixed it | Next:  test the retry logic")[0][1],
+                         "test the retry logic")
+
+    def test_the_word_next_inside_a_step_is_left_alone(self):
+        self.assertEqual(self.saved("fixed it | next release needs a changelog")[0][1],
+                         "next release needs a changelog")
+
+
 class InstructionTest(unittest.TestCase):
     def test_agents_are_told_when_to_record(self):
         from continuum.integrations import AGENT_INSTRUCTIONS
