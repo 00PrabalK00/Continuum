@@ -132,31 +132,20 @@ continuum agent list
 
 ## Does it actually work
 
-Measured against real agent CLIs, on a project whose recorded state we control,
-asking five questions answerable only from that record.
+<!-- benchmark-results:start -->
 
-**The accuracy figures that were here have been withdrawn while they are
-re-measured.** Review found that the scorer matched each accepted answer against
-the whole reply rather than against the question it belonged to, so an answer to
-one question could satisfy an unrelated one and a reply that skipped a question
+**The figures that were here have been withdrawn while they are re-measured.**
+Review found that the scorer matched each accepted answer against the whole
+reply rather than against the question it belonged to, so an answer to one
+question could satisfy an unrelated one and a reply that skipped a question
 entirely could still score full marks. Any accuracy number it produced is
 unreliable, in an unknown direction.
-
-What can still be said is how long each run took. These are raw process
-durations, not time to a correct answer: since the scorer accepted replies it
-should not have, some of the runs being timed may not have answered properly.
-
-| | Claude | Codex |
-| --- | --- | --- |
-| Run with context injected | 6.5s | 37.6s |
-| Run with no injection, reading `.continuum/` instead | 29.1s | 49.0s |
-
-Compact context for that project is 74 tokens, against 1,604 tokens of raw
-event history.
 
 A re-measurement is underway with per-question scoring, adversarial and
 unanswerable probes, 30 trials per cell and confidence intervals.
 [docs/benchmarks.md](docs/benchmarks.md) records the method and what went wrong.
+
+<!-- benchmark-results:end -->
 
 ---
 

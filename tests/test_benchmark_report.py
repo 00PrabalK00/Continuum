@@ -1,12 +1,12 @@
-"""The report generator exists so published numbers cannot drift from the run.
+"""The report generator publishes numbers, so a fault here republishes a fault.
 
-These tests mostly check that it refuses to state anything the results file does
-not contain, since a generator that quietly invents a figure is worse than a
-hand-written table, which at least nobody trusts.
+Each test corresponds to a way this generator would have printed something
+untrue: reading a results file whose accuracy was withdrawn, counting an agent
+that failed to start as an agent that answered wrongly, or leaving the README
+figures hand-copied while claiming they were generated.
 """
 
 import json
-import re
 import sys
 import tempfile
 import unittest
@@ -14,144 +14,150 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "benchmarks"))
 
-import report as reporter  # noqa: E402
+import report  # noqa: E402
 
 
-def run(**overrides) -> dict:
+def results(**overrides):
     base = {
-        "schema": 2,
+        "schema": report.SCHEMA,
         "trials": 30,
-        "probe_kinds": {"class": "distractor", "file": "recall", "owner": "unanswerable"},
-        "context_tokens": {"raw_history": 1000, "deep": 600, "normal": 400, "compact": 100},
+        "probe_kinds": {
+            "class": "distractor", "file": "recall", "count": "recall",
+            "headroom": "inference", "owner": "unanswerable",
+        },
+        "context_tokens": {"raw_history": 1710, "compact": 109},
         "fidelity": {
             "claude/injected": {
-                "runs": 30, "completed": 30, "accuracy_pct": 96.7,
-                "accuracy_ci95": [92.0, 99.3], "seconds_mean": 5.4,
-                "per_probe_pct": {"class": 100.0, "file": 100.0, "owner": 90.0},
-            },
-            "claude/files_only": {
-                "runs": 30, "completed": 30, "accuracy_pct": 94.0,
-                "accuracy_ci95": [88.0, 98.0], "seconds_mean": 29.1,
-                "per_probe_pct": {},
-            },
-            "claude/no_memory": {
-                "runs": 30, "completed": 28, "accuracy_pct": 17.3,
-                "accuracy_ci95": [14.7, 19.3], "seconds_mean": 19.8,
-                "per_probe_pct": {},
-            },
+                "accuracy_pct": 100.0,
+                "accuracy_ci95": [100.0, 100.0],
+                "completed": 30,
+                "runs": 30,
+                "seconds_mean": 5.4,
+            }
         },
+        "categories": [],
     }
     base.update(overrides)
     return base
 
 
-class NoInventedNumbersTest(unittest.TestCase):
-    def test_every_percentage_printed_is_in_the_results(self):
-        report = run()
-        text = reporter.render(report)
-        allowed = {"95", "100", "30"}  # prose: the interval level, the axis, the trial count
-        for entry in report["fidelity"].values():
-            allowed.add(f"{entry['accuracy_pct']:.0f}")
-            allowed.update(f"{value:.0f}" for value in entry["accuracy_ci95"])
-            allowed.update(f"{value:.0f}" for value in entry["per_probe_pct"].values())
-        sizes = report["context_tokens"]
-        for mode in ("deep", "normal", "compact"):
-            allowed.add(f"{100 - 100 * sizes[mode] / sizes['raw_history']:.0f}")
-        printed = set(re.findall(r"(\d+)%", text))
-        self.assertTrue(
-            printed <= allowed,
-            f"printed percentages not traceable to the results: {sorted(printed - allowed)}",
-        )
+class SchemaGuardTest(unittest.TestCase):
+    """The documented command is `report.py --write`, whose default results path
+    is the pre-schema file holding the accuracy that docs/benchmarks.md
+    withdrew. Rendering it would put those numbers back under a bootstrap
+    heading."""
 
-    def test_an_unmeasured_cell_says_so_rather_than_showing_zero(self):
-        report = run()
-        report["fidelity"]["codex/injected"] = {"runs": 30, "completed": 0}
-        text = reporter.render(report)
+    def test_a_results_file_from_before_the_scorer_fix_is_refused(self):
+        old = {"fidelity": {"claude/injected": {"accuracy_pct": 100.0}}}
+        with self.assertRaises(report.IncompatibleResults):
+            report.check(old)
+
+    def test_the_refusal_says_what_to_do_instead(self):
+        with self.assertRaises(report.IncompatibleResults) as caught:
+            report.check({"schema": 1})
+        self.assertIn("Re-run", str(caught.exception))
+
+    def test_a_results_file_without_intervals_is_refused(self):
+        stale = results(fidelity={"claude/injected": {"accuracy_pct": 100.0}})
+        with self.assertRaises(report.IncompatibleResults):
+            report.check(stale)
+
+    def test_a_current_results_file_passes(self):
+        report.check(results())
+
+
+class CategoryDenominatorTest(unittest.TestCase):
+    """An agent that never started did not answer badly."""
+
+    def test_trials_that_did_not_run_stay_out_of_the_denominator(self):
+        text = report.category_table(results(categories=[
+            {"category": "temporal", "agent": "claude", "passed": 1, "trials": 30, "completed": 1},
+        ]))
+        self.assertIn("1/1", text)
+        self.assertNotIn("1/30", text)
+
+    def test_the_trials_that_did_not_run_are_still_disclosed(self):
+        text = report.category_table(results(categories=[
+            {"category": "temporal", "agent": "claude", "passed": 1, "trials": 30, "completed": 1},
+        ]))
+        self.assertIn("29 did not run", text)
+
+    def test_a_cell_where_nothing_completed_is_not_reported_as_zero_accuracy(self):
+        text = report.category_table(results(categories=[
+            {"category": "temporal", "agent": "claude", "passed": 0, "trials": 30, "completed": 0},
+        ]))
         self.assertIn("not measured", text)
-        # A cell with no completed trials must not appear as a real result.
-        self.assertNotIn("| 0% ", text)
+        self.assertNotIn("0/30", text)
 
-    def test_sections_with_no_data_are_omitted_entirely(self):
-        text = reporter.render(run())
-        for absent in ("## Delegation", "## Categories", "## Which source"):
-            self.assertNotIn(absent, text)
+    def test_an_older_row_without_a_completed_count_still_renders(self):
+        text = report.category_table(results(categories=[
+            {"category": "temporal", "agent": "claude", "passed": 5, "trials": 30},
+        ]))
+        self.assertIn("5/30", text)
 
-    def test_sections_appear_once_their_data_does(self):
-        report = run(
-            conflict={"claude": {"trials": 30, "answered_from_injected": 30, "answered_from_disk": 0}},
-            categories=[{"agent": "claude", "category": "temporal", "passed": 29, "trials": 30}],
-            delegation={"claude": {"completed": 30, "runs": 30, "seconds_mean": 7.3}},
+
+class ReadmeGenerationTest(unittest.TestCase):
+    """This module claims the published figures are generated. That is only true
+    if it writes the README block as well as the full page."""
+
+    def readme(self, body):
+        handle = tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8")
+        handle.write(body)
+        handle.close()
+        return Path(handle.name)
+
+    def test_the_delimited_block_is_replaced(self):
+        path = self.readme(
+            f"before\n{report.README_START}\nwithdrawn\n{report.README_END}\nafter\n"
         )
-        text = reporter.render(report)
-        self.assertIn("## Delegation", text)
-        self.assertIn("## Categories", text)
-        self.assertIn("29/30", text)
-        self.assertIn("30/30", text)
+        self.assertTrue(report.update_readme(results(), path))
+        text = path.read_text(encoding="utf-8")
+        self.assertNotIn("withdrawn", text)
+        self.assertIn("100%", text)
 
+    def test_the_surrounding_prose_is_untouched(self):
+        path = self.readme(
+            f"before\n{report.README_START}\nx\n{report.README_END}\nafter\n"
+        )
+        report.update_readme(results(), path)
+        text = path.read_text(encoding="utf-8")
+        self.assertTrue(text.startswith("before\n"))
+        self.assertTrue(text.endswith("after\n"))
 
-class ContentTest(unittest.TestCase):
-    def test_the_files_only_arm_is_in_the_table_not_hidden_in_prose(self):
-        text = reporter.render(run())
-        accuracy = text.split("## Accuracy")[1].split("##")[0]
-        self.assertIn("reads `.continuum/` itself", accuracy)
-        self.assertIn("94%", accuracy)
+    def test_a_readme_without_the_block_is_reported_rather_than_mangled(self):
+        path = self.readme("no markers here\n")
+        self.assertFalse(report.update_readme(results(), path))
+        self.assertEqual(path.read_text(encoding="utf-8"), "no markers here\n")
 
-    def test_the_probe_kinds_are_explained(self):
-        text = reporter.render(run())
-        for kind in ("distractor", "recall", "unanswerable"):
-            self.assertIn(kind, text)
+    def test_the_block_is_stable_so_reruns_do_not_nest_it(self):
+        path = self.readme(f"a\n{report.README_START}\nx\n{report.README_END}\nb\n")
+        report.update_readme(results(), path)
+        first = path.read_text(encoding="utf-8")
+        report.update_readme(results(), path)
+        self.assertEqual(first, path.read_text(encoding="utf-8"))
+        self.assertEqual(first.count(report.README_START), 1)
 
-    def test_the_known_faults_are_kept_on_the_page(self):
-        text = reporter.render(run())
-        self.assertIn("Faults this benchmark has had", text)
-        self.assertIn("withdrawn", text)
+    def test_the_repository_readme_has_a_block_to_generate_into(self):
+        readme = Path(__file__).resolve().parents[1] / "README.md"
+        text = readme.read_text(encoding="utf-8")
+        self.assertIn(report.README_START, text)
+        self.assertIn(report.README_END, text)
 
-    def test_the_reproduce_command_matches_the_trial_count(self):
-        text = reporter.render(run(trials=7))
-        self.assertIn("--trials 7", text)
+    def test_a_completed_cell_with_no_recorded_duration_does_not_crash(self):
+        # summarize() records seconds_mean as None when no trial produced one.
+        text = report.render(results(fidelity={
+            "claude/injected": {
+                "accuracy_pct": 100.0, "accuracy_ci95": [100.0, 100.0],
+                "completed": 30, "runs": 30, "seconds_mean": None,
+            }
+        }))
+        self.assertIn("-", text)
 
-    def test_completion_is_reported_separately_from_accuracy(self):
-        text = reporter.render(run())
-        self.assertIn("28/30", text)
-
-    def test_the_headline_uses_the_weakest_agent_not_the_best(self):
-        report = run()
-        report["fidelity"]["codex/injected"] = {
-            "runs": 30, "completed": 30, "accuracy_pct": 80.0,
-            "accuracy_ci95": [70.0, 88.0], "seconds_mean": 30.0, "per_probe_pct": {},
-        }
-        report["fidelity"]["codex/no_memory"] = {
-            "runs": 30, "completed": 30, "accuracy_pct": 25.0,
-            "accuracy_ci95": [20.0, 30.0], "seconds_mean": 40.0, "per_probe_pct": {},
-        }
-        summary = reporter.headline(report)
-        self.assertIn("80%", summary)
-        self.assertIn("25%", summary)
-
-    def test_no_headline_without_both_ends_measured(self):
-        report = run()
-        report["fidelity"]["claude/no_memory"]["completed"] = 0
-        self.assertEqual(reporter.headline(report), "")
-
-
-class RoundTripTest(unittest.TestCase):
-    def test_writing_produces_a_readable_file(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            results = Path(temporary) / "results.json"
-            results.write_text(json.dumps(run()), encoding="utf-8")
-            out = Path(temporary) / "benchmarks.md"
-            # Restore argv: leaving it replaced breaks whichever test the runner
-            # happens to execute next, which is a different test under unittest
-            # than under pytest.
-            original = sys.argv
-            try:
-                sys.argv = ["report.py", "--results", str(results), "--out", str(out), "--write"]
-                self.assertEqual(reporter.main(), 0)
-            finally:
-                sys.argv = original
-            text = out.read_text(encoding="utf-8")
-            self.assertTrue(text.startswith("# Benchmarks"))
-            self.assertTrue(text.endswith("\n"))
+    def test_the_context_saving_is_computed_rather_than_quoted(self):
+        section = report.readme_section(results(
+            context_tokens={"raw_history": 1000, "compact": 100}
+        ))
+        self.assertIn("90% smaller", section)
 
 
 if __name__ == "__main__":

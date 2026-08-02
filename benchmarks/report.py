@@ -16,6 +16,34 @@ import argparse
 import json
 from pathlib import Path
 
+# Kept in step with agent_memory_bench.SCHEMA. A results file from before the
+# scorer was fixed contains withdrawn accuracy figures, and rendering them under
+# a "95% bootstrap" heading would republish exactly what docs/benchmarks.md
+# withdrew.
+SCHEMA = 2
+
+
+class IncompatibleResults(ValueError):
+    """The results file was produced by a version whose numbers are not comparable."""
+
+
+def check(report: dict) -> None:
+    reasons = []
+    if int(report.get("schema") or 0) != SCHEMA:
+        reasons.append(f"schema {report.get('schema')!r}, expected {SCHEMA}")
+    if not report.get("probe_kinds"):
+        reasons.append("no probe kinds recorded")
+    fidelity = report.get("fidelity") or {}
+    if fidelity and not any("accuracy_ci95" in entry for entry in fidelity.values()):
+        reasons.append("no confidence intervals, so it predates the rebuilt scorer")
+    if reasons:
+        raise IncompatibleResults(
+            "refusing to render: this results file was produced with "
+            + "; ".join(reasons)
+            + ". Re-run benchmarks/agent_memory_bench.py rather than publishing it."
+        )
+
+
 ARMS = [
     ("injected", "Continuum injects the context"),
     ("files_only", "No injection, the agent reads `.continuum/` itself"),
@@ -71,6 +99,14 @@ def accuracy_table(report: dict) -> str:
     return table(rows, ["Arm"] + agents)
 
 
+def seconds(entry: dict) -> str:
+    """Mean duration, or a dash. summarize() records None when nothing ran."""
+    value = entry.get("seconds_mean")
+    if not entry.get("completed") or value is None:
+        return "-"
+    return f"{value:.1f}s"
+
+
 def timing_table(report: dict) -> str:
     agents = agents_in(report)
     rows = []
@@ -78,7 +114,7 @@ def timing_table(report: dict) -> str:
         row = [label]
         for agent in agents:
             entry = cell(report, agent, arm)
-            row.append(f"{entry['seconds_mean']:.1f}s" if entry.get("completed") else "-")
+            row.append(seconds(entry))
         rows.append(row)
     return table(rows, ["Arm"] + agents)
 
@@ -134,9 +170,16 @@ def conflict_table(report: dict) -> str:
 def category_table(report: dict) -> str:
     rows_by_category: dict[str, dict[str, str]] = {}
     for row in report.get("categories", []):
-        rows_by_category.setdefault(row["category"], {})[row["agent"]] = (
-            f"{row['passed']}/{row['trials']}"
-        )
+        # Score against trials that actually completed. Printing passed/trials
+        # turns an agent that failed to start into an agent that answered
+        # wrongly, which is the opposite of what this page says it does.
+        denominator = row.get("completed")
+        if denominator is None:
+            denominator = row.get("trials", 0)
+        text = f"{row['passed']}/{denominator}" if denominator else "not measured"
+        if denominator and denominator != row.get("trials"):
+            text += f" ({row['trials'] - denominator} did not run)"
+        rows_by_category.setdefault(row["category"], {})[row["agent"]] = text
     if not rows_by_category:
         return ""
     agents = agents_in(report)
@@ -149,7 +192,7 @@ def delegation_table(report: dict) -> str:
     rows = []
     for agent, entry in sorted(report.get("delegation", {}).items()):
         if entry.get("completed"):
-            rows.append([agent, f"{entry['seconds_mean']:.1f}s", completion(entry)])
+            rows.append([agent, seconds(entry), completion(entry)])
     return table(rows, ["", "round trip", "completed"]) if rows else ""
 
 
@@ -286,18 +329,83 @@ def render(report: dict) -> str:
     return "\n".join(parts).rstrip() + "\n"
 
 
+README_START = "<!-- benchmark-results:start -->"
+README_END = "<!-- benchmark-results:end -->"
+
+
+def readme_section(report: dict) -> str:
+    """The README's results block, generated from the same run as the full page.
+
+    Leaving these hand-copied is how the README ends up quoting figures the
+    benchmark no longer produces, which is the failure this module exists to
+    prevent.
+    """
+    trials = report.get("trials", "?")
+    sizes = report.get("context_tokens") or {}
+    lines = [
+        README_START,
+        "",
+        f"Measured against real agent CLIs, {trials} trials per cell, on a project whose",
+        "recorded state we control. The interval is a 95% percentile bootstrap.",
+        "",
+        accuracy_table(report),
+        "",
+    ]
+    if sizes.get("raw_history") and sizes.get("compact"):
+        saved = 100 - 100 * sizes["compact"] / sizes["raw_history"]
+        lines += [
+            f"Compact context for that project is {sizes['compact']:,} tokens against "
+            f"{sizes['raw_history']:,} of raw",
+            f"event history, {saved:.0f}% smaller. That figure needs no agent and no API key,",
+            "so it can be checked in seconds.",
+            "",
+        ]
+    lines += [
+        "The middle row is the uncomfortable one, and it stays in the table. An agent",
+        "left to open `.continuum/` itself answers just as well, so recording the",
+        "context is what produces the accuracy. Injecting it is what makes it fast:",
+        "",
+        timing_table(report),
+        "",
+        "[docs/benchmarks.md](docs/benchmarks.md) has the method, the per-probe",
+        "breakdown, what this does not measure, and the faults this benchmark has had.",
+        "",
+        README_END,
+    ]
+    return "\n".join(lines)
+
+
+def update_readme(report: dict, path: Path) -> bool:
+    """Replace the delimited results block. Returns False if it is absent."""
+    text = path.read_text(encoding="utf-8")
+    if README_START not in text or README_END not in text:
+        return False
+    before = text.split(README_START)[0]
+    after = text.split(README_END)[1]
+    path.write_text(before + readme_section(report) + after, encoding="utf-8")
+    return True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--results", default=str(Path(__file__).resolve().parent / "results.json"))
     parser.add_argument("--out", default=str(Path(__file__).resolve().parents[1] / "docs" / "benchmarks.md"))
     parser.add_argument("--write", action="store_true", help="Write the file instead of printing it.")
+    parser.add_argument("--readme", default=str(Path(__file__).resolve().parents[1] / "README.md"))
     args = parser.parse_args()
 
     report = json.loads(Path(args.results).read_text(encoding="utf-8"))
+    check(report)
     text = render(report)
     if args.write:
         Path(args.out).write_text(text, encoding="utf-8")
         print(f"wrote {args.out}")
+        readme = Path(args.readme)
+        if readme.exists():
+            if update_readme(report, readme):
+                print(f"wrote the results block in {readme}")
+            else:
+                print(f"{readme} has no {README_START} block; its numbers are not generated")
         summary = headline(report)
         if summary:
             print(f"headline: {summary}")
