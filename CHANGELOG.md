@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.12.0 - Alpha
+
+Search that understands the question, workflows agents can drive, and a setup
+that asks instead of assuming.
+
+- `search_memory`, the tool agents actually call, ranked results with a SQL
+  `LIKE` over the payload. It now uses SQLite's FTS5 with BM25 scoring, so
+  "payment rename" finds "renamed the payment client" and results come back in
+  a useful order. FTS5 is part of the standard library, so this needs no model,
+  no service and no download, and the index is built incrementally.
+- Embeddings are now an optional second tier rather than the only semantic
+  option. When a project has them and the local model answers, semantic hits
+  merge ahead of the lexical ones; when it does not, search reports that it
+  matched on wording and carries on. Continuum's dependencies are unchanged.
+- Added `list_teams`, `plan_workflow`, `run_workflow` and `get_workflow` to the
+  MCP server. An agent can now plan a multi-agent workflow and run it, which
+  previously existed only as a CLI command. Planning executes nothing.
+  Running requires an explicit list of files the writing roles may edit, the
+  same gate `continuum team run --execute` enforces.
+- `continuum install` asks what else you want when a terminal is attached: it
+  can start a local Ollama, download the embedding model, index what you have
+  already recorded, and pick a model to write session summaries. It never
+  installs Ollama itself, and prints where to get it instead. `--yes` skips the
+  questions, which is also the behaviour with no terminal attached.
+
 ## 0.11.0 - Alpha
 
 Agent-agnostic release: the daily loop is one command, and Continuum is no

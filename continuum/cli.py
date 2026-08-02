@@ -39,6 +39,14 @@ from .benchmark import capture_task, compare_captures, load_capture, render_comp
 from .secrets_scan import scan_text
 from .roi import render_roi, roi_summary
 from .providers import DEFAULT_PROVIDERS, ProviderError, ProviderManager
+from .retrieval import search as retrieval_search
+from .setup_ui import (
+    ask_yes_no as ask_setup_yes_no,
+    configure_handoff_model,
+    enable_semantic_search,
+    index_existing_memory,
+    interactive as setup_is_interactive,
+)
 from .services import ServiceError, ServiceManager
 from .teams import PRESETS, TeamError, TeamManager
 from .worktrees import WorktreeError, WorktreeManager
@@ -700,15 +708,8 @@ def hook_session_end(args: argparse.Namespace) -> int:
     return 0
 
 
-def install_cmd(args: argparse.Namespace) -> int:
-    store = store_from(args)
-    if not store.config_file.exists():
-        store.initialize(DEFAULT_CONTEXT_LIMIT, DEFAULT_THRESHOLD)
-    only = args.only or None
-    if args.dry_run:
-        targets = detect_agents() if not only else [t for t in AGENT_TARGETS if t.id in only]
-        print(f"Would install Continuum for: {', '.join(target.label for target in targets) or 'nothing detected'}")
-        return 0
+def connect_agents(store: MemoryStore, only: list[str] | None) -> int:
+    """Wire Continuum into each detected agent and print what happened."""
     results = install_integrations(store, only)
     if not results:
         print("No supported AI agents detected. Install one, then rerun `continuum install`.")
@@ -720,10 +721,49 @@ def install_cmd(args: argparse.Namespace) -> int:
     installed = sum(1 for item in results if item.status == INSTALLED_STATUS)
     skipped = [item for item in results if item.status == SKIPPED_STATUS]
     print()
-    print(f"Continuum is set up for {len({item.target for item in results})} agent target(s); {installed} newly written.")
+    print(f"Connected {len({item.target for item in results})} agent target(s); {installed} newly written.")
     if skipped:
-        print(f"{len(skipped)} needed attention — see the lines marked ! above.")
-    print("Your agents now read project context on their own. Nothing else to run.")
+        print(f"{len(skipped)} needed attention. See the lines marked ! above.")
+    return installed
+
+
+def install_cmd(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    if not store.config_file.exists():
+        store.initialize(DEFAULT_CONTEXT_LIMIT, DEFAULT_THRESHOLD)
+    only = args.only or None
+    if args.dry_run:
+        targets = detect_agents() if not only else [t for t in AGENT_TARGETS if t.id in only]
+        print(f"Would install Continuum for: {', '.join(target.label for target in targets) or 'nothing detected'}")
+        return 0
+
+    guided = setup_is_interactive() and not args.yes and not only
+    print(f"Setting up Continuum in {store.project}")
+    print()
+    print("Connecting your AI tools")
+    connect_agents(store, only)
+
+    if not guided:
+        print("Your agents now read project context on their own. Nothing else to run.")
+        if not args.yes and not setup_is_interactive():
+            print("Run `continuum install` in a terminal to also set up search and summaries.")
+        return 0
+
+    print()
+    print("Search")
+    search_state = "search matches wording only"
+    if ask_setup_yes_no("  Set up meaning-based search as well as word matching?", True):
+        search_state = enable_semantic_search(store)
+        if "wording and meaning" in search_state:
+            print(f"  {index_existing_memory(store)}")
+    print(f"  {search_state}")
+
+    print()
+    print("Summaries")
+    print(f"  {configure_handoff_model(store)}")
+
+    print()
+    print("Done. Your agents now read project context on their own.")
     return 0
 
 
@@ -1255,11 +1295,13 @@ def doctor(args: argparse.Namespace) -> int:
 
 def search(args: argparse.Namespace) -> int:
     store = store_from(args)
-    results = store.search(args.query, args.limit)
+    results, strategy = retrieval_search(store, args.query, args.limit)
     for result in results:
         print(f"M{result['id']} {result['created_at']} {result['kind']}: {json.dumps(result['payload'])}")
     if not results:
         print("No matching local memory events.")
+    else:
+        print(f"Matched by {strategy}.")
     return 0
 
 
@@ -2282,6 +2324,10 @@ def parser(collapse: bool = True) -> argparse.ArgumentParser:
     )
     install_parser.add_argument("--only", action="append", help="Install for one named agent (repeatable).")
     install_parser.add_argument("--dry-run", action="store_true", help="Show what would be installed.")
+    install_parser.add_argument(
+        "-y", "--yes", action="store_true",
+        help="Connect agents and skip the questions about search and summaries.",
+    )
     install_parser.set_defaults(func=install_cmd)
 
     hook_cmd = commands.add_parser("hook", help="Entry points agents call automatically; not meant to be typed.")
