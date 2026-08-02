@@ -720,14 +720,15 @@ class ExitHandoffTest(unittest.TestCase):
             handoff = (project / ".continuum" / "latest_handoff.md").read_text(encoding="utf-8")
             self.assertIn("exited with code 3", handoff)
 
-    def test_checkpoint_handoff_is_not_overwritten_on_exit(self):
+    def test_a_quiet_checkpointed_session_keeps_its_checkpoint_handoff(self):
         with tempfile.TemporaryDirectory() as temporary:
             project = Path(temporary) / "repo"
             store = MemoryStore(project)
             store.initialize(100000, 0.8)
+            store.event("handoff", {"task": "checkpoint task", "next_step": "checkpoint next"})
             store.write_handoff("checkpoint task", "checkpoint next")
             with redirect_stdout(StringIO()):
-                finalize_handoff(store, "claude", "session-1", ["output\n"], 0, True)
+                finalize_handoff(store, "claude", "session-1", [], 0, True, output_after_checkpoint=False)
             handoff = (project / ".continuum" / "latest_handoff.md").read_text(encoding="utf-8")
             self.assertIn("checkpoint task", handoff)
 
@@ -796,6 +797,107 @@ class ShellShimContextTest(unittest.TestCase):
             self.assertNotIn("shell shim", text)
             chars = int(text.split("CHARS")[1].split()[0])
             self.assertGreater(chars, 200)
+
+
+class ExitHandoffDerivationTest(unittest.TestCase):
+    """Without a handoff model there is nothing to summarize the session in
+    prose, but repeating the previous handoff verbatim tells the next agent to
+    redo work that may already be done."""
+
+    def store(self, temporary):
+        store = MemoryStore(Path(temporary) / "repo")
+        store.initialize(100000, 0.8)
+        store.event("handoff", {"task": "add retries", "next_step": "write the retry test"})
+        store.write_handoff("add retries", "write the retry test")
+        return store
+
+    def test_a_session_that_changed_files_flags_the_carried_next_step(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(temporary)
+            with patch.object(MemoryStore, "git_or_watch_changes", lambda _self: ["M retry.py"]):
+                with redirect_stdout(StringIO()):
+                    finalize_handoff(store, "claude", "S1", ["out"], 0, False)
+            handoff = (store.project / ".continuum" / "latest_handoff.md").read_text(encoding="utf-8")
+            self.assertIn("add retries", handoff)
+            self.assertIn("retry.py", handoff)
+            self.assertIn("Check whether that finished the previous step", handoff)
+            self.assertIn("write the retry test", handoff)
+
+    def test_the_annotation_does_not_stack_up_over_sessions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(temporary)
+            with patch.object(MemoryStore, "git_or_watch_changes", lambda _self: ["M retry.py"]):
+                with redirect_stdout(StringIO()):
+                    finalize_handoff(store, "claude", "S1", ["out"], 0, False)
+                    finalize_handoff(store, "codex", "S2", ["out"], 0, False)
+            handoff = (store.project / ".continuum" / "latest_handoff.md").read_text(encoding="utf-8")
+            self.assertEqual(handoff.count("Check whether that finished"), 1)
+            self.assertIn("write the retry test", handoff)
+
+    def test_continuum_own_files_do_not_crowd_out_the_users_edits(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(temporary)
+            noisy = ["?? AGENTS.md", "?? .continuum/config.json", "?? .claude/settings.json", "M retry.py"]
+            with patch.object(MemoryStore, "git_or_watch_changes", lambda _self: noisy):
+                with redirect_stdout(StringIO()):
+                    finalize_handoff(store, "claude", "S1", ["out"], 0, False)
+            handoff = (store.project / ".continuum" / "latest_handoff.md").read_text(encoding="utf-8")
+            step = handoff.split("## Next Step")[1]
+            self.assertIn("retry.py", step)
+            self.assertNotIn("AGENTS.md", step)
+            self.assertNotIn(".claude", step)
+
+    def test_a_session_that_only_touched_scaffolding_carries_the_step_untouched(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(temporary)
+            with patch.object(MemoryStore, "git_or_watch_changes", lambda _self: ["?? AGENTS.md"]):
+                with redirect_stdout(StringIO()):
+                    finalize_handoff(store, "claude", "S1", ["out"], 0, False)
+            handoff = (store.project / ".continuum" / "latest_handoff.md").read_text(encoding="utf-8")
+            self.assertNotIn("Check whether", handoff)
+
+    def test_an_unchanged_session_carries_the_next_step_untouched(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(temporary)
+            with patch.object(MemoryStore, "git_or_watch_changes", lambda _self: []):
+                with redirect_stdout(StringIO()):
+                    finalize_handoff(store, "claude", "S1", ["out"], 0, False)
+            handoff = (store.project / ".continuum" / "latest_handoff.md").read_text(encoding="utf-8")
+            self.assertIn("write the retry test", handoff)
+            self.assertNotIn("Check whether", handoff)
+
+    def test_work_after_a_checkpoint_is_not_dropped(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(temporary)
+            store.write_handoff("`claude` reached its estimated context checkpoint.", "resume elsewhere")
+            with patch.object(MemoryStore, "git_or_watch_changes", lambda _self: ["M late.py"]):
+                with redirect_stdout(StringIO()):
+                    finalize_handoff(store, "claude", "S1", ["late"], 0, True, output_after_checkpoint=True)
+            handoff = (store.project / ".continuum" / "latest_handoff.md").read_text(encoding="utf-8")
+            self.assertIn("late.py", handoff)
+
+    def test_a_failure_after_a_checkpoint_is_recorded(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(temporary)
+            with redirect_stdout(StringIO()):
+                finalize_handoff(store, "claude", "S1", [], 3, True, output_after_checkpoint=False)
+            handoff = (store.project / ".continuum" / "latest_handoff.md").read_text(encoding="utf-8")
+            self.assertIn("exited with code 3", handoff)
+
+
+class AgentAddFlagTest(unittest.TestCase):
+    def test_the_documented_flag_form_registers(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            with redirect_stdout(StringIO()):
+                self.assertEqual(
+                    main(["agent", "add", "myagent", "--inject", "flag", "--flag=--task",
+                          "--project", str(project)]),
+                    0,
+                )
+            spec = agents.read_agents(MemoryStore(project))["myagent"]
+            self.assertEqual(spec["flag"], "--task")
+            self.assertEqual(agents.launch_args(spec, [], "CTX")[:2], ["--task", "CTX"])
 
 
 class HelpSurfaceTest(unittest.TestCase):

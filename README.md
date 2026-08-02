@@ -180,7 +180,8 @@ it once:
 
 ```bash
 # Agent expects a flag, e.g. myagent --task "..."
-continuum agent add myagent --inject flag --flag --task
+# Note the "=" — without it, argparse reads --task as another option.
+continuum agent add myagent --inject flag --flag=--task
 
 # Agent expects a subcommand, e.g. otheragent run "..."
 continuum agent add otheragent --inject subcommand --subcommand run

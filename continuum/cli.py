@@ -18,6 +18,7 @@ from typing import Any
 
 from . import __version__
 from .core import (
+    compact_text,
     DEFAULT_CONTEXT_LIMIT,
     DEFAULT_THRESHOLD,
     MAX_SESSION_EXCERPT_LINES,
@@ -177,6 +178,84 @@ def checkpoint_handoff(store: MemoryStore, session_tail: list[str], fallback: tu
     store.write_handoff(*(generated or fallback))
 
 
+# Files Continuum writes itself. They show up as changes on a first run and
+# would otherwise crowd the user's own edits out of the handoff.
+SCAFFOLDING = (
+    "AGENTS.md",
+    "CLAUDE.md",
+    "GEMINI.md",
+    "IMPLEMENTED.md",
+    "DECISIONS.md",
+    "TASKS.md",
+    ".continuum",
+    ".claude",
+    ".codex",
+    ".gemini",
+    ".cursor",
+    ".windsurf",
+    ".clinerules",
+)
+
+
+def is_continuum_scaffolding(entry: str) -> bool:
+    # Entries arrive as git short-status lines such as "?? AGENTS.md".
+    # Strip the "./" prefix rather than lstrip("./"), which would also eat the
+    # leading dot of a name like ".continuum".
+    path = entry.split(maxsplit=1)[-1].strip().replace("\\", "/").removeprefix("./")
+    return any(path == name or path.startswith(name + "/") for name in SCAFFOLDING)
+
+
+def recorded_next_step(store: MemoryStore) -> tuple[str | None, str | None]:
+    """The last handoff's task, and the next step as originally written.
+
+    Continuum annotates a carried-forward next step to say it has not been
+    confirmed. Rebuilding from the original rather than the annotated text is
+    what stops those annotations stacking up over successive sessions.
+    """
+    for item in reversed(store.recent_events(100)):
+        if item["kind"] == "handoff":
+            payload = item["payload"]
+            base = payload.get("base_next_step") or payload.get("next_step")
+            return payload.get("task"), base
+    return None, None
+
+
+def session_handoff(
+    store: MemoryStore,
+    agent: str,
+    session_id: str,
+    returncode: int,
+) -> tuple[str, str | None, str | None]:
+    """Derive a handoff from what the session actually did, without a model.
+
+    With no handoff model configured there is nothing to summarize the session
+    in prose, but the recorded facts still say more than the previous handoff
+    repeated verbatim: a session ran, and these files changed. Carrying the old
+    next step forward unmarked is what would mislead the next agent, so it is
+    carried forward and labelled unconfirmed.
+    """
+    task, base_next = recorded_next_step(store)
+    if returncode != 0:
+        return (
+            f"`{agent}` session `{session_id}` exited with code {returncode}.",
+            "Inspect the recorded session log, then continue or rerun the agent.",
+            base_next,
+        )
+    if not task:
+        return (
+            f"Wrapped `{agent}` session `{session_id}` completed.",
+            "Review the output and record the next action.",
+            None,
+        )
+    changed = [item for item in store.git_or_watch_changes() if not is_continuum_scaffolding(item)]
+    if not changed:
+        return task, base_next, base_next
+    listed = ", ".join(changed[:5]) + (f" (+{len(changed) - 5} more)" if len(changed) > 5 else "")
+    carried = f" Then continue: {base_next}" if base_next else ""
+    next_step = f"`{agent}` changed {listed}. Check whether that finished the previous step.{carried}"
+    return task, compact_text(next_step, 300), base_next
+
+
 def finalize_handoff(
     store: MemoryStore,
     agent: str,
@@ -184,37 +263,38 @@ def finalize_handoff(
     session_tail: list[str],
     returncode: int,
     checkpoint_triggered: bool,
+    output_after_checkpoint: bool = True,
 ) -> None:
     """Record the continuation handoff when a wrapped agent session ends.
 
     This is what removes the manual save from the daily loop: every session
-    that Continuum launches leaves a usable handoff behind on its own. A
-    checkpoint fired late in the same session already summarized the same
-    material, so it is kept rather than paid for twice.
+    Continuum launches leaves a usable handoff behind on its own.
+
+    A checkpoint that fired mid-session already summarized the material up to
+    that point, so it is kept — but only if nothing happened afterwards. A
+    session that kept working past its checkpoint, or that then failed, would
+    otherwise hand the next agent a handoff missing everything that followed.
     """
-    if checkpoint_triggered:
+    if checkpoint_triggered and not output_after_checkpoint and returncode == 0:
         return
-    fallback = store.latest_task() or (
-        f"Wrapped `{agent}` session `{session_id}` completed.",
-        "Review the output and record the next action.",
-    )
-    if returncode != 0:
-        fallback = (
-            f"`{agent}` session `{session_id}` exited with code {returncode}.",
-            "Inspect the recorded session log, then continue or rerun the agent.",
-        )
+    task, next_step, base_next = session_handoff(store, agent, session_id, returncode)
     generated = None
     if session_tail:
         try:
             generated = generate_handoff(store, session_tail=session_tail)
         except ProviderError as error:
             print(f"[Handoff LLM unavailable ({error}); kept the recorded handoff.]", file=sys.stderr)
-    task = generated or fallback
-    store.event("handoff", {"task": task[0], "next_step": task[1], "session": session_id})
-    store.write_handoff(*task)
-    print(f"Saved: {task[0]}")
-    if task[1]:
-        print(f"Next:  {task[1]}")
+    if generated:
+        task, next_step = generated
+        base_next = next_step
+    store.event(
+        "handoff",
+        {"task": task, "next_step": next_step, "base_next_step": base_next, "session": session_id},
+    )
+    store.write_handoff(task, next_step)
+    print(f"Saved: {task}")
+    if next_step:
+        print(f"Next:  {next_step}")
     print("Continue anywhere with `continuum go`.")
 
 
@@ -878,6 +958,7 @@ def run_agent(args: argparse.Namespace, resumed: bool = False, injected_context:
     print(f"Recording output: {log_file}")
     tokens = 0
     triggered = False
+    checkpoint_tokens = 0
     tail: list[str] = []
     try:
         command = agent_command(spec, agent_args)
@@ -906,6 +987,7 @@ def run_agent(args: argparse.Namespace, resumed: bool = False, injected_context:
                 tail = tail[-MAX_SESSION_EXCERPT_LINES:]
                 if not triggered and tokens >= int(limit * threshold):
                     triggered = True
+                    checkpoint_tokens = tokens
                     store.event("context_checkpoint", {"summary": f"Estimated tokens: {tokens}"})
                     checkpoint_handoff(
                         store,
@@ -931,7 +1013,9 @@ def run_agent(args: argparse.Namespace, resumed: bool = False, injected_context:
     write_text(store.state_dir / "token_usage.json", json.dumps(usage, indent=2) + "\n")
     store.event("agent_exit", {"summary": f"{args.agent} exited with {returncode}", "returncode": returncode})
     store.write_session_note(session_id, args.agent, returncode, tokens, tail)
-    finalize_handoff(store, args.agent, session_id, tail, returncode, triggered)
+    finalize_handoff(
+        store, args.agent, session_id, tail, returncode, triggered, tokens > checkpoint_tokens
+    )
     return returncode
 
 
@@ -977,12 +1061,13 @@ def run_interactive_agent(args: argparse.Namespace, resumed: bool = False, injec
     print(f"Recording output: {log_file}")
     tokens = 0
     triggered = False
+    checkpoint_tokens = 0
     tail: list[str] = []
     try:
         command = agent_command(spec, agent_args)
         with log_file.open("w", encoding="utf-8") as output:
             def capture(chunk: str) -> None:
-                nonlocal tokens, triggered, tail
+                nonlocal tokens, triggered, checkpoint_tokens, tail
                 print(chunk, end="", flush=True)
                 output.write(chunk)
                 output.flush()
@@ -993,6 +1078,7 @@ def run_interactive_agent(args: argparse.Namespace, resumed: bool = False, injec
                     store.event("terminal_adapter_status", event.payload(args.agent, adapter.name))
                 if not triggered and tokens >= int(limit * threshold):
                     triggered = True
+                    checkpoint_tokens = tokens
                     store.event("context_checkpoint", {"summary": f"Estimated tokens: {tokens}"})
                     checkpoint_handoff(
                         store,
@@ -1036,7 +1122,9 @@ def run_interactive_agent(args: argparse.Namespace, resumed: bool = False, injec
         {"summary": f"{args.agent} interactive terminal exited with {returncode}", "returncode": returncode},
     )
     store.write_session_note(session_id, args.agent, returncode, tokens, tail)
-    finalize_handoff(store, args.agent, session_id, tail, returncode, triggered)
+    finalize_handoff(
+        store, args.agent, session_id, tail, returncode, triggered, tokens > checkpoint_tokens
+    )
     return returncode
 
 

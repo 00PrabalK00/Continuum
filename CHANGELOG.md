@@ -68,6 +68,17 @@ longer tied to a fixed set of agent CLIs.
   entry points those hooks call. With them installed, a Claude Code session
   begins with the project context already loaded and records a handoff when it
   ends, so Continuum needs no commands during normal work.
+- The exit handoff is derived from the session rather than repeating the last
+  one. Without a handoff model there is nothing to summarize the work in prose,
+  but the files a session changed are still recorded, and the previous next step
+  is carried forward marked unconfirmed instead of restated as if fresh. The
+  annotation is rebuilt from the original each time, so it does not stack up,
+  and Continuum's own scaffolding files are excluded so the user's edits are
+  what show.
+- A session that kept working past its context checkpoint, or that then failed,
+  now records a handoff at exit. Previously the checkpoint always won, so
+  everything after it — including a failure — was missing from what the next
+  agent received.
 - Fixed silent context truncation on Windows. Agents that resolve to a
   `.cmd`/`.bat` shim run through cmd.exe, which ends the command line at the
   first newline, so the injected handoff arrived as its first line only —
