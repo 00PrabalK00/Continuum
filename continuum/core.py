@@ -1292,6 +1292,54 @@ The planner role is preserving architecture intent and constraints while the exe
             text = compact_text(text, CONTEXT_BUDGETS[mode] * 4)
         return {"role": role, "mode": mode, "estimated_tokens": estimate_tokens(text), "text": text}
 
+    def recent_handoffs(self, limit: int = 30) -> list[dict[str, Any]]:
+        """Recent handoff events, newest first.
+
+        Selecting on kind rather than slicing the tail of the event log matters
+        because a busy project can record hundreds of ordinary events between
+        two handoffs, which would push the earlier handoff out of any fixed
+        window over all events.
+        """
+        if not self.db_file.exists():
+            return []
+        connection = self.connect()
+        rows = connection.execute(
+            "SELECT id, created_at, kind, payload FROM events WHERE kind = 'handoff' "
+            "ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        connection.close()
+        return [
+            {"id": row[0], "created_at": row[1], "kind": row[2], "payload": json.loads(row[3])}
+            for row in rows
+        ]
+
+    def earlier_tasks(self, limit: int = 4, exclude: str = "") -> list[str]:
+        """Distinct earlier handoff tasks, most recent first.
+
+        Compact context otherwise carries only the current task, so a decision
+        taken a few sessions ago disappears once enough events pile up on top of
+        it. Keeping a short trail of what was previously being worked on is what
+        lets an agent answer questions about earlier sessions without going and
+        reading the raw event log.
+        """
+        # Callers pass the task after it has been truncated for storage, while
+        # the recorded event still holds the full text. Both sides are put
+        # through the same truncation so a long task is not selected as its own
+        # earlier entry.
+        normalized_exclude = compact_text(exclude).lower()
+        seen: list[str] = []
+        for item in self.recent_handoffs(60):
+            task = compact_text(str(item["payload"].get("task") or "").strip())
+            if not task or self.is_synthetic_task(task):
+                continue
+            if task.lower() == normalized_exclude or task in seen:
+                continue
+            seen.append(task)
+            if len(seen) >= limit:
+                break
+        return seen
+
     def latest_task(self) -> tuple[str, str | None] | None:
         fallback: tuple[str, str | None] | None = None
         for item in reversed(self.recent_events(100)):
@@ -1427,12 +1475,16 @@ Project: `{self.project}`
 Read `.continuum/current_state.md` and `.continuum/latest_handoff.md`. Continue
 the current task from the existing state and complete the next step above.
 """
+        earlier = self.earlier_tasks(exclude=task)
+        earlier_line = (
+            "Earlier: " + compact_text("; ".join(earlier), 420) + "\n" if earlier else ""
+        )
         current = f"""# Current
 
 Task: {compact_text(task, 360)}
 Changes: {compact_text("; ".join(self.git_or_watch_changes()), 260)}
 Blocker: {compact_text((errors[-1] if errors else "None recorded."), 180)}
-Next: {compact_text(next_action, 300)}
+{earlier_line}Next: {compact_text(next_action, 300)}
 """
         state = f"""# Current State
 
