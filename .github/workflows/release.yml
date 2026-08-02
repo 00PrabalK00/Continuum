@@ -29,11 +29,22 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
       - run: pip install .
       - run: python -m unittest discover -s tests
+      - run: python -m unittest discover -s examples/multi-agent-handoff
+      # The same smoke checks test.yml runs. Publishing gates on this job, and
+      # unit tests passing does not mean the installed entry points work.
+      - run: python -m continuum --help
+      - run: continuum --version
+      - run: node --check continuum/ui/app.js
+      - run: node bin/continuum.js --version
+      - run: npm pack --dry-run
 
   version-matches-tag:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -62,7 +73,10 @@ jobs:
 
   pypi:
     needs: [test, version-matches-tag]
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Only a tag push publishes. workflow_dispatch also carries a tag ref when
+    # run against one, so matching on the ref alone would publish during what
+    # the docs call a dry run.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -81,7 +95,7 @@ jobs:
 
   npm:
     needs: [test, version-matches-tag]
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     environment: release
     permissions:
