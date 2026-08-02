@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.12.0 - Alpha
+
+Search that understands the question, workflows agents can drive, and a setup
+that asks instead of assuming.
+
+- `search_memory`, the tool agents actually call, ranked results with a SQL
+  `LIKE` over the payload. It now uses SQLite's FTS5 with BM25 scoring, so
+  "payment rename" finds "renamed the payment client" and results come back in
+  a useful order. FTS5 is part of the standard library, so this needs no model,
+  no service and no download, and the index is built incrementally.
+- Embeddings are now an optional second tier rather than the only semantic
+  option. When a project has them and the local model answers, semantic hits
+  merge ahead of the lexical ones; when it does not, search reports that it
+  matched on wording and carries on. Continuum's dependencies are unchanged.
+- Added `list_teams`, `plan_workflow`, `run_workflow` and `get_workflow` to the
+  MCP server. An agent can now plan a multi-agent workflow and run it, which
+  previously existed only as a CLI command. Planning executes nothing.
+  Running requires an explicit list of files the writing roles may edit, the
+  same gate `continuum team run --execute` enforces.
+- Search fuses the ranked text and meaning results by reciprocal rank instead
+  of listing one source before the other. Taking the semantic list first filled
+  every slot with its full quota of candidates whatever their similarity, so an
+  exact wording match could disappear entirely and enabling embeddings could
+  make search worse than leaving them off.
+- `run_workflow` runs the workflow `plan_workflow` returned, by id. It called
+  `execute`, which plans again, so following the documented flow left the
+  planned workflow and its tasks permanently PLANNED while a second workflow
+  ran.
+- Handoffs are embedded as they are recorded, so meaning-based search stays
+  level with the log rather than reflecting only what existed at setup. Setup
+  now indexes every recorded handoff rather than those inside a 200-event
+  window, and skips ones already indexed.
+- Ollama summaries are offered only when a chat model is actually downloaded,
+  and the model found is what gets recorded. A fresh Ollama installed for search
+  may hold only the embedding model, in which case every summary attempt failed
+  and fell back while setup reported success.
+- When Ollama is missing, `continuum install` offers to install it through the
+  platform's package manager, printing the exact command before asking so
+  agreeing means agreeing to something specific. The default answer is no, and
+  nothing is installed without an explicit yes. Where no package manager is
+  available it prints the download address instead.
+- `continuum install` asks what else you want when a terminal is attached: it
+  can start a local Ollama, download the embedding model, index what you have
+  already recorded, and pick a model to write session summaries. It never
+  installs Ollama itself, and prints where to get it instead. `--yes` skips the
+  questions, which is also the behaviour with no terminal attached.
+
 ## 0.11.0 - Alpha
 
 Agent-agnostic release: the daily loop is one command, and Continuum is no

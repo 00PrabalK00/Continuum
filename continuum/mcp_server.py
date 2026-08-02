@@ -39,7 +39,11 @@ def tool_definitions() -> list[dict[str, Any]]:
         },
         {
             "name": "search_memory",
-            "description": "Return compressed matching memory IDs for targeted expansion.",
+            "description": (
+                "Search recorded project memory by meaning and by wording, and return compressed "
+                "matching memory IDs for targeted expansion. Ask in your own words; an exact "
+                "phrase from the log is not required."
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -181,6 +185,68 @@ def tool_definitions() -> list[dict[str, Any]]:
             },
         },
         {
+            "name": "list_teams",
+            "description": (
+                "List the multi-agent teams available in this project, with the role each agent "
+                "plays and which provider runs it. Use before plan_workflow to pick a team."
+            ),
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "plan_workflow",
+            "description": (
+                "Plan a multi-agent workflow for a request without running anything. Returns the "
+                "ordered steps, the provider assigned to each, and a workflow id. Nothing is "
+                "executed and no file is touched, so this is safe to call to see what a team "
+                "would do."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "team": {"type": "string", "description": "Team name, from list_teams."},
+                    "request": {"type": "string", "description": "What the team should accomplish."},
+                    "task_type": {"type": "string", "description": "Optional route override."},
+                },
+                "required": ["team", "request"],
+            },
+        },
+        {
+            "name": "run_workflow",
+            "description": (
+                "Run the workflow that plan_workflow returned, executing each step's provider in "
+                "order with bounded context. Pass the workflow_id you were given, so the plan you "
+                "saw is the plan that runs. Roles that edit files may only write the paths listed "
+                "in allow_files, and a step that touches anything else fails the workflow. Pass an "
+                "empty list to run a read-only workflow. This starts other AI agents and can "
+                "change files, so confirm the plan with plan_workflow first."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "workflow_id": {
+                        "type": "string",
+                        "description": "The id returned by plan_workflow, for example W0001.",
+                    },
+                    "allow_files": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Exact paths a writing role may edit. Empty means read-only.",
+                    },
+                    "context_mode": {"type": "string", "enum": ["compact", "normal", "deep"]},
+                },
+                "required": ["workflow_id", "allow_files"],
+            },
+        },
+        {
+            "name": "get_workflow",
+            "description": "Read one workflow's steps and their status by id.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"workflow_id": {"type": "string"}},
+                "required": ["workflow_id"],
+            },
+        },
+        {
             "name": "get_external_sessions",
             "description": "List manually launched agent sessions explicitly attached to this project.",
             "inputSchema": {"type": "object", "properties": {}},
@@ -205,12 +271,14 @@ def call_tool(store: MemoryStore, name: str, arguments: dict[str, Any]) -> dict[
     elif name == "get_latest_handoff":
         text = read_note(store.state_dir / "latest_handoff.md")
     elif name == "search_memory":
-        results = store.search(str(arguments.get("query", "")), int(arguments.get("limit", 8)))
+        from .retrieval import search as search_memory
+
+        results, strategy = search_memory(store, str(arguments.get("query", "")), int(arguments.get("limit", 8)))
         text = "\n".join(
             f"M{item['id']} {item['created_at']} {item['kind']}: {json.dumps(item['payload'], ensure_ascii=True)}"
             for item in results
         ) or "No matching local memory events."
-        text = compact_text(text, CONTEXT_BUDGETS["retrieval_default"] * 4)
+        text = compact_text(f"Matched by {strategy}.\n" + text, CONTEXT_BUDGETS["retrieval_default"] * 4)
     elif name == "expand_memory":
         event = store.get_memory(int(arguments.get("memory_id", 0)))
         text = json.dumps(event, ensure_ascii=True, indent=2) if event else "Memory not found."
@@ -316,6 +384,88 @@ def call_tool(store: MemoryStore, name: str, arguments: dict[str, Any]) -> dict[
                 "\n\n[This exchange could not be written to shared memory, so the other agent "
                 "will not see it later. Continuum's memory is read-only from here, usually "
                 "because the agent running it sandboxes its MCP servers.]"
+            )
+    elif name == "list_teams":
+        from .teams import PRESETS, TeamManager
+
+        manager = TeamManager(store)
+        installed = manager.list()
+        lines = []
+        for team in installed:
+            try:
+                agents = manager.load(team).get("agents", {})
+            except ValueError:
+                continue
+            roles = ", ".join(f"{role} via {spec.get('provider')}" for role, spec in agents.items())
+            lines.append(f"{team}: {roles}")
+        text = "\n".join(lines) or "No teams installed in this project."
+        available = [preset for preset in PRESETS if preset not in installed]
+        if available:
+            text += "\n\nNot installed yet: " + ", ".join(sorted(available))
+            text += "\nInstall one with `continuum team init <name>`."
+    elif name == "plan_workflow":
+        from .orchestration import Orchestrator, OrchestrationError
+
+        try:
+            workflow = Orchestrator(store).plan(
+                str(arguments.get("team", "")).strip(),
+                str(arguments.get("request", "")).strip(),
+                str(arguments.get("task_type")) if arguments.get("task_type") else None,
+            )
+        except (OrchestrationError, ValueError) as error:
+            raise ValueError(str(error)) from error
+        steps = "\n".join(
+            f"{step['order']}. {step['role']} via {step['provider']} (task {step['task_id']})"
+            for step in workflow["steps"]
+        )
+        text = (
+            f"Planned {workflow['workflow_id']} on team {workflow['team']} "
+            f"({workflow['task_type']}). Nothing has run yet.\n\n{steps}\n\n"
+            "Run it with run_workflow, listing every path a writing role may edit."
+        )
+    elif name == "run_workflow":
+        from .orchestration import Orchestrator, OrchestrationError
+
+        allow_files = arguments.get("allow_files")
+        if not isinstance(allow_files, list):
+            raise ValueError(
+                "allow_files is required. Pass the exact paths a writing role may edit, "
+                "or an empty list to run a read-only workflow."
+            )
+        workflow_id = str(arguments.get("workflow_id", "")).strip()
+        if not workflow_id:
+            raise ValueError(
+                "workflow_id is required. Call plan_workflow first and pass back the id it "
+                "returned, so the plan you were shown is the one that runs."
+            )
+        try:
+            workflow = Orchestrator(store).run_planned(
+                workflow_id,
+                [str(path) for path in allow_files],
+                str(arguments.get("context_mode") or "compact"),
+            )
+        except (OrchestrationError, ValueError) as error:
+            raise ValueError(str(error)) from error
+        steps = "\n".join(
+            f"{step['order']}. {step['role']} via {step['provider']}: {step['status']}"
+            for step in workflow["steps"]
+        )
+        text = (
+            f"{workflow['workflow_id']} finished with status {workflow['status']}.\n\n{steps}\n\n"
+            "Each step's result is recorded; read it with get_agent_messages."
+        )
+    elif name == "get_workflow":
+        workflow = store.get_workflow(str(arguments.get("workflow_id", "")).strip())
+        if not workflow:
+            text = "Workflow not found."
+        else:
+            steps = "\n".join(
+                f"{step['order']}. {step['role']} via {step['provider']}: {step['status']}"
+                for step in workflow["steps"]
+            )
+            text = (
+                f"{workflow['workflow_id']} team={workflow['team']} status={workflow['status']}\n"
+                f"Request: {workflow['request']}\n\n{steps}"
             )
     elif name == "get_external_sessions":
         sessions = store.list_external_sessions(20)

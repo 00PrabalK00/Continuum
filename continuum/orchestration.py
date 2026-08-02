@@ -56,6 +56,31 @@ class Orchestrator:
         workflow = self.plan(team_name, request, task_type)
         return self._run_workflow(workflow, team, request, allowed_files, context_mode)
 
+    def run_planned(
+        self,
+        workflow_ref: str,
+        allowed_files: list[str] | None = None,
+        context_mode: str = "compact",
+    ) -> dict[str, Any]:
+        """Run a workflow that has already been planned, without planning again.
+
+        `execute` plans and runs in one call, which is right for `team run` but
+        wrong for a plan-then-run flow: the plan the caller was shown, and the
+        tasks created for it, would be abandoned in PLANNED while a second
+        workflow ran. Anything that hands a workflow id back to the user needs
+        to be able to run that same workflow.
+        """
+        workflow = self.store.get_workflow(workflow_ref)
+        if not workflow:
+            raise OrchestrationError(f"Unknown workflow: {workflow_ref}")
+        if workflow["status"] == "DONE":
+            raise OrchestrationError(f"Workflow {workflow['workflow_id']} already completed.")
+        if workflow["status"] == "RUNNING":
+            raise OrchestrationError(f"Workflow {workflow['workflow_id']} is already running.")
+        team = self.teams.load(workflow["team"])
+        self.teams.validate(team)
+        return self._run_workflow(workflow, team, workflow["request"], allowed_files, context_mode)
+
     def retry(
         self,
         workflow_ref: str,

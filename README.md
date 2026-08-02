@@ -27,8 +27,14 @@ Then, in any project you work on:
 continuum install
 ```
 
-That is the setup. Continuum finds the AI tools you already have and installs
-itself inside each one.
+That is the setup. Continuum finds the AI tools you already have, installs
+itself inside each one, then asks whether you also want meaning-based search and
+automatic session summaries. Say yes and it does the rest, including downloading
+a local embedding model if you want one.
+
+Answer nothing and press enter to take the defaults. `continuum install --yes`
+skips the questions, which is also what happens when there is no terminal
+attached, so scripts and CI keep working.
 
 Now use your AI the way you normally would:
 
@@ -96,10 +102,9 @@ works both ways, and from a terminal too:
 continuum ask codex "is the retry fix safe to ship?"
 ```
 
-Two things to know. Gemini needs you to sign in once: run `gemini` in a
-terminal and finish the browser login. Codex can answer other AIs fine, but for
-Codex to ask others you have to start it with
-`codex --sandbox danger-full-access`. That restriction is Codex's, not ours.
+Each AI needs to be signed in on your machine before Continuum can reach it,
+and some sandbox their tools by default, which can stop them starting another
+agent. Continuum reports which one is refusing and why rather than hanging.
 
 ---
 
@@ -152,6 +157,54 @@ event history.
 A re-measurement is underway with per-question scoring, adversarial and
 unanswerable probes, 30 trials per cell and confidence intervals.
 [docs/benchmarks.md](docs/benchmarks.md) records the method and what went wrong.
+
+---
+
+## Running a team of AIs
+
+One AI can also plan and run a whole sequence of others. Ask for it in
+conversation:
+
+```
+You:     Use Continuum to plan a workflow for fixing the retry test.
+
+Claude:  Planned W0001 on team local_agent_team.
+         1. tester via codex
+         Run it and codex takes the step.
+```
+
+Teams are named sets of roles, each bound to a provider, so `local_agent_team`
+might send exploration to Gemini, implementation to Claude and testing to Codex.
+List them with `continuum team list` and install one with
+`continuum team init <name>`.
+
+Planning never runs anything. Running a workflow needs an explicit list of files
+the writing roles may edit, and a step that touches anything else stops the
+workflow. From a terminal:
+
+```bash
+continuum team run local_agent_team "fix the retry test"
+continuum team run local_agent_team "fix the retry test" --execute --allow-file src/retry.py
+```
+
+---
+
+## Searching what you recorded
+
+Agents look things up in your project memory by meaning as well as by wording,
+so "which database did we pick" finds the session where you chose PostgreSQL
+even though neither word appears in the question.
+
+```bash
+continuum search "which database did we pick"
+```
+
+Word matching is ranked and always available, because SQLite provides it and
+nothing needs installing. Meaning-based matching needs a local embedding model,
+which `continuum install` offers to set up for you. Both are used together and
+neither crowds the other out, so an exact wording match is still found when
+meaning-based results are also available. Without a model, search works on
+wording alone and says so.
 
 ---
 
