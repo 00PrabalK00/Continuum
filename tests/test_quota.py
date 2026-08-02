@@ -221,9 +221,15 @@ class RoutingTest(unittest.TestCase):
 
         from continuum.cli import choose_agent
 
+        def pick(_store, exclude=None):
+            # Stands in for the real registry, which reads PATH and raises when
+            # no agent CLI is installed. CI machines have none.
+            return next((name for name in installed if name != exclude), installed[0])
+
         with (
             patch("continuum.cli.installed_agents", return_value=installed),
             patch("continuum.cli.last_session", return_value={"agent": last_agent}),
+            patch("continuum.cli.pick_agent", side_effect=pick),
         ):
             return choose_agent(store)
 
