@@ -1,5 +1,92 @@
 # Changelog
 
+## 0.11.0 - Alpha
+
+Agent-agnostic release: the daily loop is one command, and Continuum is no
+longer tied to a fixed set of agent CLIs.
+
+- Wrapped sessions now write a continuation handoff when the agent exits, so
+  the manual save is no longer part of the loop. A context-limit checkpoint
+  earlier in the same session is kept rather than summarized twice; a non-zero
+  exit is recorded as the next action.
+- `continuum go` no longer requires an agent name. With none given it picks an
+  installed agent other than the one that just ran — the common case after a
+  context limit — and prints which it chose and why.
+- Added `continuum/agents.py`, a launch registry. Any command-line agent on
+  PATH works with `continuum go <name>`; unrecognized names are adopted with
+  the trailing-argument convention and remembered in `.continuum/agents.json`.
+  `claude`, `codex` and `gemini` keep their tuned specs.
+- Added `continuum agent add|list|remove` for CLIs that take their prompt
+  another way: `--inject arg|subcommand|flag|stdin`.
+- Interactive sessions fall back to a generic terminal adapter for agents
+  without a tuned one, instead of refusing to launch.
+- Removed the fixed agent choice lists from `go`, `run`, `resume`, `chat`,
+  `task assign`, `task claim`, `worktree resume` and `shell`.
+- `continuum --help` now lists only the daily commands. Every other command
+  still runs unchanged and is listed by the new `continuum help --all`.
+- Added cross-agent delegation. `continuum/delegation.py` runs one agent CLI
+  from inside another with the same bounded project context and returns its
+  reply, and the MCP server exposes it as `ask_agent` plus `list_agents`. An
+  agent connected over MCP can now consult any other installed agent —
+  Claude Code asking Codex, Codex asking Claude, in any direction — and both
+  halves of the exchange are recorded in shared memory. `continuum ask <agent>
+  <request>` does the same from a terminal.
+- Agent specs gained `oneshot_args` for the flags a CLI needs to answer a
+  single prompt non-interactively (`claude -p`), settable with
+  `continuum agent add --oneshot-arg`.
+- Delegation kills the agent's whole process tree on timeout. Killing only the
+  direct child left shim grandchildren holding the output pipes open, so a
+  stalled agent hung the caller indefinitely instead of timing out.
+- An agent that stops on a sign-in or approval question is now reported as
+  such, with the question it asked, instead of as an unexplained timeout.
+- `continuum setup` now registers the Continuum MCP server for Codex and
+  Gemini as well as Claude Code, writing project-local `.codex/config.toml`
+  and `.gemini/settings.json` entries instead of printing snippets to paste.
+  Existing settings are merged, not replaced, and re-running is a no-op.
+- The first `continuum go <agent>` connects that agent to the MCP server, so
+  cross-agent delegation needs no setup step. `continuum setup` remains as a
+  way to connect every installed agent at once.
+- `continuum --help` is down to the two daily commands plus `help`.
+- Fixed re-initialization discarding recorded work. `continuum init`, and the
+  auto-initialization inside `setup`, overwrote `latest_handoff.md` and
+  `current.md` with the starter text and replaced `config.json` wholesale,
+  dropping the handoff model and connected-agent settings. The status card
+  reads the event log rather than those files, so the loss was invisible until
+  an agent was handed the reset context. Initialization now seeds a handoff
+  only when none exists and merges config instead of replacing it.
+- Delegation survives a read-only memory store. An agent that sandboxes its MCP
+  servers gives Continuum a store it cannot write to; the exchange now goes
+  ahead and the reply notes that it was not recorded, instead of failing.
+- A launch refused by the calling agent's sandbox is reported as such, with the
+  flag that relaxes it, rather than as a bare permission error.
+- Added `continuum install`: detects the AI coding agents on the machine and
+  sets Continuum up inside each one in that agent's native format — MCP server,
+  Claude Code skill and session hooks, Cursor/Windsurf/Cline rule files, and
+  `AGENTS.md` for anything else. Idempotent, previewable with `--dry-run`, and
+  scopeable with `--only`.
+- Added `continuum hook session-start` and `continuum hook session-end`, the
+  entry points those hooks call. With them installed, a Claude Code session
+  begins with the project context already loaded and records a handoff when it
+  ends, so Continuum needs no commands during normal work.
+- The exit handoff is derived from the session rather than repeating the last
+  one. Without a handoff model there is nothing to summarize the work in prose,
+  but the files a session changed are still recorded, and the previous next step
+  is carried forward marked unconfirmed instead of restated as if fresh. The
+  annotation is rebuilt from the original each time, so it does not stack up,
+  and Continuum's own scaffolding files are excluded so the user's edits are
+  what show.
+- A session that kept working past its context checkpoint, or that then failed,
+  now records a handoff at exit. Previously the checkpoint always won, so
+  everything after it — including a failure — was missing from what the next
+  agent received.
+- Fixed silent context truncation on Windows. Agents that resolve to a
+  `.cmd`/`.bat` shim run through cmd.exe, which ends the command line at the
+  first newline, so the injected handoff arrived as its first line only —
+  `gemini` from npm is such a shim. Those agents now receive a one-line
+  pointer to `.continuum/latest_handoff.md` and read the full handoff
+  themselves. Agents using stdin injection are unaffected and keep the
+  inline context.
+
 ## 0.10.0 - Alpha
 
 Simple front door release: the daily handoff loop is now three flag-free

@@ -14,9 +14,11 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 from . import __version__
 from .core import (
+    compact_text,
     DEFAULT_CONTEXT_LIMIT,
     DEFAULT_THRESHOLD,
     MAX_SESSION_EXCERPT_LINES,
@@ -51,13 +53,40 @@ from .context_intel import (
     score_intel,
 )
 from .evidence import EvidenceError, gather_evidence, render_packet
+from .integrations import (
+    ALREADY as ALREADY_STATUS,
+    INSTALLED as INSTALLED_STATUS,
+    SKIPPED as SKIPPED_STATUS,
+    TARGETS as AGENT_TARGETS,
+    detect as detect_agents,
+    install as install_integrations,
+)
+from .delegation import DEFAULT_TIMEOUT as DELEGATION_TIMEOUT, DelegationError, ask as delegation_ask
 from .handoff_llm import generate_handoff, read_handoff_model, write_handoff_model
 from .flight import FlightRecordError, gather_flight_record, render_flight_record
 from .external_sessions import ExternalSessionError, ExternalSessionManager
 from .terminal import TerminalUnavailable, run_terminal_process, terminal_backend
 from .adapters import terminal_adapter, terminal_adapter_capabilities
+from .agents import (
+    BUILTIN_AGENTS,
+    INJECT_MODES,
+    AgentError,
+    default_spec as default_agent_spec,
+    installed_agents,
+    launch_args as agent_launch_args,
+    normalize_spec as normalize_agent_spec,
+    pick_agent,
+    read_agents,
+    read_custom as read_custom_agents,
+    resolve as resolve_agent,
+    stdin_prompt as agent_stdin_prompt,
+    suppresses as agent_suppresses,
+    write_agent,
+)
 
-AGENTS = ("claude", "gemini", "codex")
+# Agents with tuned launch specs. Any other CLI on PATH is adopted on first
+# use, so this is a starting point rather than the supported set.
+AGENTS = tuple(BUILTIN_AGENTS)
 
 
 def store_from(args: argparse.Namespace) -> MemoryStore:
@@ -149,6 +178,126 @@ def checkpoint_handoff(store: MemoryStore, session_tail: list[str], fallback: tu
     store.write_handoff(*(generated or fallback))
 
 
+# Files Continuum writes itself. They show up as changes on a first run and
+# would otherwise crowd the user's own edits out of the handoff.
+SCAFFOLDING = (
+    "AGENTS.md",
+    "CLAUDE.md",
+    "GEMINI.md",
+    "IMPLEMENTED.md",
+    "DECISIONS.md",
+    "TASKS.md",
+    ".continuum",
+    ".claude",
+    ".codex",
+    ".gemini",
+    ".cursor",
+    ".windsurf",
+    ".clinerules",
+)
+
+
+def is_continuum_scaffolding(entry: str) -> bool:
+    # Entries arrive as git short-status lines such as "?? AGENTS.md".
+    # Strip the "./" prefix rather than lstrip("./"), which would also eat the
+    # leading dot of a name like ".continuum".
+    path = entry.split(maxsplit=1)[-1].strip().replace("\\", "/").removeprefix("./")
+    return any(path == name or path.startswith(name + "/") for name in SCAFFOLDING)
+
+
+def recorded_next_step(store: MemoryStore) -> tuple[str | None, str | None]:
+    """The last handoff's task, and the next step as originally written.
+
+    Continuum annotates a carried-forward next step to say it has not been
+    confirmed. Rebuilding from the original rather than the annotated text is
+    what stops those annotations stacking up over successive sessions.
+    """
+    for item in reversed(store.recent_events(100)):
+        if item["kind"] == "handoff":
+            payload = item["payload"]
+            base = payload.get("base_next_step") or payload.get("next_step")
+            return payload.get("task"), base
+    return None, None
+
+
+def session_handoff(
+    store: MemoryStore,
+    agent: str,
+    session_id: str,
+    returncode: int,
+) -> tuple[str, str | None, str | None]:
+    """Derive a handoff from what the session actually did, without a model.
+
+    With no handoff model configured there is nothing to summarize the session
+    in prose, but the recorded facts still say more than the previous handoff
+    repeated verbatim: a session ran, and these files changed. Carrying the old
+    next step forward unmarked is what would mislead the next agent, so it is
+    carried forward and labelled unconfirmed.
+    """
+    task, base_next = recorded_next_step(store)
+    if returncode != 0:
+        return (
+            f"`{agent}` session `{session_id}` exited with code {returncode}.",
+            "Inspect the recorded session log, then continue or rerun the agent.",
+            base_next,
+        )
+    if not task:
+        return (
+            f"Wrapped `{agent}` session `{session_id}` completed.",
+            "Review the output and record the next action.",
+            None,
+        )
+    changed = [item for item in store.git_or_watch_changes() if not is_continuum_scaffolding(item)]
+    if not changed:
+        return task, base_next, base_next
+    listed = ", ".join(changed[:5]) + (f" (+{len(changed) - 5} more)" if len(changed) > 5 else "")
+    carried = f" Then continue: {base_next}" if base_next else ""
+    next_step = f"`{agent}` changed {listed}. Check whether that finished the previous step.{carried}"
+    return task, compact_text(next_step, 300), base_next
+
+
+def finalize_handoff(
+    store: MemoryStore,
+    agent: str,
+    session_id: str,
+    session_tail: list[str],
+    returncode: int,
+    checkpoint_triggered: bool,
+    output_after_checkpoint: bool = True,
+) -> None:
+    """Record the continuation handoff when a wrapped agent session ends.
+
+    This is what removes the manual save from the daily loop: every session
+    Continuum launches leaves a usable handoff behind on its own.
+
+    A checkpoint that fired mid-session already summarized the material up to
+    that point, so it is kept — but only if nothing happened afterwards. A
+    session that kept working past its checkpoint, or that then failed, would
+    otherwise hand the next agent a handoff missing everything that followed.
+    """
+    if checkpoint_triggered and not output_after_checkpoint and returncode == 0:
+        return
+    task, next_step, base_next = session_handoff(store, agent, session_id, returncode)
+    generated = None
+    if session_tail:
+        try:
+            generated = generate_handoff(store, session_tail=session_tail)
+        except ProviderError as error:
+            print(f"[Handoff LLM unavailable ({error}); kept the recorded handoff.]", file=sys.stderr)
+    if generated:
+        task, next_step = generated
+        base_next = next_step
+    store.event(
+        "handoff",
+        {"task": task, "next_step": next_step, "base_next_step": base_next, "session": session_id},
+    )
+    store.write_handoff(task, next_step)
+    print(f"Saved: {task}")
+    if next_step:
+        print(f"Next:  {next_step}")
+    print("Continue anywhere with `continuum go`.")
+
+
 def quick_save(args: argparse.Namespace) -> int:
     store = store_from(args)
     if not store.config_file.exists():
@@ -184,7 +333,7 @@ def quick_save(args: argparse.Namespace) -> int:
         print(f"Next:  {next_step}")
     if generated_by:
         print(f"Summarized by handoff LLM: {generated_by}")
-    print("Resume anywhere with `continuum go claude|codex|gemini` or `continuum copy`.")
+    print("Resume anywhere with `continuum go` or `continuum copy`.")
     return 0
 
 
@@ -258,10 +407,44 @@ def copy_context(args: argparse.Namespace) -> int:
     return 0
 
 
+def last_session(store: MemoryStore) -> dict:
+    path = store.state_dir / "token_usage.json"
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def choose_agent(store: MemoryStore) -> tuple[str, str]:
+    """Pick the agent for a bare `continuum go` and explain the choice."""
+    previous = last_session(store)
+    last_agent = str(previous.get("agent") or "") or None
+    installed = installed_agents(store)
+    if last_agent and previous.get("checkpoint_triggered"):
+        reason = f"{last_agent} reached its context checkpoint last session"
+    elif last_agent and len(installed) > 1:
+        reason = f"{last_agent} ran last session"
+    else:
+        reason = "only installed agent" if len(installed) == 1 else "first installed agent"
+    return pick_agent(store, exclude=last_agent), reason
+
+
 def go(args: argparse.Namespace) -> int:
     store = store_from(args)
     if not store.config_file.exists():
         store.initialize(DEFAULT_CONTEXT_LIMIT, DEFAULT_THRESHOLD)
+    if not args.agent:
+        args.agent, reason = choose_agent(store)
+        print(f"Handing off to {args.agent} ({reason}).")
+    # Resolve before any context is rendered so an unusable agent name fails
+    # immediately instead of after printing a handoff nothing will receive.
+    resolve_agent(store, args.agent)
+    connected = ensure_mcp_registered(store, args.agent)
+    if connected:
+        print(connected)
     if not (store.state_dir / "latest_handoff.md").exists():
         task = store.latest_task() or (
             "New session in this project; no prior context recorded.",
@@ -277,48 +460,117 @@ def go(args: argparse.Namespace) -> int:
     return resume(args)
 
 
+def mcp_server_args(store: MemoryStore) -> list[str]:
+    # Forward slashes so the same path is valid in TOML, JSON and on Windows,
+    # where a backslash would otherwise read as a TOML escape sequence.
+    return ["mcp", "serve", "--project", store.project.as_posix()]
+
+
+def register_codex_mcp(store: MemoryStore) -> str:
+    """Add the Continuum MCP server to this project's Codex config.
+
+    Written project-local so an agent reaching other agents is scoped to the
+    project it was set up in, and the user's global Codex config is untouched.
+    """
+    path = store.project / ".codex" / "config.toml"
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    if "[mcp_servers.continuum]" in existing or "[mcpServers.continuum]" in existing:
+        return "Codex: Continuum MCP server already registered."
+    arguments = ", ".join(f'"{item}"' for item in mcp_server_args(store))
+    block = f'\n[mcp_servers.continuum]\ncommand = "continuum"\nargs = [{arguments}]\n'
+    write_text(path, (existing.rstrip("\n") + "\n" if existing.strip() else "") + block.lstrip("\n"))
+    return f"Codex: Continuum MCP server registered in {path}."
+
+
+def register_gemini_mcp(store: MemoryStore) -> str:
+    """Add the Continuum MCP server to this project's Gemini settings."""
+    path = store.project / ".gemini" / "settings.json"
+    settings: dict[str, Any] = {}
+    if path.exists():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            settings = loaded if isinstance(loaded, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return f"Gemini MCP registration skipped: {path} is not readable JSON."
+    servers = settings.get("mcpServers")
+    if not isinstance(servers, dict):
+        servers = {}
+    if "continuum" in servers:
+        return "Gemini: Continuum MCP server already registered."
+    servers["continuum"] = {"command": "continuum", "args": mcp_server_args(store)}
+    settings["mcpServers"] = servers
+    write_text(path, json.dumps(settings, indent=2) + "\n")
+    return f"Gemini: Continuum MCP server registered in {path}."
+
+
+def register_claude_mcp(store: MemoryStore) -> str:
+    """Register the Continuum MCP server with Claude Code, which owns its own config."""
+    try:
+        command = agent_command(
+            "claude",
+            ["mcp", "add", "continuum", "--", "continuum", "mcp", "serve", "--project", str(store.project)],
+        )
+        completed = subprocess.run(command, capture_output=True, text=True, cwd=str(store.project), check=False)
+    except (OSError, FileNotFoundError) as error:
+        return f"Claude Code MCP registration skipped: {error}"
+    output = (completed.stdout + completed.stderr).strip()
+    if completed.returncode == 0:
+        return "Claude Code: Continuum MCP server registered."
+    if "already exists" in output.lower():
+        return "Claude Code: Continuum MCP server already registered."
+    return f"Claude Code MCP registration skipped: {output.splitlines()[0] if output else 'unknown error'}"
+
+
+MCP_REGISTRARS = {
+    "claude": register_claude_mcp,
+    "codex": register_codex_mcp,
+    "gemini": register_gemini_mcp,
+}
+
+
+def ensure_mcp_registered(store: MemoryStore, agent: str) -> str | None:
+    """Connect one agent to Continuum's MCP server the first time it is launched.
+
+    Launching an agent through Continuum is what makes memory worth exposing to
+    it, so the wiring happens then rather than in a separate setup step. Only
+    the agent being launched is touched, and only once per project.
+    """
+    registrar = MCP_REGISTRARS.get(agent)
+    if registrar is None:
+        return None
+    config = store.read_config()
+    connected = config.get("mcp_connected")
+    connected = list(connected) if isinstance(connected, list) else []
+    if agent in connected:
+        return None
+    message = registrar(store)
+    if "skipped" not in message:
+        connected.append(agent)
+        config["mcp_connected"] = connected
+        config["updated_at"] = utc_now()
+        write_text(store.config_file, json.dumps(config, indent=2) + "\n")
+    return message
+
+
 def setup(args: argparse.Namespace) -> int:
     store = store_from(args)
     store.initialize(DEFAULT_CONTEXT_LIMIT, DEFAULT_THRESHOLD)
     ProviderManager(store.state_dir).ensure_config()
     print(f"Initialized: {store.project}")
-    found = [agent for agent in AGENTS if shutil.which(agent)]
-    missing = [agent for agent in AGENTS if agent not in found]
+    found = installed_agents(store)
+    missing = [agent for agent in read_agents(store) if agent not in found]
     print(f"Agent CLIs found: {', '.join(found) or 'none'}")
     if missing:
-        print(f"Not installed: {', '.join(missing)}")
-    if "claude" in found:
-        try:
-            command = agent_command(
-                "claude",
-                ["mcp", "add", "continuum", "--", "continuum", "mcp", "serve", "--project", str(store.project)],
-            )
-            completed = subprocess.run(command, capture_output=True, text=True, cwd=str(store.project), check=False)
-            output = (completed.stdout + completed.stderr).strip()
-            if completed.returncode == 0:
-                print("Claude Code: Continuum MCP server registered.")
-            elif "already exists" in output.lower():
-                print("Claude Code: Continuum MCP server already registered.")
-            else:
-                print(f"Claude Code MCP registration skipped: {output.splitlines()[0] if output else 'unknown error'}")
-        except (OSError, FileNotFoundError) as error:
-            print(f"Claude Code MCP registration skipped: {error}")
-    if "codex" in found:
-        print("Codex: add to .codex/config.toml ->")
-        print('  [mcpServers.continuum]')
-        print('  command = "continuum"')
-        print(f'  args = ["mcp", "serve", "--project", "{store.project.as_posix()}"]')
-    if "gemini" in found:
-        print("Gemini: add to .gemini/settings.json ->")
-        print(
-            '  { "mcpServers": { "continuum": { "command": "continuum",'
-            f' "args": ["mcp", "serve", "--project", "{store.project.as_posix()}"] }} }} }}'
-        )
+        print(f"Not installed: {', '.join(sorted(missing))}")
+    print("Any other agent CLI works too: `continuum go <name>` adopts it on first use.")
+    for agent in found:
+        message = ensure_mcp_registered(store, agent) or f"{agent}: Continuum MCP server already connected."
+        print(message)
     print()
     print("Daily commands:")
-    print('  continuum save "did X | next do Y"   save context before switching AI')
-    print("  continuum go claude|codex|gemini      open the next AI with that context")
-    print("  continuum copy                        copy context for any AI chat (web included)")
+    print("  continuum go            open the next AI with your context; saves on exit")
+    print("  continuum copy          copy context for any AI chat (web included)")
+    print("  continuum               show where you left off")
     return 0
 
 
@@ -327,8 +579,8 @@ def quick_status(args: argparse.Namespace) -> int:
     project_name = store.project.name or str(store.project)
     if not store.config_file.exists():
         print(f"Continuum - {project_name} (not initialized)")
-        print('Start: continuum save "<what you are working on>"   (auto-initializes)')
-        print("Agent CLI setup: continuum setup")
+        print("Start: continuum go        (auto-initializes and opens an agent)")
+        print("Paste into a web chat instead: continuum copy")
         return 0
     print(f"Continuum - {project_name}")
     latest = store.latest_task()
@@ -342,9 +594,157 @@ def quick_status(args: argparse.Namespace) -> int:
     if handoff_file.exists():
         print(f"Saved: {format_age(handoff_file.stat().st_mtime)}")
     print()
-    print('Save context:   continuum save "did X | next do Y"')
-    print("Hand to agent:  continuum go claude|codex|gemini")
+    print("Continue:       continuum go            (saves again on exit)")
     print("Paste anywhere: continuum copy")
+    return 0
+
+
+def agent_list(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    known = read_agents(store)
+    custom = read_custom_agents(store)
+    for name in sorted(known):
+        spec = known[name]
+        state = "installed" if shutil.which(str(spec["command"])) else "not installed"
+        origin = "project" if name in custom else "built-in"
+        detail = spec.get("flag") or spec.get("subcommand") or ""
+        print(f"{name}: {spec['inject']}{' ' + str(detail) if detail else ''} ({origin}, {state})")
+    print()
+    print("Any command on PATH also works without registration: continuum go <name>")
+    return 0
+
+
+def agent_add(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    if not store.config_file.exists():
+        store.initialize(DEFAULT_CONTEXT_LIMIT, DEFAULT_THRESHOLD)
+    spec = {
+        "command": args.command or args.name,
+        "inject": args.inject,
+        "flag": args.flag,
+        "subcommand": args.subcommand,
+        "oneshot_args": args.oneshot_args,
+    }
+    write_agent(store, args.name, spec)
+    print(f"Registered agent: {args.name} ({args.inject})")
+    if shutil.which(str(spec["command"])) is None:
+        print(f"Note: {spec['command']} is not on PATH yet.")
+    print(f"Use it with: continuum go {args.name}")
+    return 0
+
+
+def agent_remove(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    if args.name not in read_custom_agents(store):
+        raise SystemExit(f"No project-local agent spec named {args.name}.")
+    write_agent(store, args.name, None)
+    print(f"Removed agent spec: {args.name}")
+    return 0
+
+
+def ask_agent_cmd(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    if not store.config_file.exists():
+        store.initialize(DEFAULT_CONTEXT_LIMIT, DEFAULT_THRESHOLD)
+    result = delegation_ask(
+        store,
+        args.agent,
+        " ".join(args.request),
+        sender=args.sender,
+        mode=args.mode,
+        timeout=args.timeout,
+    )
+    print(f"Reply from {result['agent']} ({result['reply_tokens']} estimated tokens):")
+    print()
+    print(result["reply"])
+    return 0
+
+
+def hook_session_start(args: argparse.Namespace) -> int:
+    """Print the bounded context an agent should start from.
+
+    Wired to an agent's session-start hook by `continuum install`, so work
+    resumes with the previous context already loaded and nobody has to ask.
+    """
+    store = store_from(args)
+    if not store.config_file.exists():
+        return 0
+    if not (store.state_dir / "latest_handoff.md").exists():
+        return 0
+    context = store.resume_context("compact").strip()
+    if not context:
+        return 0
+    print("Continuum shared memory - where this project stands:")
+    print()
+    print(context)
+    print()
+    print("Continue from here. Record a handoff before you finish.")
+    return 0
+
+
+def hook_session_end(args: argparse.Namespace) -> int:
+    """Record a handoff when an agent session ends, without being asked."""
+    store = store_from(args)
+    if not store.config_file.exists():
+        return 0
+    generated = None
+    try:
+        generated = generate_handoff(store)
+    except ProviderError:
+        generated = None
+    task = generated or store.latest_task()
+    if not task:
+        return 0
+    store.event("handoff", {"task": task[0], "next_step": task[1], "source": "session_end"})
+    store.write_handoff(*task)
+    return 0
+
+
+def install_cmd(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    if not store.config_file.exists():
+        store.initialize(DEFAULT_CONTEXT_LIMIT, DEFAULT_THRESHOLD)
+    only = args.only or None
+    if args.dry_run:
+        targets = detect_agents() if not only else [t for t in AGENT_TARGETS if t.id in only]
+        print(f"Would install Continuum for: {', '.join(target.label for target in targets) or 'nothing detected'}")
+        return 0
+    results = install_integrations(store, only)
+    if not results:
+        print("No supported AI agents detected. Install one, then rerun `continuum install`.")
+        return 0
+    width = max(len(item.label) for item in results)
+    for item in results:
+        mark = {INSTALLED_STATUS: "+", ALREADY_STATUS: "=", SKIPPED_STATUS: "!"}.get(item.status, "-")
+        print(f"  {mark} {item.label.ljust(width)}  {item.detail}")
+    installed = sum(1 for item in results if item.status == INSTALLED_STATUS)
+    skipped = [item for item in results if item.status == SKIPPED_STATUS]
+    print()
+    print(f"Continuum is set up for {len({item.target for item in results})} agent target(s); {installed} newly written.")
+    if skipped:
+        print(f"{len(skipped)} needed attention — see the lines marked ! above.")
+    print("Your agents now read project context on their own. Nothing else to run.")
+    return 0
+
+
+def show_help(args: argparse.Namespace) -> int:
+    if getattr(args, "all", False):
+        parser(collapse=False).print_help()
+        return 0
+    print("Continuum - local context continuity for AI coding agents.")
+    print()
+    print("  continuum          show where you left off")
+    print("  continuum go       open the next AI with that context; saves again on exit")
+    print("  continuum copy     copy the context for any AI chat, web included")
+    print()
+    print("`continuum go <name>` works with any agent CLI on PATH, and connects it")
+    print("to Continuum's MCP server the first time, so no setup step is needed.")
+    print()
+    print("  continuum ask <agent> <request>   have one agent consult another")
+    print("  continuum agent list              agent CLIs Continuum can reach")
+    print("  continuum ui                      Control Center in a browser")
+    print()
+    print("Every other command: continuum help --all")
     return 0
 
 
@@ -473,52 +873,56 @@ def logs(args: argparse.Namespace) -> int:
     return 0
 
 
-def agent_command(agent: str, passthrough: list[str]) -> list[str]:
-    executable = shutil.which(agent)
+def agent_spec(value: str | dict) -> dict:
+    """Accept either a resolved launch spec or a bare agent name."""
+    if isinstance(value, dict):
+        return value
+    return normalize_agent_spec(value, BUILTIN_AGENTS.get(value, default_agent_spec(value)))
+
+
+def launches_through_shell(spec: dict) -> bool:
+    """True when the agent resolves to a `.cmd`/`.bat` shim.
+
+    Windows runs those through cmd.exe, which ends the command line at the
+    first newline: a multi-line prompt passed as an argument arrives truncated
+    to its first line. npm-installed agent CLIs are shims of exactly this kind.
+    """
+    executable = shutil.which(str(spec.get("command"))) or ""
+    return executable.lower().endswith((".cmd", ".bat"))
+
+
+def shell_safe_context(store: MemoryStore, prompt: str) -> str:
+    """Rewrite a multi-line prompt as a one-line pointer to the handoff file.
+
+    Passing the handoff itself would lose everything after its first line. The
+    same content is already on disk, so the agent is pointed at it and reads it
+    with its own tools instead.
+    """
+    handoff = (store.state_dir / "latest_handoff.md").resolve()
+    return (
+        f"Read the bounded Continuum handoff at {handoff} before acting, then continue the "
+        "existing task from its current state. Use targeted Continuum MCP/context retrieval "
+        "when more detail is needed; do not restart work or request all history."
+    )
+
+
+def agent_command(agent: str | dict, passthrough: list[str]) -> list[str]:
+    spec = agent_spec(agent)
+    name = str(spec["command"])
+    executable = shutil.which(name)
     if not executable:
-        raise FileNotFoundError(f"Agent CLI is not installed or not in PATH: {agent}")
+        raise FileNotFoundError(f"Agent CLI is not installed or not in PATH: {name}")
     if executable.lower().endswith(".ps1"):
         return ["powershell", "-ExecutionPolicy", "Bypass", "-File", executable, *passthrough]
     return [executable, *passthrough]
 
 
-def injected_resume_args(agent: str, passthrough: list[str], prompt: str) -> list[str]:
-    if agent == "gemini":
-        merged_args = list(passthrough)
-        if not any(value in {"--approval-mode"} or value.startswith("--approval-mode=") for value in merged_args):
-            merged_args.extend(["--approval-mode", "plan"])
-        if not any(value in {"-o", "--output-format"} or value.startswith("--output-format=") for value in merged_args):
-            merged_args.extend(["--output-format", "text"])
-        for index, value in enumerate(merged_args):
-            if value in {"-p", "--prompt", "-i", "--prompt-interactive"}:
-                if index + 1 >= len(merged_args):
-                    raise ValueError(f"Missing value after Gemini prompt option: {value}")
-                merged = list(merged_args)
-                merged[index + 1] = prompt + "\n\nAdditional user instruction:\n" + merged_args[index + 1]
-                return merged
-            if value.startswith("--prompt=") or value.startswith("--prompt-interactive="):
-                option, requested = value.split("=", 1)
-                merged = list(merged_args)
-                merged[index] = option + "=" + prompt + "\n\nAdditional user instruction:\n" + requested
-                return merged
-        return ["--prompt", prompt, *merged_args]
-    if agent == "codex":
-        if passthrough and passthrough[0] == "exec":
-            return [*passthrough, prompt]
-        return ["exec", *passthrough, prompt]
-    return [*passthrough, prompt]
+def injected_resume_args(agent: str | dict, passthrough: list[str], prompt: str) -> list[str]:
+    return agent_launch_args(agent_spec(agent), passthrough, prompt)
 
 
-def suppress_agent_display_line(agent: str, line: str) -> bool:
-    if agent != "gemini":
-        return False
-    stripped = line.strip()
-    return (
-        stripped.startswith("Warning: 256-color support not detected.")
-        or stripped.startswith("Ripgrep is not available.")
-        or ("[DEP0190] DeprecationWarning" in stripped)
-        or stripped.startswith("(Use `node --trace-deprecation")
-    )
+def suppress_agent_display_line(agent: str | dict, line: str) -> bool:
+    return agent_suppresses(agent_spec(agent), line)
 
 
 def run_agent(args: argparse.Namespace, resumed: bool = False, injected_context: str | None = None) -> int:
@@ -533,11 +937,17 @@ def run_agent(args: argparse.Namespace, resumed: bool = False, injected_context:
     threshold = args.threshold if args.threshold is not None else float(
         config.get("checkpoint_threshold", DEFAULT_THRESHOLD)
     )
+    spec = resolve_agent(store, args.agent)
     agent_args = list(args.agent_args)
     if agent_args and agent_args[0] == "--":
         agent_args.pop(0)
+    stdin_text = None
     if injected_context:
-        agent_args = injected_resume_args(args.agent, agent_args, injected_context)
+        if "\n" in injected_context and spec["inject"] != "stdin" and launches_through_shell(spec):
+            injected_context = shell_safe_context(store, injected_context)
+            print(f"{args.agent} runs through a shell shim; injected a pointer to the handoff file instead.")
+        agent_args = agent_launch_args(spec, agent_args, injected_context)
+        stdin_text = agent_stdin_prompt(spec, injected_context)
     session_id = dt.datetime.now().strftime("%Y%m%d-%H%M%S") + f"-{args.agent}"
     log_file = store.state_dir / "session_logs" / f"{session_id}.log"
     action = "resume" if resumed else "run"
@@ -548,23 +958,27 @@ def run_agent(args: argparse.Namespace, resumed: bool = False, injected_context:
     print(f"Recording output: {log_file}")
     tokens = 0
     triggered = False
+    checkpoint_tokens = 0
     tail: list[str] = []
     try:
-        command = agent_command(args.agent, agent_args)
+        command = agent_command(spec, agent_args)
         cwd = Path(getattr(args, "cwd", store.project))
         with log_file.open("w", encoding="utf-8") as output:
             process = subprocess.Popen(
                 command,
                 cwd=str(cwd),
-                stdin=None,
+                stdin=subprocess.PIPE if stdin_text is not None else None,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
                 errors="replace",
             )
+            if stdin_text is not None and process.stdin is not None:
+                process.stdin.write(stdin_text)
+                process.stdin.close()
             assert process.stdout is not None
             for line in process.stdout:
-                if not suppress_agent_display_line(args.agent, line):
+                if not agent_suppresses(spec, line):
                     print(line, end="")
                 output.write(line)
                 output.flush()
@@ -573,6 +987,7 @@ def run_agent(args: argparse.Namespace, resumed: bool = False, injected_context:
                 tail = tail[-MAX_SESSION_EXCERPT_LINES:]
                 if not triggered and tokens >= int(limit * threshold):
                     triggered = True
+                    checkpoint_tokens = tokens
                     store.event("context_checkpoint", {"summary": f"Estimated tokens: {tokens}"})
                     checkpoint_handoff(
                         store,
@@ -598,11 +1013,9 @@ def run_agent(args: argparse.Namespace, resumed: bool = False, injected_context:
     write_text(store.state_dir / "token_usage.json", json.dumps(usage, indent=2) + "\n")
     store.event("agent_exit", {"summary": f"{args.agent} exited with {returncode}", "returncode": returncode})
     store.write_session_note(session_id, args.agent, returncode, tokens, tail)
-    task = store.latest_task() or (
-        f"Wrapped `{args.agent}` session `{session_id}` completed.",
-        "Review the output and record the next action.",
+    finalize_handoff(
+        store, args.agent, session_id, tail, returncode, triggered, tokens > checkpoint_tokens
     )
-    store.write_handoff(*task)
     return returncode
 
 
@@ -618,9 +1031,13 @@ def run_interactive_agent(args: argparse.Namespace, resumed: bool = False, injec
     threshold = args.threshold if args.threshold is not None else float(
         config.get("checkpoint_threshold", DEFAULT_THRESHOLD)
     )
+    spec = resolve_agent(store, args.agent)
     agent_args = list(args.agent_args)
     if agent_args and agent_args[0] == "--":
         agent_args.pop(0)
+    if injected_context and "\n" in injected_context and launches_through_shell(spec):
+        injected_context = shell_safe_context(store, injected_context)
+        print(f"{args.agent} runs through a shell shim; injected a pointer to the handoff file instead.")
     adapter = terminal_adapter(args.agent, store.project)
     agent_args = adapter.prepare_args(agent_args, injected_context)
     session_id = dt.datetime.now().strftime("%Y%m%d-%H%M%S") + f"-{args.agent}-terminal"
@@ -644,12 +1061,13 @@ def run_interactive_agent(args: argparse.Namespace, resumed: bool = False, injec
     print(f"Recording output: {log_file}")
     tokens = 0
     triggered = False
+    checkpoint_tokens = 0
     tail: list[str] = []
     try:
-        command = agent_command(args.agent, agent_args)
+        command = agent_command(spec, agent_args)
         with log_file.open("w", encoding="utf-8") as output:
             def capture(chunk: str) -> None:
-                nonlocal tokens, triggered, tail
+                nonlocal tokens, triggered, checkpoint_tokens, tail
                 print(chunk, end="", flush=True)
                 output.write(chunk)
                 output.flush()
@@ -660,6 +1078,7 @@ def run_interactive_agent(args: argparse.Namespace, resumed: bool = False, injec
                     store.event("terminal_adapter_status", event.payload(args.agent, adapter.name))
                 if not triggered and tokens >= int(limit * threshold):
                     triggered = True
+                    checkpoint_tokens = tokens
                     store.event("context_checkpoint", {"summary": f"Estimated tokens: {tokens}"})
                     checkpoint_handoff(
                         store,
@@ -703,11 +1122,9 @@ def run_interactive_agent(args: argparse.Namespace, resumed: bool = False, injec
         {"summary": f"{args.agent} interactive terminal exited with {returncode}", "returncode": returncode},
     )
     store.write_session_note(session_id, args.agent, returncode, tokens, tail)
-    task = store.latest_task() or (
-        f"Interactive `{args.agent}` session `{session_id}` completed.",
-        "Review the terminal output and record the next action.",
+    finalize_handoff(
+        store, args.agent, session_id, tail, returncode, triggered, tokens > checkpoint_tokens
     )
-    store.write_handoff(*task)
     return returncode
 
 
@@ -1793,8 +2210,30 @@ def audit_export_cmd(args: argparse.Namespace) -> int:
     return 0
 
 
-def parser() -> argparse.ArgumentParser:
-    root = argparse.ArgumentParser(prog="continuum", description="Local context continuity for AI coding agents.")
+# Commands listed by `continuum --help`. Everything else still runs exactly as
+# before; it is reached through `continuum help --all`, the Control Center or
+# the MCP server rather than through the top-level help.
+DAILY_COMMANDS = ("install", "go", "copy", "help")
+
+
+def collapse_help(commands: argparse._SubParsersAction) -> None:
+    """Keep the daily loop visible in `--help` without removing any command."""
+    kept = [action for action in commands._choices_actions if action.dest in DAILY_COMMANDS]
+    order = {name: index for index, name in enumerate(DAILY_COMMANDS)}
+    commands._choices_actions = sorted(kept, key=lambda action: order.get(action.dest, len(order)))
+    commands.metavar = "{" + ",".join(action.dest for action in commands._choices_actions) + "}"
+
+
+def parser(collapse: bool = True) -> argparse.ArgumentParser:
+    root = argparse.ArgumentParser(
+        prog="continuum",
+        description="Local context continuity for AI coding agents.",
+        epilog=(
+            "Also useful: continuum ask <agent> <request>, continuum agent list, continuum ui.\n"
+            "Every command, including teams, worktrees, governance and evidence: continuum help --all"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     root.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     commands = root.add_subparsers(dest="command", required=False)
     common = argparse.ArgumentParser(add_help=False)
@@ -1810,9 +2249,15 @@ def parser() -> argparse.ArgumentParser:
     save_cmd.set_defaults(func=quick_save)
 
     go_cmd = commands.add_parser(
-        "go", parents=[common], help="Open an agent with your saved context already injected."
+        "go",
+        parents=[common],
+        help="Open an agent with your saved context injected; saves a new handoff when it exits.",
     )
-    go_cmd.add_argument("agent", choices=AGENTS)
+    go_cmd.add_argument(
+        "agent",
+        nargs="?",
+        help="Agent CLI to open. Any command on PATH works. Omit to continue with the next available agent.",
+    )
     go_cmd.add_argument("mode", nargs="?", choices=["compact", "normal", "deep"], default="compact")
     go_cmd.add_argument(
         "--no-interactive", action="store_true", help="Run the agent in print mode instead of a live terminal."
@@ -1829,6 +2274,64 @@ def parser() -> argparse.ArgumentParser:
         "setup", parents=[common], help="One-time setup: initialize memory and connect installed agent CLIs."
     )
     setup_cmd.set_defaults(func=setup)
+
+    install_parser = commands.add_parser(
+        "install",
+        parents=[common],
+        help="Detect the AI agents on this machine and set Continuum up inside each one.",
+    )
+    install_parser.add_argument("--only", action="append", help="Install for one named agent (repeatable).")
+    install_parser.add_argument("--dry-run", action="store_true", help="Show what would be installed.")
+    install_parser.set_defaults(func=install_cmd)
+
+    hook_cmd = commands.add_parser("hook", help="Entry points agents call automatically; not meant to be typed.")
+    hook_commands = hook_cmd.add_subparsers(dest="hook_command", required=True)
+    start_hook = hook_commands.add_parser("session-start", parents=[common], help="Print context for a starting agent.")
+    start_hook.set_defaults(func=hook_session_start)
+    end_hook = hook_commands.add_parser("session-end", parents=[common], help="Record a handoff for a finished agent.")
+    end_hook.set_defaults(func=hook_session_end)
+
+    help_cmd = commands.add_parser("help", help="Show the daily commands, or every command with --all.")
+    help_cmd.add_argument("--all", action="store_true", help="List every command, including the advanced surface.")
+    help_cmd.set_defaults(func=show_help)
+
+    agent_cmd = commands.add_parser(
+        "agent", help="Describe how Continuum launches agent CLIs it does not already know."
+    )
+    agent_commands = agent_cmd.add_subparsers(dest="agent_command", required=True)
+    list_agents = agent_commands.add_parser("list", parents=[common], help="List known agent CLIs and their specs.")
+    list_agents.set_defaults(func=agent_list)
+    add_agent = agent_commands.add_parser("add", parents=[common], help="Register or re-describe an agent CLI.")
+    add_agent.add_argument("name", help="Name used with `continuum go <name>`.")
+    add_agent.add_argument("--command", help="Executable to run, when it differs from the name.")
+    add_agent.add_argument(
+        "--inject",
+        choices=INJECT_MODES,
+        default="arg",
+        help="How the bounded handoff reaches the agent (default: arg).",
+    )
+    add_agent.add_argument("--flag", help="Prompt flag, for --inject flag (for example --prompt).")
+    add_agent.add_argument("--subcommand", help="Prompt subcommand, for --inject subcommand (for example exec).")
+    add_agent.add_argument(
+        "--oneshot-arg",
+        action="append",
+        dest="oneshot_args",
+        help="Argument this CLI needs for a single non-interactive reply (repeatable, for example -p).",
+    )
+    add_agent.set_defaults(func=agent_add)
+    ask_cmd = commands.add_parser(
+        "ask", parents=[common], help="Ask another agent CLI a question with shared context and print its reply."
+    )
+    ask_cmd.add_argument("agent", help="Agent CLI to consult.")
+    ask_cmd.add_argument("request", nargs="+", help="What the other agent should do or answer.")
+    ask_cmd.add_argument("--sender", default="user", help="Name recorded as the caller.")
+    ask_cmd.add_argument("--mode", choices=["compact", "normal", "deep"], default="compact")
+    ask_cmd.add_argument("--timeout", type=int, default=DELEGATION_TIMEOUT)
+    ask_cmd.set_defaults(func=ask_agent_cmd)
+
+    remove_agent = agent_commands.add_parser("remove", parents=[common], help="Forget a project-local agent spec.")
+    remove_agent.add_argument("name")
+    remove_agent.set_defaults(func=agent_remove)
 
     handoff_llm_cmd = commands.add_parser(
         "handoff-llm",
@@ -1876,7 +2379,7 @@ def parser() -> argparse.ArgumentParser:
 
     for name, handler in (("run", run), ("resume", resume)):
         command = commands.add_parser(name, parents=[common], help=f"{name.title()} an agent through Continuum.")
-        command.add_argument("agent", choices=AGENTS)
+        command.add_argument("agent", help="Agent CLI to run. Any command on PATH works.")
         if name == "resume":
             command.add_argument("mode", choices=["compact", "normal", "deep"], nargs="?", default="compact")
         command.add_argument("--context-limit", type=int)
@@ -1892,7 +2395,7 @@ def parser() -> argparse.ArgumentParser:
         command.set_defaults(func=handler)
 
     chat_command = commands.add_parser("chat", parents=[common], help="Send one message to an agent with bounded Continuum context.")
-    chat_command.add_argument("agent", choices=AGENTS)
+    chat_command.add_argument("agent", help="Agent CLI to run. Any command on PATH works.")
     chat_command.add_argument("mode_or_message", nargs="?")
     chat_command.add_argument("--interactive", "--pty", dest="interactive", action="store_true")
     chat_command.add_argument("message", nargs="*")
@@ -1953,12 +2456,12 @@ def parser() -> argparse.ArgumentParser:
     show_task.set_defaults(func=task_show)
     assign = task_commands.add_parser("assign", parents=[common], help="Assign a worker agent.")
     assign.add_argument("task_id")
-    assign.add_argument("agent", choices=AGENTS)
+    assign.add_argument("agent")
     assign.add_argument("--branch")
     assign.set_defaults(func=task_assign)
     claim = task_commands.add_parser("claim", parents=[common], help="Exclusively claim files for a task.")
     claim.add_argument("task_id")
-    claim.add_argument("agent", choices=AGENTS)
+    claim.add_argument("agent")
     claim.add_argument("files", nargs="+")
     claim.add_argument("--expires-at")
     claim.set_defaults(func=task_claim)
@@ -2169,7 +2672,7 @@ def parser() -> argparse.ArgumentParser:
     diff_worktree.set_defaults(func=worktree_diff)
     resume_worktree = worktree_commands.add_parser("resume", parents=[common], help="Resume an agent inside a task worktree with shared Continuum context.")
     resume_worktree.add_argument("task_id")
-    resume_worktree.add_argument("agent", choices=AGENTS)
+    resume_worktree.add_argument("agent")
     resume_worktree.add_argument("mode", choices=["compact", "normal", "deep"], nargs="?", default="compact")
     resume_worktree.add_argument("--interactive", "--pty", dest="interactive", action="store_true")
     resume_worktree.set_defaults(func=worktree_resume)
@@ -2360,10 +2863,12 @@ def parser() -> argparse.ArgumentParser:
         )
     )
     shell = commands.add_parser("shell", parents=[common], help="Open the interactive slash-command console.")
-    shell.add_argument("--agent", choices=AGENTS, default="codex")
+    shell.add_argument("--agent", default="codex")
     shell.add_argument("--color", choices=["auto", "always", "never"], default="auto")
     shell.add_argument("--animation", choices=["auto", "on", "off"], default="auto")
     shell.set_defaults(func=interactive_shell)
+    if collapse:
+        collapse_help(commands)
     return root
 
 
@@ -2377,7 +2882,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("--context-limit must be positive")
     try:
         return int(args.func(args))
-    except (EvidenceError, ExternalSessionError, FlightRecordError, ObjectiveError, PolicyError, ProviderError, ServiceError, TeamError, WorktreeError, mcp_trust.TrustError, ValueError) as error:
+    except (DelegationError, EvidenceError, ExternalSessionError, FlightRecordError, ObjectiveError, PolicyError, ProviderError, ServiceError, TeamError, WorktreeError, mcp_trust.TrustError, ValueError) as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1
 

@@ -9,7 +9,20 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-from continuum.cli import down, injected_resume_args, main, pid_is_running, suppress_agent_display_line, up
+from continuum import agents
+from continuum.cli import (
+    down,
+    finalize_handoff,
+    injected_resume_args,
+    launches_through_shell,
+    main,
+    parser,
+    pid_is_running,
+    shell_safe_context,
+    suppress_agent_display_line,
+    up,
+)
+from continuum.core import MemoryStore
 from continuum.providers import ProviderError, ProviderManager
 
 
@@ -576,7 +589,7 @@ class SimpleFrontDoorTest(unittest.TestCase):
                 os.chdir(previous)
             text = output.getvalue()
             self.assertIn("not initialized", text)
-            self.assertIn("continuum save", text)
+            self.assertIn("continuum go", text)
 
     def test_bare_invocation_shows_saved_task(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -607,6 +620,307 @@ class SimpleFrontDoorTest(unittest.TestCase):
             self.assertIn("Agent CLIs found: none", text)
             self.assertIn("Daily commands", text)
             self.assertTrue((project / ".continuum" / "config.json").exists())
+
+
+class AgentRegistryTest(unittest.TestCase):
+    def store(self, project: Path) -> MemoryStore:
+        store = MemoryStore(project)
+        store.initialize(100000, 0.8)
+        return store
+
+    def test_unknown_cli_on_path_is_adopted_with_the_default_convention(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(Path(temporary) / "repo")
+            with patch("continuum.agents.shutil.which", return_value="/usr/bin/hermes"):
+                spec = agents.resolve(store, "hermes")
+            self.assertEqual(spec["command"], "hermes")
+            self.assertEqual(spec["inject"], "arg")
+            self.assertIn("hermes", agents.read_custom(store))
+            self.assertEqual(agents.launch_args(spec, [], "CONTEXT")[-1], "CONTEXT")
+
+    def test_unknown_cli_not_on_path_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(Path(temporary) / "repo")
+            with patch("continuum.agents.shutil.which", return_value=None):
+                with self.assertRaises(agents.AgentError):
+                    agents.resolve(store, "nope")
+
+    def test_registered_spec_controls_prompt_injection(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(Path(temporary) / "repo")
+            agents.write_agent(store, "opencode", {"inject": "flag", "flag": "--task"})
+            spec = agents.read_agents(store)["opencode"]
+            self.assertEqual(agents.launch_args(spec, [], "CONTEXT")[:2], ["--task", "CONTEXT"])
+            agents.write_agent(store, "runner", {"inject": "stdin"})
+            piped = agents.read_agents(store)["runner"]
+            self.assertEqual(agents.launch_args(piped, ["--quiet"], "CONTEXT"), ["--quiet"])
+            self.assertEqual(agents.stdin_prompt(piped, "CONTEXT"), "CONTEXT")
+
+    def test_builtin_conventions_are_preserved(self):
+        prompt = "CONTEXT"
+        self.assertEqual(injected_resume_args("codex", [], prompt), ["exec", prompt])
+        self.assertEqual(injected_resume_args("gemini", [], prompt)[:2], ["--prompt", prompt])
+        self.assertEqual(injected_resume_args("claude", ["--model", "opus"], prompt)[-1], prompt)
+
+    def test_pick_agent_prefers_an_agent_other_than_the_last_one(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(Path(temporary) / "repo")
+            with patch("continuum.agents.shutil.which", return_value="/usr/bin/agent"):
+                self.assertEqual(agents.pick_agent(store, exclude="claude"), "codex")
+                self.assertEqual(agents.pick_agent(store, exclude=None), "claude")
+
+    def test_pick_agent_without_any_installed_cli_explains_the_fix(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(Path(temporary) / "repo")
+            with patch("continuum.agents.shutil.which", return_value=None):
+                with self.assertRaises(agents.AgentError) as caught:
+                    agents.pick_agent(store)
+            self.assertIn("continuum copy", str(caught.exception))
+
+    def test_agent_add_and_list_report_the_registered_spec(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            output = StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(
+                    main(["agent", "add", "hermes", "--inject", "subcommand", "--subcommand", "run",
+                          "--project", str(project)]),
+                    0,
+                )
+                self.assertEqual(main(["agent", "list", "--project", str(project)]), 0)
+            text = output.getvalue()
+            self.assertIn("Registered agent: hermes", text)
+            self.assertIn("hermes: subcommand run (project", text)
+
+
+class ExitHandoffTest(unittest.TestCase):
+    def test_session_exit_writes_a_handoff_without_a_manual_save(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            output = StringIO()
+            with (
+                patch("continuum.cli.agent_command", return_value=[sys.executable, "-c", "print('worked')"]),
+                redirect_stdout(output),
+            ):
+                self.assertEqual(main(["run", "--project", str(project), "claude"]), 0)
+            text = output.getvalue()
+            self.assertIn("Saved:", text)
+            self.assertIn("continuum go", text)
+            self.assertTrue((project / ".continuum" / "latest_handoff.md").exists())
+
+    def test_nonzero_exit_is_recorded_as_the_next_action(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            output = StringIO()
+            with (
+                patch("continuum.cli.agent_command", return_value=[sys.executable, "-c", "raise SystemExit(3)"]),
+                redirect_stdout(output),
+            ):
+                self.assertEqual(main(["run", "--project", str(project), "claude"]), 3)
+            handoff = (project / ".continuum" / "latest_handoff.md").read_text(encoding="utf-8")
+            self.assertIn("exited with code 3", handoff)
+
+    def test_a_quiet_checkpointed_session_keeps_its_checkpoint_handoff(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            store = MemoryStore(project)
+            store.initialize(100000, 0.8)
+            store.event("handoff", {"task": "checkpoint task", "next_step": "checkpoint next"})
+            store.write_handoff("checkpoint task", "checkpoint next")
+            with redirect_stdout(StringIO()):
+                finalize_handoff(store, "claude", "session-1", [], 0, True, output_after_checkpoint=False)
+            handoff = (project / ".continuum" / "latest_handoff.md").read_text(encoding="utf-8")
+            self.assertIn("checkpoint task", handoff)
+
+
+class ShellShimContextTest(unittest.TestCase):
+    """Windows runs .cmd/.bat shims through cmd.exe, which ends the command
+    line at the first newline. A multi-line handoff passed as an argument
+    arrives truncated to its first line, so those agents get a pointer to the
+    handoff file instead."""
+
+    def test_shim_executables_are_detected(self):
+        with patch("continuum.cli.shutil.which", return_value=r"C:\npm\gemini.CMD"):
+            self.assertTrue(launches_through_shell({"command": "gemini"}))
+        with patch("continuum.cli.shutil.which", return_value=r"C:\bin\codex.EXE"):
+            self.assertFalse(launches_through_shell({"command": "codex"}))
+
+    def test_shim_context_is_one_line_and_names_the_handoff(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            store = MemoryStore(project)
+            store.initialize(100000, 0.8)
+            store.write_handoff("fix checkout", "add a regression test")
+            context = shell_safe_context(store, "line one\nline two\nline three")
+            self.assertNotIn("\n", context)
+            self.assertIn("latest_handoff.md", context)
+
+    def test_multiline_context_is_not_passed_as_an_argument_to_a_shim(self):
+        captured: dict[str, list[str]] = {}
+
+        def record(agent, passthrough):
+            captured["args"] = list(passthrough)
+            return [sys.executable, "-c", "pass"]
+
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            store = MemoryStore(project)
+            store.initialize(100000, 0.8)
+            store.write_handoff("fix checkout", "add a regression test")
+            output = StringIO()
+            with (
+                patch("continuum.cli.agent_command", side_effect=record),
+                patch("continuum.cli.launches_through_shell", return_value=True),
+                redirect_stdout(output),
+            ):
+                self.assertEqual(main(["resume", "--project", str(project), "claude"]), 0)
+            self.assertTrue(captured["args"], "the agent received no arguments")
+            for value in captured["args"]:
+                self.assertNotIn("\n", value)
+            self.assertIn("shell shim", output.getvalue())
+
+    def test_stdin_agents_keep_the_full_context_through_a_shim(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            store = MemoryStore(project)
+            store.initialize(100000, 0.8)
+            agents.write_agent(store, "piped", {"inject": "stdin"})
+            output = StringIO()
+            script = "import sys; data = sys.stdin.read(); print('CHARS', len(data))"
+            with (
+                patch("continuum.cli.agent_command", return_value=[sys.executable, "-c", script]),
+                patch("continuum.cli.launches_through_shell", return_value=True),
+                redirect_stdout(output),
+            ):
+                self.assertEqual(main(["resume", "--project", str(project), "piped"]), 0)
+            text = output.getvalue()
+            self.assertNotIn("shell shim", text)
+            chars = int(text.split("CHARS")[1].split()[0])
+            self.assertGreater(chars, 200)
+
+
+class ExitHandoffDerivationTest(unittest.TestCase):
+    """Without a handoff model there is nothing to summarize the session in
+    prose, but repeating the previous handoff verbatim tells the next agent to
+    redo work that may already be done."""
+
+    def store(self, temporary):
+        store = MemoryStore(Path(temporary) / "repo")
+        store.initialize(100000, 0.8)
+        store.event("handoff", {"task": "add retries", "next_step": "write the retry test"})
+        store.write_handoff("add retries", "write the retry test")
+        return store
+
+    def test_a_session_that_changed_files_flags_the_carried_next_step(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(temporary)
+            with patch.object(MemoryStore, "git_or_watch_changes", lambda _self: ["M retry.py"]):
+                with redirect_stdout(StringIO()):
+                    finalize_handoff(store, "claude", "S1", ["out"], 0, False)
+            handoff = (store.project / ".continuum" / "latest_handoff.md").read_text(encoding="utf-8")
+            self.assertIn("add retries", handoff)
+            self.assertIn("retry.py", handoff)
+            self.assertIn("Check whether that finished the previous step", handoff)
+            self.assertIn("write the retry test", handoff)
+
+    def test_the_annotation_does_not_stack_up_over_sessions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(temporary)
+            with patch.object(MemoryStore, "git_or_watch_changes", lambda _self: ["M retry.py"]):
+                with redirect_stdout(StringIO()):
+                    finalize_handoff(store, "claude", "S1", ["out"], 0, False)
+                    finalize_handoff(store, "codex", "S2", ["out"], 0, False)
+            handoff = (store.project / ".continuum" / "latest_handoff.md").read_text(encoding="utf-8")
+            self.assertEqual(handoff.count("Check whether that finished"), 1)
+            self.assertIn("write the retry test", handoff)
+
+    def test_continuum_own_files_do_not_crowd_out_the_users_edits(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(temporary)
+            noisy = ["?? AGENTS.md", "?? .continuum/config.json", "?? .claude/settings.json", "M retry.py"]
+            with patch.object(MemoryStore, "git_or_watch_changes", lambda _self: noisy):
+                with redirect_stdout(StringIO()):
+                    finalize_handoff(store, "claude", "S1", ["out"], 0, False)
+            handoff = (store.project / ".continuum" / "latest_handoff.md").read_text(encoding="utf-8")
+            step = handoff.split("## Next Step")[1]
+            self.assertIn("retry.py", step)
+            self.assertNotIn("AGENTS.md", step)
+            self.assertNotIn(".claude", step)
+
+    def test_a_session_that_only_touched_scaffolding_carries_the_step_untouched(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(temporary)
+            with patch.object(MemoryStore, "git_or_watch_changes", lambda _self: ["?? AGENTS.md"]):
+                with redirect_stdout(StringIO()):
+                    finalize_handoff(store, "claude", "S1", ["out"], 0, False)
+            handoff = (store.project / ".continuum" / "latest_handoff.md").read_text(encoding="utf-8")
+            self.assertNotIn("Check whether", handoff)
+
+    def test_an_unchanged_session_carries_the_next_step_untouched(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(temporary)
+            with patch.object(MemoryStore, "git_or_watch_changes", lambda _self: []):
+                with redirect_stdout(StringIO()):
+                    finalize_handoff(store, "claude", "S1", ["out"], 0, False)
+            handoff = (store.project / ".continuum" / "latest_handoff.md").read_text(encoding="utf-8")
+            self.assertIn("write the retry test", handoff)
+            self.assertNotIn("Check whether", handoff)
+
+    def test_work_after_a_checkpoint_is_not_dropped(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(temporary)
+            store.write_handoff("`claude` reached its estimated context checkpoint.", "resume elsewhere")
+            with patch.object(MemoryStore, "git_or_watch_changes", lambda _self: ["M late.py"]):
+                with redirect_stdout(StringIO()):
+                    finalize_handoff(store, "claude", "S1", ["late"], 0, True, output_after_checkpoint=True)
+            handoff = (store.project / ".continuum" / "latest_handoff.md").read_text(encoding="utf-8")
+            self.assertIn("late.py", handoff)
+
+    def test_a_failure_after_a_checkpoint_is_recorded(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(temporary)
+            with redirect_stdout(StringIO()):
+                finalize_handoff(store, "claude", "S1", [], 3, True, output_after_checkpoint=False)
+            handoff = (store.project / ".continuum" / "latest_handoff.md").read_text(encoding="utf-8")
+            self.assertIn("exited with code 3", handoff)
+
+
+class AgentAddFlagTest(unittest.TestCase):
+    def test_the_documented_flag_form_registers(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            with redirect_stdout(StringIO()):
+                self.assertEqual(
+                    main(["agent", "add", "myagent", "--inject", "flag", "--flag=--task",
+                          "--project", str(project)]),
+                    0,
+                )
+            spec = agents.read_agents(MemoryStore(project))["myagent"]
+            self.assertEqual(spec["flag"], "--task")
+            self.assertEqual(agents.launch_args(spec, [], "CTX")[:2], ["--task", "CTX"])
+
+
+class HelpSurfaceTest(unittest.TestCase):
+    def test_top_level_help_lists_only_the_daily_commands(self):
+        text = parser().format_help()
+        self.assertIn("{install,go,copy,help}", text)
+        self.assertNotIn("flight-record", text)
+        self.assertNotIn("pr-packet", text)
+        self.assertIn("continuum help --all", text)
+
+    def test_help_all_still_lists_the_advanced_surface(self):
+        output = StringIO()
+        with redirect_stdout(output):
+            self.assertEqual(main(["help", "--all"]), 0)
+        text = output.getvalue()
+        self.assertIn("worktree", text)
+        self.assertIn("flight-record", text)
+
+    def test_hidden_commands_still_run(self):
+        output = StringIO()
+        with redirect_stdout(output):
+            self.assertEqual(main(["adapters", "list"]), 0)
+        self.assertIn("claude", output.getvalue())
 
 
 if __name__ == "__main__":

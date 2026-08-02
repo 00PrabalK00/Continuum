@@ -2,22 +2,32 @@
 
 ## The Daily Loop
 
-Three commands cover everyday use. The first `save` auto-initializes the
-project; nothing else is required.
+One command covers everyday use. It auto-initializes the project, injects the
+previous context, records the session and writes the next handoff on exit.
 
 ```bash
-# Before stopping or switching AI — plain words, "|" separates the next step:
-continuum save "fixed the auth bug | next: test the retry logic"
+# Work through Continuum; the handoff is written when the agent exits:
+continuum go
 
-# Continue in an agent CLI with the context injected:
-continuum go claude        # or codex, gemini
+# Out of context? Run it again — the work moves to the next available agent:
+continuum go
 
-# Or paste into any AI chat (web ChatGPT, claude.ai, ...):
+# Name any agent CLI on your PATH explicitly:
+continuum go codex
+continuum go hermes
+
+# Or paste the same context into any AI chat (web ChatGPT, claude.ai, ...):
 continuum copy
 ```
 
 Bare `continuum` prints where you left off. Optional one-time
 `continuum setup` connects installed agent CLIs over MCP.
+`continuum save "<task> | <next step>"` still records a handoff by hand when
+you want one mid-session.
+
+`continuum --help` lists only these commands. Everything else — teams,
+worktrees, governance, evidence — is listed by `continuum help --all` and
+still runs exactly as before.
 
 ## Target npm Flow
 
