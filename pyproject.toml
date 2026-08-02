@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,7 +8,8 @@ version = "0.12.0"
 description = "Local shared memory and opt-in sequential orchestration for AI coding agents."
 readme = "README.md"
 requires-python = ">=3.9"
-license = {text = "MIT"}
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{name = "Continuum contributors"}]
 dependencies = [
   "psutil>=5.9",
@@ -18,11 +19,23 @@ keywords = ["ai", "agents", "codex", "claude", "gemini", "ollama", "openrouter",
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",
-  "License :: OSI Approved :: MIT License",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Topic :: Software Development :: Libraries :: Application Frameworks",
 ]
+
+[project.urls]
+Homepage = "https://github.com/00PrabalK00/Continuum"
+Repository = "https://github.com/00PrabalK00/Continuum"
+Issues = "https://github.com/00PrabalK00/Continuum/issues"
+Changelog = "https://github.com/00PrabalK00/Continuum/blob/main/CHANGELOG.md"
 
 [project.scripts]
 continuum = "continuum.cli:main"

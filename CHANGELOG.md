@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Prepared both packages for release. `pyproject.toml` gains project URLs, a
+  PEP 639 license declaration and per-version classifiers; `package.json` gains
+  repository, homepage, bugs and author. The README logo is now an absolute URL,
+  since PyPI does not resolve repository-relative paths and would have rendered
+  it as a broken image.
+- Added a tag-driven release workflow that runs the full test matrix again,
+  refuses to publish if the tag disagrees with any of the three files carrying
+  the version, and publishes to PyPI by trusted publishing rather than a stored
+  token. `docs/releasing.md` records the one-time account setup that cannot be
+  done from CI.
+- Nothing is published yet, so the install instructions still describe cloning
+  the repository. They change when a release has actually been accepted and
+  verified, not before.
+
 - Added the `save_progress` MCP tool, so an agent can record where work has got
   to on its own initiative. It fills in whatever the agent does not supply,
   asking the configured handoff model for a summary and falling back to the
