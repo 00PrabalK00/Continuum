@@ -195,9 +195,15 @@ def delegation_table(report: dict) -> str:
             # Delivery, not accuracy: whether the message reached the other
             # agent and its reply came back. An earlier version of the harness
             # scored every delegation trial 0 and published it as 0% accurate.
+            # An entry from before the reply was scored carries accuracy_pct 0.0
+            # from a hardcoded zero. Printing it as "0% delivered" would state
+            # a failure that was never measured, which is the whole reason this
+            # column exists. The scored ones record the pong probe.
+            scored = "pong" in (entry.get("per_probe_pct") or {})
             delivered = entry.get("accuracy_pct")
             rows.append([agent, seconds(entry),
-                         f"{delivered:.0f}%" if delivered is not None else "-",
+                         f"{delivered:.0f}%" if scored and delivered is not None
+                         else "not measured",
                          completion(entry)])
     return table(rows, ["", "round trip", "reply delivered", "completed"]) if rows else ""
 

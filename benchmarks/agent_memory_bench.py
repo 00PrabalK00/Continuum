@@ -296,6 +296,18 @@ def trial(store: MemoryStore, agent: str, with_context: bool) -> dict:
     }
 
 
+def scored_delegation(entry: dict) -> bool:
+    """Whether a delegation entry came from a harness that read the reply.
+
+    Entries written before the reply was scored carry `accuracy_pct: 0.0` from
+    a hardcoded zero, and `--resume` would keep them and the report would print
+    them as 0% delivered. The scored ones record the `pong` probe, so its
+    presence is what distinguishes them. Anything else is treated as unrecorded
+    and re-run.
+    """
+    return bool(entry.get("completed")) and "pong" in (entry.get("per_probe_pct") or {})
+
+
 def summarize(rows: list[dict], max_score: int | None = None) -> dict:
     good = [row for row in rows if row.get("ok")]
     if not good:
@@ -717,7 +729,7 @@ def main() -> int:
 
     report.setdefault("delegation", {})
     for agent in agents:
-        if args.resume and report["delegation"].get(agent, {}).get("completed"):
+        if args.resume and scored_delegation(report["delegation"].get(agent, {})):
             print(f"  delegation/{agent}: already recorded, skipping", flush=True)
             continue
         rows = []
