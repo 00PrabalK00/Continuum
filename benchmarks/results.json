@@ -1,0 +1,242 @@
+{
+  "probes": 5,
+  "trials": 3,
+  "context_tokens": {
+    "raw_history": 1604,
+    "compact": 74,
+    "normal": 412,
+    "deep": 608
+  },
+  "fidelity": {
+    "claude/injected": {
+      "runs": 3,
+      "completed": 3,
+      "score_mean": 5,
+      "score_sd": 0.0,
+      "accuracy_pct": 100.0,
+      "seconds_mean": 6.5,
+      "prompt_tokens": 286,
+      "reply_tokens_mean": 24,
+      "missed": []
+    },
+    "claude/files_only": {
+      "runs": 3,
+      "completed": 3,
+      "score_mean": 5,
+      "score_sd": 0.0,
+      "accuracy_pct": 100.0,
+      "seconds_mean": 29.1,
+      "prompt_tokens": 82,
+      "reply_tokens_mean": 25.7,
+      "missed": []
+    },
+    "claude/no_memory": {
+      "runs": 3,
+      "completed": 3,
+      "score_mean": 0.67,
+      "score_sd": 0.47,
+      "accuracy_pct": 13.3,
+      "seconds_mean": 20.2,
+      "prompt_tokens": 82,
+      "reply_tokens_mean": 72.7,
+      "missed": [
+        "class",
+        "count",
+        "file",
+        "phase",
+        "verb"
+      ]
+    },
+    "codex/injected": {
+      "runs": 3,
+      "completed": 3,
+      "score_mean": 5,
+      "score_sd": 0.0,
+      "accuracy_pct": 100.0,
+      "seconds_mean": 37.6,
+      "prompt_tokens": 286,
+      "reply_tokens_mean": 22.7,
+      "missed": []
+    },
+    "codex/files_only": {
+      "runs": 3,
+      "completed": 3,
+      "score_mean": 5,
+      "score_sd": 0.0,
+      "accuracy_pct": 100.0,
+      "seconds_mean": 49.0,
+      "prompt_tokens": 82,
+      "reply_tokens_mean": 26.3,
+      "missed": []
+    },
+    "codex/no_memory": {
+      "runs": 3,
+      "completed": 3,
+      "score_mean": 0,
+      "score_sd": 0.0,
+      "accuracy_pct": 0.0,
+      "seconds_mean": 0.6,
+      "prompt_tokens": 82,
+      "reply_tokens_mean": 0,
+      "missed": [
+        "class",
+        "count",
+        "file",
+        "phase",
+        "verb"
+      ]
+    }
+  },
+  "conflict": {
+    "claude": {
+      "trials": 3,
+      "answered_from_injected": 3,
+      "answered_from_disk": 0,
+      "neither": 0,
+      "samples": [
+        "BillingGateway",
+        "BillingGateway"
+      ]
+    },
+    "codex": {
+      "trials": 3,
+      "answered_from_injected": 3,
+      "answered_from_disk": 0,
+      "neither": 0,
+      "samples": [
+        "BillingGateway",
+        "BillingGateway"
+      ]
+    }
+  },
+  "categories": [
+    {
+      "category": "knowledge_update",
+      "agent": "claude",
+      "trials": 3,
+      "completed": 3,
+      "passed": 3,
+      "pass_pct": 100.0,
+      "seconds_mean": 5.8,
+      "samples": [
+        "7",
+        "7"
+      ]
+    },
+    {
+      "category": "temporal",
+      "agent": "claude",
+      "trials": 3,
+      "completed": 3,
+      "passed": 3,
+      "pass_pct": 100.0,
+      "seconds_mean": 6.7,
+      "samples": [
+        "Writing migration first.  Order per context: \"Earlier: wrote the migration script\" \u00e2\u2020\u2019 \"Ta",
+        "Writing migration came first.  Order per context: 1. Wrote migration script (\"Earlier\") 2."
+      ]
+    },
+    {
+      "category": "multi_session",
+      "agent": "claude",
+      "trials": 3,
+      "completed": 3,
+      "passed": 3,
+      "pass_pct": 100.0,
+      "seconds_mean": 7.4,
+      "samples": [
+        "PostgreSQL. Chosen over MySQL.  Next step recorded: add indexes to audit log schema.",
+        "PostgreSQL. Chosen over MySQL.  Next step recorded: add indexes to audit log schema."
+      ]
+    },
+    {
+      "category": "abstention",
+      "agent": "claude",
+      "trials": 3,
+      "completed": 3,
+      "passed": 3,
+      "pass_pct": 100.0,
+      "seconds_mean": 6.4,
+      "samples": [
+        "UNKNOWN",
+        "UNKNOWN"
+      ]
+    },
+    {
+      "category": "knowledge_update",
+      "agent": "codex",
+      "trials": 3,
+      "completed": 3,
+      "passed": 3,
+      "pass_pct": 100.0,
+      "seconds_mean": 27.3,
+      "samples": [
+        "7",
+        "7"
+      ]
+    },
+    {
+      "category": "temporal",
+      "agent": "codex",
+      "trials": 3,
+      "completed": 3,
+      "passed": 3,
+      "pass_pct": 100.0,
+      "seconds_mean": 27.1,
+      "samples": [
+        "Writing the migration script happened first; it was then run on staging.",
+        "Writing the migration happened first; running it on staging happened afterward."
+      ]
+    },
+    {
+      "category": "multi_session",
+      "agent": "codex",
+      "trials": 3,
+      "completed": 3,
+      "passed": 3,
+      "pass_pct": 100.0,
+      "seconds_mean": 24.4,
+      "samples": [
+        "PostgreSQL was chosen for the audit log over MySQL.",
+        "PostgreSQL was chosen for the audit log over MySQL."
+      ]
+    },
+    {
+      "category": "abstention",
+      "agent": "codex",
+      "trials": 3,
+      "completed": 3,
+      "passed": 3,
+      "pass_pct": 100.0,
+      "seconds_mean": 24.7,
+      "samples": [
+        "UNKNOWN",
+        "UNKNOWN"
+      ]
+    }
+  ],
+  "delegation": {
+    "claude": {
+      "runs": 3,
+      "completed": 3,
+      "score_mean": 0,
+      "score_sd": 0.0,
+      "accuracy_pct": 0.0,
+      "seconds_mean": 7.3,
+      "prompt_tokens": 210,
+      "reply_tokens_mean": 1,
+      "missed": []
+    },
+    "codex": {
+      "runs": 3,
+      "completed": 3,
+      "score_mean": 0,
+      "score_sd": 0.0,
+      "accuracy_pct": 0.0,
+      "seconds_mean": 24.7,
+      "prompt_tokens": 210,
+      "reply_tokens_mean": 1,
+      "missed": []
+    }
+  }
+}
