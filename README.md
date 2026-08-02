@@ -137,12 +137,14 @@ one question could satisfy an unrelated one and a reply that skipped a question
 entirely could still score full marks. Any accuracy number it produced is
 unreliable, in an unknown direction.
 
-Two measurements from that run do not depend on the scorer and still stand:
+What can still be said is how long each run took. These are raw process
+durations, not time to a correct answer: since the scorer accepted replies it
+should not have, some of the runs being timed may not have answered properly.
 
 | | Claude | Codex |
 | --- | --- | --- |
-| Time to answer with context injected | 6.5s | 37.6s |
-| Time to answer by reading `.continuum/` itself | 29.1s | 49.0s |
+| Run with context injected | 6.5s | 37.6s |
+| Run with no injection, reading `.continuum/` instead | 29.1s | 49.0s |
 
 Compact context for that project is 74 tokens, against 1,604 tokens of raw
 event history.

@@ -44,16 +44,21 @@ That flaw affects every accuracy number in the previous version of this page, in
 an unknown direction. They are not reproduced here, because a number that cannot
 be trusted is worse than no number.
 
-Two measurements from the same run do not depend on the scorer, because they are
-wall-clock timings rather than judgements about correctness:
+What survives is how long each run took, with one caveat that matters: these
+are raw process durations, not time to a correct answer. The scorer accepted
+replies it should not have, so some of the runs being timed may not have
+answered properly, and a timing is only a latency-to-answer once the reply it
+belongs to has been rescored.
 
 | Arm | Claude | Codex |
 | --- | --- | --- |
 | Continuum injects the context | 6.5s | 37.6s |
 | No injection, `.continuum/` readable | 29.1s | 49.0s |
+| Difference | 22.6s | 11.4s |
 
-The injected prompt is 286 tokens. The other arms send 82 and let the agent find
-what it needs, which is what the extra 20 to 30 seconds buys.
+The injected prompt is 286 tokens. The other arms send 82 and let the agent go
+and find what it needs, which is what the extra time is spent on. The two agents
+differ by twice over, so there is no single figure for it.
 
 The re-measurement fixes the scorer to match per question, and additionally
 adds probes that cannot be satisfied by echoing the context: inference probes
