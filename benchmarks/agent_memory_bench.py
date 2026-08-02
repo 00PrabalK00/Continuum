@@ -296,13 +296,29 @@ def trial(store: MemoryStore, agent: str, with_context: bool) -> dict:
     }
 
 
-def summarize(rows: list[dict]) -> dict:
+def scored_delegation(entry: dict) -> bool:
+    """Whether a delegation entry came from a harness that read the reply.
+
+    Entries written before the reply was scored carry `accuracy_pct: 0.0` from
+    a hardcoded zero, and `--resume` would keep them and the report would print
+    them as 0% delivered. The scored ones record the `pong` probe, so its
+    presence is what distinguishes them. Anything else is treated as unrecorded
+    and re-run.
+    """
+    return bool(entry.get("completed")) and "pong" in (entry.get("per_probe_pct") or {})
+
+
+def summarize(rows: list[dict], max_score: int | None = None) -> dict:
     good = [row for row in rows if row.get("ok")]
     if not good:
         return {"runs": len(rows), "completed": 0}
     scores = [row["score"] for row in good]
     seconds = [row["seconds"] for row in good]
-    per_trial_pct = [100.0 * value / len(PROBES) for value in scores]
+    # The fidelity arms ask all five probes. Other arms ask fewer, and dividing
+    # their scores by five understates them: the delegation arm asks one thing
+    # and was published as 0% accurate because of it.
+    denominator = max_score or len(PROBES)
+    per_trial_pct = [100.0 * value / denominator for value in scores]
     low, high = bootstrap_interval(per_trial_pct)
     # Per probe kind, so a headline number cannot hide a category that always
     # fails. Each probe contributes one pass or fail per completed trial.
@@ -713,7 +729,7 @@ def main() -> int:
 
     report.setdefault("delegation", {})
     for agent in agents:
-        if args.resume and report["delegation"].get(agent, {}).get("completed"):
+        if args.resume and scored_delegation(report["delegation"].get(agent, {})):
             print(f"  delegation/{agent}: already recorded, skipping", flush=True)
             continue
         rows = []
@@ -721,14 +737,22 @@ def main() -> int:
             started = time.time()
             try:
                 result = ask(store, agent, "Reply with exactly: PONG", sender="benchmark", timeout=180)
+                # Whether the message actually arrived and came back, rather
+                # than whether a process exited cleanly. Scoring every trial 0
+                # made this cell read as 0% accurate delegation, which is not
+                # something it ever measured.
+                delivered = "pong" in str(result.get("reply", "")).lower()
                 rows.append({"ok": True, "seconds": round(time.time() - started, 1),
                              "prompt_tokens": result["prompt_tokens"],
-                             "score": 0, "reply_tokens": result["reply_tokens"], "missed": [],
-                             "by_probe": {}})
+                             "score": 1 if delivered else 0,
+                             "reply_tokens": result["reply_tokens"],
+                             "missed": [] if delivered else ["pong"],
+                             "by_probe": {"pong": delivered}})
             except (DelegationError, OSError) as error:
                 rows.append({"ok": False, "error": str(error)[:120]})
-        report["delegation"][agent] = summarize(rows)
+        report["delegation"][agent] = summarize(rows, max_score=1)
         print(f"  delegation/{agent}: {report['delegation'][agent].get('seconds_mean')}s "
+              f"delivered {report['delegation'][agent].get('accuracy_pct')}% "
               f"completed {report['delegation'][agent].get('completed')}/{args.trials}", flush=True)
         save()
 

@@ -223,6 +223,32 @@ class TimingTest(unittest.TestCase):
         self.assertIn("-", reporter.timing_table(report))
 
 
+class DelegationTableTest(unittest.TestCase):
+    """Delivery is measured only by a harness that read the reply."""
+
+    def test_a_legacy_entry_is_not_published_as_zero_delivered(self):
+        text = reporter.delegation_table(run(delegation={"claude": {
+            "completed": 30, "runs": 30, "accuracy_pct": 0.0,
+            "seconds_mean": 6.0, "per_probe_pct": {},
+        }}))
+        self.assertIn("not measured", text)
+        self.assertNotIn("0%", text)
+
+    def test_a_scored_entry_is_published(self):
+        text = reporter.delegation_table(run(delegation={"claude": {
+            "completed": 30, "runs": 30, "accuracy_pct": 100.0,
+            "seconds_mean": 6.0, "per_probe_pct": {"pong": 100.0},
+        }}))
+        self.assertIn("100%", text)
+
+    def test_the_round_trip_is_still_reported_either_way(self):
+        text = reporter.delegation_table(run(delegation={"claude": {
+            "completed": 30, "runs": 30, "accuracy_pct": 0.0,
+            "seconds_mean": 6.0, "per_probe_pct": {},
+        }}))
+        self.assertIn("6.0s", text)
+
+
 class ReadmeGenerationTest(unittest.TestCase):
     """This module claims the published figures are generated. That is only true
     if it writes the README block as well as the full page."""

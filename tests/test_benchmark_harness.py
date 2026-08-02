@@ -180,5 +180,39 @@ class ControlIsolationTest(unittest.TestCase):
         self.assertFalse(seen["path"].exists())
 
 
+class DelegationScoringTest(unittest.TestCase):
+    """The delegation arm measures whether one agent can reach another. It
+    scored every trial 0 regardless of the reply, and summarize divided that by
+    the five fidelity probes, so the run published 0% accurate delegation for a
+    cell that never checked an answer."""
+
+    def rows(self, score):
+        return [{"ok": True, "score": score, "seconds": 6.0, "reply_tokens": 1,
+                 "missed": [], "by_probe": {"pong": bool(score)}}]
+
+    def test_a_single_probe_arm_is_not_divided_by_the_five_fidelity_probes(self):
+        self.assertEqual(bench.summarize(self.rows(1), max_score=1)["accuracy_pct"], 100.0)
+
+    def test_the_default_denominator_is_still_the_probe_set(self):
+        self.assertEqual(bench.summarize(self.rows(1))["accuracy_pct"],
+                         round(100.0 / len(bench.PROBES), 1))
+
+    def test_an_entry_from_the_old_scorer_is_not_treated_as_recorded(self):
+        # --resume would otherwise keep the constant-zero rows forever, and the
+        # report would publish them as 0% delivered.
+        legacy = {"completed": 30, "runs": 30, "accuracy_pct": 0.0, "per_probe_pct": {}}
+        self.assertFalse(bench.scored_delegation(legacy))
+
+    def test_a_scored_entry_is_treated_as_recorded(self):
+        self.assertTrue(bench.scored_delegation(
+            {"completed": 30, "accuracy_pct": 100.0, "per_probe_pct": {"pong": 100.0}}))
+
+    def test_an_unrun_entry_is_not_treated_as_recorded(self):
+        self.assertFalse(bench.scored_delegation({}))
+
+    def test_a_reply_that_never_arrived_scores_zero(self):
+        self.assertEqual(bench.summarize(self.rows(0), max_score=1)["accuracy_pct"], 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()
