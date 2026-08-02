@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import re
 import shutil
 import statistics
@@ -38,18 +39,55 @@ from continuum.delegation import DelegationError, ask  # noqa: E402
 TASK = "renamed the payment client to BillingGateway and migrated its callers"
 NEXT_STEP = "fix the failing retry test in tests/test_billing.py, which asserts 3 attempts"
 
+# A distractor: a real recorded decision naming a class that was considered and
+# rejected. An agent pattern-matching on "the class name near the rename" can
+# pick this instead of the right answer, so recall alone will not score.
+DISTRACTOR = "considered naming it LedgerClient before settling on the current name"
+# A second decision, so the retry-limit inference has something to compute from.
+RETRY_POLICY = "set the retry ceiling to 5 attempts across all payment clients"
+
+# Probe kinds:
+#   recall       the answer is a literal span of the recorded context
+#   distractor   a plausible wrong answer appears verbatim in the context
+#   inference    the answer is not written anywhere and must be worked out
+#   unanswerable the context does not contain it; guessing scores as a loss
 PROBES = [
-    ("class", ["billinggateway"], "What class was the payment client renamed to?"),
-    ("file", ["tests/test_billing.py", "test_billing"], "Which test file is failing?"),
-    ("count", ["3", "three"], "How many retry attempts does that test assert?"),
-    ("verb", ["migrat", "updat", "callers"], "What was done to the callers?"),
-    ("phase", ["fix", "retry"], "In two words, what is the next action?"),
+    (
+        "class", "distractor",
+        ["billinggateway"], ["ledgerclient"],
+        "What class is the payment client called now?",
+    ),
+    (
+        "file", "recall",
+        ["tests/test_billing.py", "test_billing"], [],
+        "Which test file is failing?",
+    ),
+    (
+        "count", "recall",
+        ["3", "three"], [],
+        "How many retry attempts does that test assert?",
+    ),
+    (
+        "headroom", "inference",
+        ["2", "two"], [],
+        "The retry ceiling is a recorded decision and the failing test asserts a "
+        "smaller number. How many attempts short of the ceiling is the test? "
+        "Answer with the number only.",
+    ),
+    (
+        "owner", "unanswerable",
+        ["unknown", "not recorded", "does not say", "no record", "not in the context"],
+        ["alice", "bob", "team", "me", "you"],
+        "Which engineer is assigned to fix the failing test? If the context does "
+        "not record it, reply exactly: UNKNOWN",
+    ),
 ]
 
 QUESTION = (
-    "Answer these five questions from the project context you were given. "
-    "One short line each, numbered. Do not ask for files.\n"
-    + "\n".join(f"{index + 1}. {probe[2]}" for index, probe in enumerate(PROBES))
+    "Answer these five questions using only the project context you were given. "
+    "One short line each, numbered to match. If the context does not contain an "
+    "answer, say UNKNOWN for that number rather than guessing.\n"
+    + "\n".join(f"{index + 1}. {probe[4]}" for index, probe in enumerate(PROBES))
 )
 
 # The categories LongMemEval separates out. Recall alone flatters a memory
@@ -117,6 +155,11 @@ def build_project(root: Path) -> MemoryStore:
     subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "init"], cwd=root, check=False, capture_output=True)
     store = MemoryStore(root)
     store.initialize(100_000, 0.80)
+    # The distractor and the retry ceiling are recorded first, then buried under
+    # routine noise. The distractor gives the wrong answer somewhere to be found;
+    # the ceiling is what the inference probe is computed against.
+    store.event("handoff", {"task": DISTRACTOR, "next_step": "confirm the name with the team"})
+    store.event("handoff", {"task": RETRY_POLICY, "next_step": "apply it to the billing client"})
     # Background noise, so the handoff is not the only thing in memory.
     for index in range(40):
         store.event("agent_exit", {"summary": f"session {index} touched module_{index}.py", "returncode": 0})
@@ -151,20 +194,60 @@ def score(reply: str) -> tuple[int, list[str]]:
 
     Searching the whole reply for every accepted term lets one answer satisfy a
     different question: "the retry test asserts 3 attempts" contains "retry", so
-    it used to satisfy the separate question about the next action even when
-    that question went unanswered. Scoring per numbered answer is what makes a
+    it used to satisfy a separate question about the next action even when that
+    question went unanswered. Scoring per numbered answer is what makes a
     reported percentage mean what it appears to mean.
+
+    A probe is only credited when its answer contains an accepted term and no
+    rejected one. That is what stops a distractor question being passed by
+    naming both candidates, and stops an unanswerable question being passed by
+    hedging with a guess attached.
     """
     answers = split_answers(reply)
     missed = []
     hits = 0
-    for index, (name, accepted, _question) in enumerate(PROBES, start=1):
+    for index, (name, _kind, accepted, rejected, _question) in enumerate(PROBES, start=1):
         answer = answers.get(index, "")
-        if answer and any(term in answer for term in accepted):
+        hit = bool(answer) and any(term in answer for term in accepted)
+        spoiled = any(term in answer for term in rejected)
+        if hit and not spoiled:
             hits += 1
         else:
             missed.append(name)
     return hits, missed
+
+
+def score_by_kind(reply: str) -> dict[str, bool]:
+    """Per-probe outcome, so results can be broken down by probe kind."""
+    answers = split_answers(reply)
+    outcome = {}
+    for index, (name, _kind, accepted, rejected, _question) in enumerate(PROBES, start=1):
+        answer = answers.get(index, "")
+        hit = bool(answer) and any(term in answer for term in accepted)
+        outcome[name] = hit and not any(term in answer for term in rejected)
+    return outcome
+
+
+def bootstrap_interval(values: list[float], confidence: float = 0.95,
+                       resamples: int = 5000) -> tuple[float, float]:
+    """A percentile bootstrap interval, so no distribution is assumed.
+
+    Accuracy over a handful of trials is not normal, and quoting a mean without
+    an interval is what made the earlier numbers unquotable. Resampling needs
+    nothing but the standard library.
+    """
+    if not values:
+        return (0.0, 0.0)
+    if len(values) == 1:
+        return (values[0], values[0])
+    means = []
+    for _ in range(resamples):
+        sample = random.choices(values, k=len(values))
+        means.append(sum(sample) / len(sample))
+    means.sort()
+    low = means[int((1 - confidence) / 2 * resamples)]
+    high = means[min(resamples - 1, int((1 + confidence) / 2 * resamples))]
+    return (round(low, 2), round(high, 2))
 
 
 def context_sizes(store: MemoryStore) -> dict:
@@ -209,6 +292,7 @@ def trial(store: MemoryStore, agent: str, with_context: bool) -> dict:
         "reply_tokens": estimate_tokens(reply),
         "score": hits,
         "missed": missed,
+        "by_probe": score_by_kind(reply),
     }
 
 
@@ -218,16 +302,31 @@ def summarize(rows: list[dict]) -> dict:
         return {"runs": len(rows), "completed": 0}
     scores = [row["score"] for row in good]
     seconds = [row["seconds"] for row in good]
+    per_trial_pct = [100.0 * value / len(PROBES) for value in scores]
+    low, high = bootstrap_interval(per_trial_pct)
+    # Per probe kind, so a headline number cannot hide a category that always
+    # fails. Each probe contributes one pass or fail per completed trial.
+    by_kind: dict[str, list[int]] = {}
+    for row in good:
+        for name, passed in (row.get("by_probe") or {}).items():
+            by_kind.setdefault(name, []).append(1 if passed else 0)
     return {
         "runs": len(rows),
         "completed": len(good),
+        "completion_pct": round(100 * len(good) / len(rows), 1) if rows else 0.0,
         "score_mean": round(statistics.mean(scores), 2),
         "score_sd": round(statistics.pstdev(scores), 2) if len(scores) > 1 else 0.0,
-        "accuracy_pct": round(100 * sum(scores) / (len(scores) * len(PROBES)), 1),
+        "accuracy_pct": round(statistics.mean(per_trial_pct), 1),
+        "accuracy_ci95": [low, high],
         "seconds_mean": round(statistics.mean(seconds), 1),
+        "seconds_median": round(statistics.median(seconds), 1),
         "prompt_tokens": good[0].get("prompt_tokens"),
         "reply_tokens_mean": round(statistics.mean(r["reply_tokens"] for r in good), 1),
+        "per_probe_pct": {
+            name: round(100 * sum(values) / len(values), 1) for name, values in sorted(by_kind.items())
+        },
         "missed": sorted({name for row in good for name in row["missed"]}),
+        "errors": [row.get("error") for row in rows if not row.get("ok")][:3],
     }
 
 
@@ -328,7 +427,7 @@ def bare_agent_trial(store: MemoryStore, agent: str, question: str) -> dict:
     hits, missed = score(reply)
     return {"ok": True, "seconds": round(time.time() - started, 1), "score": hits,
             "missed": missed, "prompt_tokens": estimate_tokens(question),
-            "reply_tokens": estimate_tokens(reply)}
+            "reply_tokens": estimate_tokens(reply), "by_probe": score_by_kind(reply)}
 
 
 def run_suite(root: Path, agent: str, name: str, suite: dict, trials: int) -> dict:
@@ -370,44 +469,165 @@ def run_suite(root: Path, agent: str, name: str, suite: dict, trials: int) -> di
     }
 
 
+def render_chart(report: dict, path: Path) -> None:
+    """Write a grouped bar chart of accuracy by arm, with confidence intervals.
+
+    SVG is emitted directly rather than through a plotting library: it keeps the
+    repository's dependencies at two, renders natively on GitHub, and diffs as
+    text so a change to a published chart is reviewable.
+    """
+    arms = ["injected", "files_only", "no_memory"]
+    labels = {"injected": "Continuum injects", "files_only": "reads files itself", "no_memory": "no memory"}
+    agents = sorted({key.split("/")[0] for key in report.get("fidelity", {})})
+    if not agents:
+        return
+    colours = {"injected": "#2f6f4e", "files_only": "#7d8ca3", "no_memory": "#b4544a"}
+
+    left, top, width, height = 150, 40, 620, 60 * len(agents) * len(arms) + 40
+    bar_h, gap = 26, 8
+    rows = []
+    y = top
+    for agent in agents:
+        rows.append(("agent", agent, y))
+        y += 24
+        for arm in arms:
+            summary = report["fidelity"].get(f"{agent}/{arm}") or {}
+            if summary.get("completed"):
+                rows.append(("bar", (arm, summary), y))
+            else:
+                rows.append(("missing", arm, y))
+            y += bar_h + gap
+        y += 14
+    total = y + 40
+
+    parts = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{left + width + 40}" height="{total}" '
+        f'viewBox="0 0 {left + width + 40} {total}" font-family="system-ui,sans-serif" font-size="13">',
+        f'<rect width="100%" height="100%" fill="#ffffff"/>',
+        f'<text x="{left}" y="24" font-size="15" font-weight="600">Answers correct by arm, '
+        f'{report.get("trials", "?")} trials each, 95% confidence interval</text>',
+    ]
+    for value in (0, 25, 50, 75, 100):
+        x = left + width * value / 100
+        parts.append(f'<line x1="{x:.0f}" y1="{top}" x2="{x:.0f}" y2="{total - 34}" stroke="#e6e6e6"/>')
+        parts.append(f'<text x="{x:.0f}" y="{total - 18}" text-anchor="middle" fill="#666">{value}%</text>')
+
+    for kind, payload, y in rows:
+        if kind == "agent":
+            parts.append(f'<text x="8" y="{y + 14}" font-weight="600">{payload}</text>')
+        elif kind == "missing":
+            parts.append(f'<text x="{left - 8}" y="{y + 18}" text-anchor="end" fill="#666">{labels[payload]}</text>')
+            parts.append(f'<text x="{left + 6}" y="{y + 18}" fill="#999">not measured</text>')
+        else:
+            arm, summary = payload
+            pct = float(summary.get("accuracy_pct") or 0.0)
+            low, high = (summary.get("accuracy_ci95") or [pct, pct])[:2]
+            bar = width * pct / 100
+            parts.append(f'<text x="{left - 8}" y="{y + 18}" text-anchor="end" fill="#444">{labels[arm]}</text>')
+            parts.append(
+                f'<rect x="{left}" y="{y}" width="{bar:.1f}" height="{bar_h}" fill="{colours[arm]}" rx="3"/>'
+            )
+            x_low, x_high = left + width * float(low) / 100, left + width * float(high) / 100
+            mid = y + bar_h / 2
+            parts.append(
+                f'<line x1="{x_low:.1f}" y1="{mid}" x2="{x_high:.1f}" y2="{mid}" stroke="#22303c" stroke-width="2"/>'
+                f'<line x1="{x_low:.1f}" y1="{y + 5}" x2="{x_low:.1f}" y2="{y + bar_h - 5}" stroke="#22303c" stroke-width="2"/>'
+                f'<line x1="{x_high:.1f}" y1="{y + 5}" x2="{x_high:.1f}" y2="{y + bar_h - 5}" stroke="#22303c" stroke-width="2"/>'
+            )
+            parts.append(
+                f'<text x="{left + bar + 8:.1f}" y="{y + 18}" fill="#222">{pct:.0f}% '
+                f'<tspan fill="#666">({low:.0f} to {high:.0f})</tspan></text>'
+            )
+    parts.append("</svg>")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(parts) + "\n", encoding="utf-8")
+
+
+def load_partial(path: Path) -> dict:
+    """Reload a previous run so an interrupted one can be continued.
+
+    A full run is hours of real agent calls. Losing it to one quota failure
+    near the end would make the measurement impractical to repeat, which is the
+    same as not being reproducible.
+    """
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--trials", type=int, default=3)
+    parser.add_argument("--trials", type=int, default=30)
     parser.add_argument("--agents", default="claude,codex")
+    parser.add_argument("--out", default=str(Path(__file__).resolve().parent / "results.json"))
+    parser.add_argument("--resume", action="store_true",
+                        help="Keep cells already present in the output file and only run the rest.")
+    parser.add_argument("--chart", default=None,
+                        help="Write an SVG chart of accuracy by arm to this path.")
     args = parser.parse_args()
     agents = [name.strip() for name in args.agents.split(",") if name.strip()]
+    out = Path(args.out)
+
+    previous = load_partial(out) if args.resume else {}
+    report: dict = {"probes": len(PROBES), "trials": args.trials,
+                    "probe_kinds": {probe[0]: probe[1] for probe in PROBES}}
+    if previous:
+        report.update({key: value for key, value in previous.items() if key not in ("probes", "trials")})
+        print(f"resuming from {out}", flush=True)
+
+    def save() -> None:
+        out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+
+    def done(section: str, key: str) -> bool:
+        return bool(args.resume and report.get(section, {}).get(key, {}).get("completed"))
+
+    def cell(section: str, key: str, run) -> None:
+        """Run one measurement cell, unless a resumed file already has it."""
+        if done(section, key):
+            print(f"  {key}: already recorded, skipping", flush=True)
+            return
+        report.setdefault(section, {})[key] = summarize(run())
+        summary = report[section][key]
+        print(
+            f"  {key}: {summary.get('accuracy_pct')}% "
+            f"CI{summary.get('accuracy_ci95')} "
+            f"completed {summary.get('completed')}/{summary.get('runs')} "
+            f"{summary.get('seconds_mean')}s",
+            flush=True,
+        )
+        save()
 
     root = Path(__file__).resolve().parent / "project"
     store = build_project(root)
-    report: dict = {"probes": len(PROBES), "trials": args.trials}
 
     report["context_tokens"] = context_sizes(store)
     print("context tokens:", report["context_tokens"], flush=True)
+    save()
 
-    report["fidelity"] = {}
+    report.setdefault("fidelity", {})
     for agent in agents:
         # Arm A: Continuum injects the context.
-        rows = [trial(store, agent, True) for _ in range(args.trials)]
-        report["fidelity"][f"{agent}/injected"] = summarize(rows)
-        print(f"  {agent}/injected: {report['fidelity'][f'{agent}/injected']}", flush=True)
+        cell("fidelity", f"{agent}/injected",
+             lambda: [trial(store, agent, True) for _ in range(args.trials)])
 
         # Arm B: no injection, but the project's .continuum files are right
         # there for the agent to open. This is the arm that decides whether the
         # injection is doing the work.
-        rows = [bare_agent_trial(store, agent, QUESTION) for _ in range(args.trials)]
-        report["fidelity"][f"{agent}/files_only"] = summarize(rows)
-        print(f"  {agent}/files_only: {report['fidelity'][f'{agent}/files_only']}", flush=True)
+        cell("fidelity", f"{agent}/files_only",
+             lambda: [bare_agent_trial(store, agent, QUESTION) for _ in range(args.trials)])
 
         # Arm C: no injection, no project memory at all. The agent is allowed to
         # read files here, so this has to live somewhere unrelated to the
         # benchmark: an earlier version put it beside the other generated
         # projects and Codex found the answers by searching sibling directories,
         # scoring 5/5 in a project that contained nothing.
-        rows = with_isolated_project(lambda blank: [
-            bare_agent_trial(blank, agent, QUESTION) for _ in range(args.trials)
-        ])
-        report["fidelity"][f"{agent}/no_memory"] = summarize(rows)
-        print(f"  {agent}/no_memory: {report['fidelity'][f'{agent}/no_memory']}", flush=True)
+        cell("fidelity", f"{agent}/no_memory",
+             lambda: with_isolated_project(lambda blank: [
+                 bare_agent_trial(blank, agent, QUESTION) for _ in range(args.trials)
+             ]))
 
     # Arm D: injected context and on-disk files disagree. Which one is answered
     # from tells us whether injection or file access produced the earlier score.
@@ -451,9 +671,11 @@ def main() -> int:
         report["delegation"][agent] = summarize(rows)
         print(f"  delegation/{agent}: {report['delegation'][agent]}", flush=True)
 
-    out = Path(__file__).resolve().parent / "results.json"
-    out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    save()
     print("\nwrote", out)
+    if args.chart:
+        render_chart(report, Path(args.chart))
+        print("wrote", args.chart)
     return 0
 
 
