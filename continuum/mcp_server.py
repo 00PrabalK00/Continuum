@@ -211,6 +211,17 @@ def tool_definitions() -> list[dict[str, Any]]:
             },
         },
         {
+            "name": "get_agent_limits",
+            "description": (
+                "Report what Continuum has observed about each agent's provider limits: the "
+                "limit messages an agent printed, quoted as it wrote them, and Continuum's own "
+                "rough token estimates. It cannot report how much quota remains, because there "
+                "is no way to ask. Use it before delegating a long job to an agent that recently "
+                "ran out."
+            ),
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
             "name": "list_teams",
             "description": (
                 "List the multi-agent teams available in this project, with the role each agent "
@@ -420,6 +431,12 @@ def call_tool(store: MemoryStore, name: str, arguments: dict[str, Any]) -> dict[
                 "will not see it later. Continuum's memory is read-only from here, usually "
                 "because the agent running it sandboxes its MCP servers.]"
             )
+    elif name == "get_agent_limits":
+        from . import quota
+        from .agents import installed_agents
+
+        entries = quota.rank(store, installed_agents(store))
+        text = quota.render(entries)
     elif name == "list_teams":
         from .teams import PRESETS, TeamManager
 

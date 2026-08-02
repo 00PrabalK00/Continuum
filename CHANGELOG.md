@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- Added cross-session quota awareness. Continuum records what each agent
+  consumed per session in a new `agent_usage` table, and records verbatim any
+  message an agent printed when it ran out. `continuum limits` and the
+  `get_agent_limits` MCP tool report both, and `continuum go` prefers an agent
+  that has not reported running out.
+- Nothing invented is displayed. There is no API for remaining quota and the
+  CLIs say nothing until they refuse, so no percentage, gauge or remaining
+  balance appears anywhere. What an agent said is quoted as it wrote it, what
+  Continuum counted is labelled an estimate and described as a floor, and
+  remaining quota is stated as unknowable.
+- A phrase like "usage limit reached" appears in ordinary output, including in
+  Continuum's own source, so a single occurrence is recorded but never acted on.
+  A signal only affects which agent runs next when the agent also stated a reset
+  time, repeated itself, or the session then failed.
+- Fixed two token-counting bugs this surfaced. Interactive sessions counted ANSI
+  escape sequences and full TUI repaints as consumption, so the context
+  checkpoint fired far too early there; output is now cleaned before it is
+  measured. The injected prompt was estimated for its event and then dropped, so
+  the session total omitted the whole handoff.
+
 - Prepared both packages for release. `pyproject.toml` gains project URLs, a
   PEP 639 license declaration and per-version classifiers; `package.json` gains
   repository, homepage, bugs and author. The README logo is now an absolute URL,
