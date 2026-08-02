@@ -19,6 +19,11 @@ that asks instead of assuming.
   previously existed only as a CLI command. Planning executes nothing.
   Running requires an explicit list of files the writing roles may edit, the
   same gate `continuum team run --execute` enforces.
+- When Ollama is missing, `continuum install` offers to install it through the
+  platform's package manager, printing the exact command before asking so
+  agreeing means agreeing to something specific. The default answer is no, and
+  nothing is installed without an explicit yes. Where no package manager is
+  available it prints the download address instead.
 - `continuum install` asks what else you want when a terminal is attached: it
   can start a local Ollama, download the embedding model, index what you have
   already recorded, and pick a model to write session summaries. It never

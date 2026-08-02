@@ -116,6 +116,65 @@ def start_ollama(wait_seconds: int = 20) -> bool:
     return False
 
 
+def install_command() -> tuple[list[str], str] | None:
+    """The command that installs Ollama on this platform, if there is a safe one.
+
+    Package managers are preferred because the user can audit and undo them the
+    same way as anything else they installed. Linux has no single package
+    manager for this, so it falls back to the vendor's own script, which is the
+    documented install path.
+    """
+    if sys.platform == "win32":
+        if shutil.which("winget"):
+            return (
+                ["winget", "install", "--id", "Ollama.Ollama", "-e",
+                 "--accept-package-agreements", "--accept-source-agreements"],
+                "winget install --id Ollama.Ollama",
+            )
+        return None
+    if sys.platform == "darwin":
+        if shutil.which("brew"):
+            return ["brew", "install", "ollama"], "brew install ollama"
+        return None
+    if shutil.which("curl") and shutil.which("sh"):
+        return (
+            ["sh", "-c", "curl -fsSL https://ollama.com/install.sh | sh"],
+            "curl -fsSL https://ollama.com/install.sh | sh",
+        )
+    return None
+
+
+def offer_install(reader: Callable[[str], str] | None = None) -> bool:
+    """Ask whether to install Ollama, and install it if the answer is yes.
+
+    The exact command is printed before the question, so agreeing is agreeing to
+    something specific rather than to the word "install".
+    """
+    command = install_command()
+    if command is None:
+        print("  No package manager available here to install Ollama automatically.")
+        print(f"  Install it from {OLLAMA_SITE} and rerun `continuum install`.")
+        return False
+    arguments, shown = command
+    print("  Ollama is not installed. It runs the embedding model locally,")
+    print("  so your project text never leaves the machine.")
+    print(f"  This would run: {shown}")
+    if not ask_yes_no("  Install Ollama now?", False, reader):
+        print(f"  Skipped. You can install it later from {OLLAMA_SITE}")
+        return False
+    print("  Installing. This can take a few minutes.")
+    try:
+        completed = subprocess.run(arguments, timeout=1800)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        print(f"  Install did not finish ({error}).")
+        return False
+    if completed.returncode != 0:
+        print(f"  Install did not finish (exit code {completed.returncode}).")
+        print(f"  Install it manually from {OLLAMA_SITE}")
+        return False
+    return shutil.which("ollama") is not None
+
+
 def pull_model(model: str = EMBEDDING_MODEL) -> tuple[bool, str]:
     executable = shutil.which("ollama")
     if not executable:
@@ -136,10 +195,7 @@ def enable_semantic_search(store: "MemoryStore", reader: Callable[[str], str] | 
 
     Returns a one-line report of what happened.
     """
-    if not shutil.which("ollama"):
-        print("  Ollama is not installed, so search will match wording only.")
-        print(f"  To add meaning-based search later, install Ollama from {OLLAMA_SITE}")
-        print("  and rerun `continuum install`.")
+    if not shutil.which("ollama") and not offer_install(reader):
         return "search matches wording only; Ollama not installed"
 
     if not ollama_running():

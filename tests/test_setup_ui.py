@@ -54,23 +54,71 @@ class InteractiveDetectionTest(unittest.TestCase):
 
 
 class SemanticSetupTest(unittest.TestCase):
-    def test_it_explains_itself_when_ollama_is_absent(self):
+    def test_it_offers_to_install_ollama_when_absent(self):
         with tempfile.TemporaryDirectory() as temporary, redirect_stdout(StringIO()) as output:
-            with patch.object(setup_ui.shutil, "which", return_value=None):
-                report = setup_ui.enable_semantic_search(fresh(temporary))
+            with (
+                patch.object(setup_ui.shutil, "which", return_value=None),
+                patch.object(setup_ui, "install_command", return_value=(["winget", "install"], "winget install")),
+            ):
+                report = setup_ui.enable_semantic_search(fresh(temporary), answers("n"))
             self.assertIn("Ollama not installed", report)
-            self.assertIn("ollama.com/download", output.getvalue())
+            self.assertIn("winget install", output.getvalue())
 
-    def test_it_never_installs_ollama_itself(self):
+    def test_it_installs_nothing_unless_asked(self):
         with tempfile.TemporaryDirectory() as temporary, redirect_stdout(StringIO()):
             with (
                 patch.object(setup_ui.shutil, "which", return_value=None),
+                patch.object(setup_ui, "install_command", return_value=(["winget", "install"], "winget install")),
                 patch.object(setup_ui.subprocess, "run") as ran,
-                patch.object(setup_ui.subprocess, "Popen") as spawned,
             ):
-                setup_ui.enable_semantic_search(fresh(temporary))
+                setup_ui.enable_semantic_search(fresh(temporary), answers("n"))
             ran.assert_not_called()
-            spawned.assert_not_called()
+
+    def test_agreeing_runs_the_command_that_was_shown(self):
+        shown = ["winget", "install", "--id", "Ollama.Ollama"]
+        with redirect_stdout(StringIO()) as output:
+            with (
+                patch.object(setup_ui, "install_command", return_value=(shown, "winget install --id Ollama.Ollama")),
+                patch.object(setup_ui.subprocess, "run", return_value=type("R", (), {"returncode": 0})()) as ran,
+                patch.object(setup_ui.shutil, "which", return_value="/usr/bin/ollama"),
+            ):
+                self.assertTrue(setup_ui.offer_install(answers("y")))
+            self.assertEqual(list(ran.call_args[0][0]), shown)
+        self.assertIn("winget install --id Ollama.Ollama", output.getvalue())
+
+    def test_the_default_answer_is_no(self):
+        with redirect_stdout(StringIO()):
+            with (
+                patch.object(setup_ui, "install_command", return_value=(["x"], "x")),
+                patch.object(setup_ui.subprocess, "run") as ran,
+            ):
+                self.assertFalse(setup_ui.offer_install(answers("")))
+            ran.assert_not_called()
+
+    def test_a_failed_install_is_reported_not_raised(self):
+        with redirect_stdout(StringIO()) as output:
+            with (
+                patch.object(setup_ui, "install_command", return_value=(["x"], "x")),
+                patch.object(setup_ui.subprocess, "run", return_value=type("R", (), {"returncode": 1})()),
+            ):
+                self.assertFalse(setup_ui.offer_install(answers("y")))
+        self.assertIn("did not finish", output.getvalue())
+
+    def test_with_no_package_manager_it_points_at_the_download(self):
+        with redirect_stdout(StringIO()) as output:
+            with patch.object(setup_ui, "install_command", return_value=None):
+                self.assertFalse(setup_ui.offer_install(answers("y")))
+        self.assertIn("ollama.com/download", output.getvalue())
+
+    def test_the_install_command_matches_the_platform(self):
+        with patch.object(setup_ui.sys, "platform", "win32"):
+            with patch.object(setup_ui.shutil, "which", return_value="/winget"):
+                self.assertIn("winget", setup_ui.install_command()[1])
+            with patch.object(setup_ui.shutil, "which", return_value=None):
+                self.assertIsNone(setup_ui.install_command())
+        with patch.object(setup_ui.sys, "platform", "darwin"):
+            with patch.object(setup_ui.shutil, "which", return_value="/brew"):
+                self.assertIn("brew", setup_ui.install_command()[1])
 
     def test_declining_the_download_leaves_search_on_words(self):
         with tempfile.TemporaryDirectory() as temporary, redirect_stdout(StringIO()):
