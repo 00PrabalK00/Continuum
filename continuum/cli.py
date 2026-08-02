@@ -33,6 +33,7 @@ from .objective import AGENT_PROVIDERS, ObjectiveError, plan_objective
 from .orchestration import OrchestrationError, Orchestrator
 from .policy import PolicyError, requires_approval, write_starter_policy
 from . import command_risk
+from . import freshness
 from . import mcp_trust
 from . import audit_export
 from .benchmark import capture_task, compare_captures, load_capture, render_comparison, write_capture
@@ -120,7 +121,8 @@ def handoff(args: argparse.Namespace) -> int:
     store = store_from(args)
     if not store.config_file.exists():
         store.initialize(DEFAULT_CONTEXT_LIMIT, DEFAULT_THRESHOLD)
-    store.event("handoff", {"task": args.task, "next_step": args.next_step})
+    store.event("handoff", {"task": args.task, "next_step": args.next_step,
+                            "commit": freshness.head_sha(store.project)})
     store.write_handoff(args.task, args.next_step)
     print(f"Wrote: {store.state_dir / 'latest_handoff.md'}")
     if store.notes_dir:
@@ -299,7 +301,8 @@ def finalize_handoff(
         base_next = next_step
     store.event(
         "handoff",
-        {"task": task, "next_step": next_step, "base_next_step": base_next, "session": session_id},
+        {"task": task, "next_step": next_step, "base_next_step": base_next,
+         "session": session_id, "commit": freshness.head_sha(store.project)},
     )
     store.write_handoff(task, next_step)
     print(f"Saved: {task}")
@@ -622,6 +625,9 @@ def quick_status(args: argparse.Namespace) -> int:
     handoff_file = store.state_dir / "latest_handoff.md"
     if handoff_file.exists():
         print(f"Saved: {format_age(handoff_file.stat().st_mtime)}")
+    drift = freshness.describe(store)
+    if drift:
+        print(drift)
     print()
     print("Continue:       continuum go            (saves again on exit)")
     print("Paste anywhere: continuum copy")
@@ -724,7 +730,8 @@ def hook_session_end(args: argparse.Namespace) -> int:
     task = generated or store.latest_task()
     if not task:
         return 0
-    store.event("handoff", {"task": task[0], "next_step": task[1], "source": "session_end"})
+    store.event("handoff", {"task": task[0], "next_step": task[1], "source": "session_end",
+                            "commit": freshness.head_sha(store.project)})
     store.write_handoff(*task)
     return 0
 

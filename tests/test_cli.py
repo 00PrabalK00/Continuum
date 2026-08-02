@@ -366,8 +366,12 @@ class CliTest(unittest.TestCase):
             finally:
                 sys.argv = previous
 
-            command = popen.call_args.args[0]
-            self.assertIn("codex", Path(command[0]).name)
+            # Patching subprocess.Popen catches every subprocess in the run, not
+            # only the agent: the session ending also probes Git for the commit
+            # to record with the handoff. Find the agent call rather than
+            # assuming it was the last one.
+            calls = [call.args[0] for call in popen.call_args_list if call.args]
+            command = next(item for item in calls if "codex" in Path(item[0]).name)
             self.assertEqual(command[1], "exec")
 
     def test_memory_refresh_embeds_recent_events_with_event_ids(self):

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from .freshness import head_sha
 from .handoff_llm import generate_handoff, read_handoff_model
 from .providers import ProviderError
 
@@ -109,6 +110,9 @@ def record_progress(
             "next_step": next_step or None,
             "base_next_step": base,
             "source": source,
+            # What the code looked like when this was written, so a later read
+            # can say how far it has drifted instead of presenting it as current.
+            "commit": head_sha(store.project),
         },
     )
     store.write_handoff(task, next_step or None)
