@@ -20,24 +20,26 @@ def old_whole_reply_score(reply: str) -> int:
     """The scorer as it was: every accepted term searched across the whole reply."""
     lowered = reply.lower()
     return sum(
-        1 for _name, accepted, _question in bench.PROBES
+        1 for _name, _kind, accepted, _rejected, _question in bench.PROBES
         if any(term in lowered for term in accepted)
     )
 
 
+# Answers the current probe set: class, file, count, headroom (inference),
+# owner (unanswerable).
 CORRECT = """1. BillingGateway
 2. tests/test_billing.py
 3. 3
-4. They were migrated
-5. fix retry"""
+4. 2
+5. UNKNOWN"""
 
 SKIPS_QUESTION_FIVE = """1. BillingGateway
 2. tests/test_billing.py
 3. the retry test asserts 3 attempts
-4. They were migrated"""
+4. 2"""
 
-EVERY_ANSWER_MISPLACED = """1. fix retry
-2. They were migrated
+EVERY_ANSWER_MISPLACED = """1. UNKNOWN
+2. 2
 3. tests/test_billing.py
 4. 3
 5. BillingGateway"""
@@ -48,12 +50,11 @@ class ScoringTest(unittest.TestCase):
         self.assertEqual(bench.score(CORRECT)[0], 5)
 
     def test_a_skipped_question_is_no_longer_satisfied_by_another_answer(self):
-        # "the retry test asserts 3 attempts" contains "retry", which used to
-        # satisfy the separate question about the next action.
-        self.assertEqual(old_whole_reply_score(SKIPS_QUESTION_FIVE), 5)
+        # Question 5 is unanswered, so it must be missed rather than credited by
+        # something another answer happens to contain.
         score, missed = bench.score(SKIPS_QUESTION_FIVE)
         self.assertEqual(score, 4)
-        self.assertEqual(missed, ["phase"])
+        self.assertEqual(missed, ["owner"])
 
     def test_answers_against_the_wrong_questions_score_nothing(self):
         self.assertEqual(old_whole_reply_score(EVERY_ANSWER_MISPLACED), 5)
@@ -73,6 +74,31 @@ class ScoringTest(unittest.TestCase):
         prose = "We renamed it to BillingGateway, tests/test_billing.py fails, it asserts 3."
         self.assertGreaterEqual(old_whole_reply_score(prose), 3)
         self.assertEqual(bench.score(prose)[0], 0)
+
+    def test_a_distractor_named_alongside_the_answer_does_not_pass(self):
+        # Naming both candidates is not an answer to which one it is.
+        both = """1. BillingGateway, formerly considered LedgerClient
+2. x
+3. x
+4. x
+5. x"""
+        self.assertIn("class", bench.score(both)[1])
+
+    def test_a_guess_on_the_unanswerable_probe_scores_as_a_loss(self):
+        guessed = """1. BillingGateway
+2. tests/test_billing.py
+3. 3
+4. 2
+5. Alice is on it"""
+        score, missed = bench.score(guessed)
+        self.assertIn("owner", missed)
+        self.assertEqual(score, 4)
+
+    def test_the_probe_set_covers_more_than_recall(self):
+        kinds = {kind for _name, kind, _a, _r, _q in bench.PROBES}
+        self.assertIn("distractor", kinds)
+        self.assertIn("inference", kinds)
+        self.assertIn("unanswerable", kinds)
 
 
 class BareAgentFailureTest(unittest.TestCase):
