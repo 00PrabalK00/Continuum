@@ -1,8 +1,28 @@
 {
   "name": "continuum-agent-memory",
   "version": "0.12.0",
-  "description": "Local shared memory and opt-in sequential orchestration for AI coding agents.",
+  "description": "Local shared memory for AI coding agents: switch between Claude, Codex and Gemini without starting over.",
   "license": "MIT",
+  "author": "Continuum contributors",
+  "homepage": "https://github.com/00PrabalK00/Continuum#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/00PrabalK00/Continuum.git"
+  },
+  "bugs": {
+    "url": "https://github.com/00PrabalK00/Continuum/issues"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "claude",
+    "codex",
+    "gemini",
+    "memory",
+    "context",
+    "mcp",
+    "handoff"
+  ],
   "bin": {
     "continuum": "bin/continuum.js",
     "continuum-agent-memory": "bin/continuum.js"
@@ -21,17 +41,6 @@
     "README.md",
     "LICENSE",
     "pyproject.toml"
-  ],
-  "keywords": [
-    "ai",
-    "agents",
-    "codex",
-    "claude",
-    "gemini",
-    "ollama",
-    "openrouter",
-    "mcp",
-    "obsidian"
   ],
   "engines": {
     "node": ">=18"

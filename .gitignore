@@ -9,3 +9,13 @@ build/
 
 # Output from unrelated local tooling
 brag-output/
+
+# Projects the benchmark generates as it runs
+benchmarks/project/
+benchmarks/conflict/
+benchmarks/conflict2/
+benchmarks/suite/
+benchmarks/suite_postfix/
+benchmarks/empty/
+benchmarks/floor_codex/
+benchmarks/results-v2.json

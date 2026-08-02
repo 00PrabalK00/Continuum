@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="continuum/ui/logo.png" alt="Continuum logo" width="240">
+  <img src="https://raw.githubusercontent.com/00PrabalK00/Continuum/main/continuum/ui/logo.png" alt="Continuum logo" width="240">
 </p>
 
 # Continuum
@@ -271,6 +271,7 @@ continuum help --all
 | Check what an AI actually did | [Workflow Timeline](docs/workflow-timeline.md), [Control Center](docs/control-center.md) |
 | Run it as a background service | [Services](docs/services.md), [Docker](docs/docker.md) |
 | See what changed | [Changelog](CHANGELOG.md) |
+| Cut a release | [Releasing](docs/releasing.md) |
 | See what is next | [Roadmap](docs/roadmap.md) |
 
 ---

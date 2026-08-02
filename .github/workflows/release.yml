@@ -1,0 +1,127 @@
+name: release
+
+# Publishing is deliberately tag-driven rather than push-driven: a release is a
+# decision, not a side effect of merging. The full test matrix runs again here
+# rather than trusting the run from the merge commit, because a tag can point
+# anywhere.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build and check without publishing"
+        type: boolean
+        default: true
+
+jobs:
+  test:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.9", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: pip install .
+      - run: python -m unittest discover -s tests
+      - run: python -m unittest discover -s examples/multi-agent-handoff
+      # The same smoke checks test.yml runs. Publishing gates on this job, and
+      # unit tests passing does not mean the installed entry points work.
+      - run: python -m continuum --help
+      - run: continuum --version
+      - run: node --check continuum/ui/app.js
+      - run: node bin/continuum.js --version
+      - run: npm pack --dry-run
+
+  version-matches-tag:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: The tag, pyproject and package.json must agree
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          python - "$tag" <<'PY'
+          import json, sys, tomllib
+          tag = sys.argv[1]
+          with open("pyproject.toml", "rb") as handle:
+              pyproject = tomllib.load(handle)["project"]["version"]
+          package = json.load(open("package.json"))["version"]
+          init = __import__("re").search(
+              r'__version__ = "([^"]+)"', open("continuum/__init__.py").read()
+          ).group(1)
+          if not tag == pyproject == package == init:
+              sys.exit(
+                  f"version mismatch: tag={tag} pyproject={pyproject} "
+                  f"package.json={package} __init__={init}"
+              )
+          print(f"all four agree on {tag}")
+          PY
+
+  pypi:
+    needs: [test, version-matches-tag]
+    # Only a tag push publishes. workflow_dispatch also carries a tag ref when
+    # run against one, so matching on the ref alone would publish during what
+    # the docs call a dry run.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      # Trusted publishing: PyPI verifies this workflow's identity, so no API
+      # token is stored in the repository.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install build twine
+      - run: python -m build
+      - run: python -m twine check dist/*
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  npm:
+    needs: [test, version-matches-tag]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  dry-run:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: pip install build twine
+      - run: python -m build
+      - run: python -m twine check dist/*
+      - run: npm pack --dry-run
