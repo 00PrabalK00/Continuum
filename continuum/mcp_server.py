@@ -213,26 +213,28 @@ def tool_definitions() -> list[dict[str, Any]]:
         {
             "name": "run_workflow",
             "description": (
-                "Run a planned multi-agent workflow, executing each step's provider in order with "
-                "bounded context. Roles that edit files may only write the paths listed in "
-                "allow_files, and a step that touches anything else fails the workflow. Pass an "
+                "Run the workflow that plan_workflow returned, executing each step's provider in "
+                "order with bounded context. Pass the workflow_id you were given, so the plan you "
+                "saw is the plan that runs. Roles that edit files may only write the paths listed "
+                "in allow_files, and a step that touches anything else fails the workflow. Pass an "
                 "empty list to run a read-only workflow. This starts other AI agents and can "
                 "change files, so confirm the plan with plan_workflow first."
             ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "team": {"type": "string"},
-                    "request": {"type": "string"},
+                    "workflow_id": {
+                        "type": "string",
+                        "description": "The id returned by plan_workflow, for example W0001.",
+                    },
                     "allow_files": {
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "Exact paths a writing role may edit. Empty means read-only.",
                     },
-                    "task_type": {"type": "string"},
                     "context_mode": {"type": "string", "enum": ["compact", "normal", "deep"]},
                 },
-                "required": ["team", "request", "allow_files"],
+                "required": ["workflow_id", "allow_files"],
             },
         },
         {
@@ -430,11 +432,15 @@ def call_tool(store: MemoryStore, name: str, arguments: dict[str, Any]) -> dict[
                 "allow_files is required. Pass the exact paths a writing role may edit, "
                 "or an empty list to run a read-only workflow."
             )
+        workflow_id = str(arguments.get("workflow_id", "")).strip()
+        if not workflow_id:
+            raise ValueError(
+                "workflow_id is required. Call plan_workflow first and pass back the id it "
+                "returned, so the plan you were shown is the one that runs."
+            )
         try:
-            workflow = Orchestrator(store).execute(
-                str(arguments.get("team", "")).strip(),
-                str(arguments.get("request", "")).strip(),
-                str(arguments.get("task_type")) if arguments.get("task_type") else None,
+            workflow = Orchestrator(store).run_planned(
+                workflow_id,
                 [str(path) for path in allow_files],
                 str(arguments.get("context_mode") or "compact"),
             )

@@ -53,16 +53,47 @@ class WorkflowToolTest(unittest.TestCase):
     def test_the_write_list_is_passed_through_unchanged(self):
         captured = {}
 
-        def fake_execute(team, request, task_type, allowed, mode):
+        def fake_run(self, workflow, team, request, allowed, mode):
             captured["allowed"] = allowed
-            return {"workflow_id": "W0001", "status": "DONE", "team": team, "request": request, "steps": []}
+            captured["ran"] = workflow["workflow_id"]
+            return {**workflow, "status": "DONE"}
 
         with tempfile.TemporaryDirectory() as temporary:
             store = self.project(temporary)
-            with patch("continuum.orchestration.Orchestrator.execute", side_effect=fake_execute):
-                self.call(store, "run_workflow", {
-                    "team": "local_agent_team", "request": "fix it", "allow_files": ["src/a.py"]})
+            self.call(store, "plan_workflow", {"team": "local_agent_team", "request": "fix it"})
+            with patch("continuum.orchestration.Orchestrator._run_workflow", fake_run):
+                self.call(store, "run_workflow", {"workflow_id": "W0001", "allow_files": ["src/a.py"]})
             self.assertEqual(captured["allowed"], ["src/a.py"])
+
+    def test_running_executes_the_workflow_that_was_planned(self):
+        """`execute` plans a second workflow, abandoning the one the caller was
+        shown. The plan-then-run flow has to run the plan it returned."""
+        captured = {}
+
+        def fake_run(self, workflow, team, request, allowed, mode):
+            captured["ran"] = workflow["workflow_id"]
+            return {**workflow, "status": "DONE"}
+
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.project(temporary)
+            self.call(store, "plan_workflow", {"team": "local_agent_team", "request": "fix the retry test"})
+            with patch("continuum.orchestration.Orchestrator._run_workflow", fake_run):
+                self.call(store, "run_workflow", {"workflow_id": "W0001", "allow_files": []})
+            self.assertEqual(captured["ran"], "W0001")
+            self.assertEqual([w["workflow_id"] for w in store.list_workflows(10)], ["W0001"])
+
+    def test_running_without_an_id_is_refused(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.project(temporary)
+            with self.assertRaises(ValueError) as caught:
+                self.call(store, "run_workflow", {"allow_files": []})
+            self.assertIn("workflow_id is required", str(caught.exception))
+
+    def test_an_unknown_workflow_id_is_refused(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.project(temporary)
+            with self.assertRaises(ValueError):
+                self.call(store, "run_workflow", {"workflow_id": "W9999", "allow_files": []})
 
     def test_an_unknown_team_is_a_tool_error(self):
         with tempfile.TemporaryDirectory() as temporary:

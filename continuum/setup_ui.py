@@ -219,17 +219,41 @@ def enable_semantic_search(store: "MemoryStore", reader: Callable[[str], str] | 
     return "search matches wording and meaning"
 
 
+def installed_chat_model() -> str | None:
+    """The name of a downloaded Ollama model that can hold a conversation.
+
+    An embedding model cannot write a summary, and a fresh install prompted by
+    the search step above may have nothing else. Offering summaries on the
+    strength of Ollama merely running produces a configuration where every
+    summary attempt fails and silently falls back.
+    """
+    if not shutil.which("ollama") or not ollama_running():
+        return None
+    for name in ollama_models():
+        if "embed" in name.lower():
+            continue
+        return name
+    return None
+
+
 def index_existing_memory(store: "MemoryStore") -> str:
+    """Embed every recorded handoff, not just the ones in the recent window.
+
+    Reading the last 200 events and filtering to handoffs afterwards misses
+    exactly the decisions worth finding: an old one, crowded out by routine
+    session events. `recent_handoffs` selects on kind instead, so the number of
+    intervening events does not matter.
+    """
     from .providers import ProviderError, ProviderManager
 
     manager = ProviderManager(store.state_dir, store)
-    events = [item for item in store.recent_events(200) if item["kind"] == "handoff"]
+    events = store.recent_handoffs(1000)
     if not events:
         return "no recorded memory to index yet"
     indexed = 0
     for item in events:
         text = str(item["payload"].get("task") or "")
-        if not text:
+        if not text or store.has_embedding(f"M:{item['id']}"):
             continue
         try:
             model, vector = manager.embed("ollama", text)
@@ -243,8 +267,9 @@ def index_existing_memory(store: "MemoryStore") -> str:
 def configure_handoff_model(store: "MemoryStore", reader: Callable[[str], str] | None = None) -> str:
     """Offer a small model that writes the handoff summaries."""
     options = [("none", "No, keep the recorded summary (default)")]
-    if shutil.which("ollama") and ollama_running():
-        options.append(("ollama", "Yes, use a local Ollama model"))
+    chat_model = installed_chat_model()
+    if chat_model:
+        options.append(("ollama", f"Yes, use {chat_model} locally"))
     import os
 
     if os.environ.get("OPENROUTER_API_KEY"):
@@ -265,5 +290,10 @@ def configure_handoff_model(store: "MemoryStore", reader: Callable[[str], str] |
         ProviderManager(store.state_dir, store).add(chosen)
     except (ProviderError, ValueError) as error:
         return f"could not enable {chosen} ({error})"
-    write_handoff_model(store, chosen, None)
-    return f"handoff summaries written by {chosen}"
+    # Record the model that was actually found, not the provider default. A
+    # fresh Ollama install may only have the embedding model, and pointing the
+    # handoff writer at a model nobody downloaded makes every summary fail
+    # quietly while setup reports success.
+    model = chat_model if chosen == "ollama" else None
+    write_handoff_model(store, chosen, model)
+    return f"handoff summaries written by {chosen}" + (f" ({model})" if model else "")

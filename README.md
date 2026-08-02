@@ -201,8 +201,10 @@ continuum search "which database did we pick"
 
 Word matching is ranked and always available, because SQLite provides it and
 nothing needs installing. Meaning-based matching needs a local embedding model,
-which `continuum install` offers to set up for you. Without it, search still
-works on wording and says so.
+which `continuum install` offers to set up for you. Both are used together and
+neither crowds the other out, so an exact wording match is still found when
+meaning-based results are also available. Without a model, search works on
+wording alone and says so.
 
 ---
 

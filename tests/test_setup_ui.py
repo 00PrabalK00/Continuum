@@ -178,25 +178,61 @@ class HandoffModelSetupTest(unittest.TestCase):
 
     def test_declining_keeps_recorded_state(self):
         with tempfile.TemporaryDirectory() as temporary, redirect_stdout(StringIO()):
-            with (
-                patch.object(setup_ui.shutil, "which", return_value="/usr/bin/ollama"),
-                patch.object(setup_ui, "ollama_running", return_value=True),
-            ):
+            with patch.object(setup_ui, "installed_chat_model", return_value="qwen2.5:7b"):
                 report = setup_ui.configure_handoff_model(fresh(temporary), answers("1"))
             self.assertIn("recorded state", report)
 
     def test_choosing_ollama_records_the_choice(self):
         with tempfile.TemporaryDirectory() as temporary, redirect_stdout(StringIO()):
             store = fresh(temporary)
-            with (
-                patch.object(setup_ui.shutil, "which", return_value="/usr/bin/ollama"),
-                patch.object(setup_ui, "ollama_running", return_value=True),
-            ):
+            with patch.object(setup_ui, "installed_chat_model", return_value="qwen2.5:7b"):
                 report = setup_ui.configure_handoff_model(store, answers("2"))
             self.assertIn("ollama", report)
             from continuum.handoff_llm import read_handoff_model
 
             self.assertEqual((read_handoff_model(store) or {}).get("provider"), "ollama")
+
+
+class ChatModelTest(unittest.TestCase):
+    """A fresh Ollama installed for search may only hold the embedding model.
+    Offering summaries on the strength of Ollama running produces a config where
+    every summary fails and silently falls back, while setup reports success."""
+
+    def test_an_embedding_only_install_offers_no_summary_model(self):
+        with (
+            patch.object(setup_ui.shutil, "which", return_value="/usr/bin/ollama"),
+            patch.object(setup_ui, "ollama_running", return_value=True),
+            patch.object(setup_ui, "ollama_models", return_value=["nomic-embed-text:latest"]),
+        ):
+            self.assertIsNone(setup_ui.installed_chat_model())
+
+    def test_a_chat_model_is_found_when_present(self):
+        with (
+            patch.object(setup_ui.shutil, "which", return_value="/usr/bin/ollama"),
+            patch.object(setup_ui, "ollama_running", return_value=True),
+            patch.object(setup_ui, "ollama_models", return_value=["nomic-embed-text:latest", "qwen2.5:7b"]),
+        ):
+            self.assertEqual(setup_ui.installed_chat_model(), "qwen2.5:7b")
+
+    def test_summaries_are_not_offered_without_a_chat_model(self):
+        with tempfile.TemporaryDirectory() as temporary, redirect_stdout(StringIO()) as output:
+            with (
+                patch.object(setup_ui, "installed_chat_model", return_value=None),
+                patch.dict("os.environ", {}, clear=True),
+            ):
+                report = setup_ui.configure_handoff_model(fresh(temporary))
+            self.assertIn("recorded state", report)
+            self.assertNotIn("Ollama", output.getvalue())
+
+    def test_the_found_model_is_recorded_not_the_provider_default(self):
+        with tempfile.TemporaryDirectory() as temporary, redirect_stdout(StringIO()):
+            store = fresh(temporary)
+            with patch.object(setup_ui, "installed_chat_model", return_value="qwen2.5:7b"):
+                report = setup_ui.configure_handoff_model(store, answers("2"))
+            from continuum.handoff_llm import read_handoff_model
+
+            self.assertEqual(read_handoff_model(store)["model"], "qwen2.5:7b")
+            self.assertIn("qwen2.5:7b", report)
 
 
 class IndexingTest(unittest.TestCase):

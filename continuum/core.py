@@ -565,14 +565,20 @@ The planner role is preserving architecture intent and constraints while the exe
     def event(self, kind: str, payload: dict[str, Any]) -> None:
         item = {"created_at": utc_now(), "kind": kind, "payload": payload}
         connection = self.connect()
-        connection.execute(
+        cursor = connection.execute(
             "INSERT INTO events(created_at, kind, payload) VALUES (?, ?, ?)",
             (item["created_at"], kind, json.dumps(payload, ensure_ascii=True)),
         )
+        event_id = cursor.lastrowid
         connection.commit()
         connection.close()
         with self.jsonl_file.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(item, ensure_ascii=True) + "\n")
+        # Keep the meaning-based index level with the log. Hooking here rather
+        # than at each of the several call sites that record handoffs means a
+        # new one cannot silently go unindexed.
+        if kind == "handoff" and event_id is not None:
+            self.embed_handoff(int(event_id), str(payload.get("task") or ""))
 
     def recent_events(self, limit: int = 30) -> list[dict[str, Any]]:
         if not self.db_file.exists():
@@ -1048,6 +1054,56 @@ The planner role is preserving architecture intent and constraints while the exe
             "instruction": instruction,
             "context": content,
         }
+
+    def has_embedding(self, memory_key: str) -> bool:
+        if not self.db_file.exists():
+            return False
+        connection = self.connect()
+        try:
+            row = connection.execute(
+                "SELECT 1 FROM embeddings WHERE memory_key = ? LIMIT 1", (memory_key,)
+            ).fetchone()
+        except sqlite3.Error:
+            return False
+        finally:
+            connection.close()
+        return row is not None
+
+    def embed_handoff(self, event_id: int, task: str) -> None:
+        """Embed one handoff as it is recorded, when a local model is available.
+
+        Indexing only at setup time means every decision taken afterwards is
+        invisible to meaning-based search, while setup still reports that search
+        matches meaning. Doing it here keeps the index level with the log.
+
+        This is best-effort by design: no embedding model, no Ollama, or a
+        read-only store all leave search working on wording alone.
+        """
+        if not task.strip():
+            return
+        memory_key = f"M:{event_id}"
+        try:
+            from .providers import ProviderError, ProviderManager
+
+            if not self.embeddings_enabled():
+                return
+            model, vector = ProviderManager(self.state_dir, self).embed("ollama", task)
+            self.store_embedding(memory_key, "ollama", model, vector, task)
+        except (ProviderError, OSError, ValueError, sqlite3.Error):
+            return
+
+    def embeddings_enabled(self) -> bool:
+        """True when this project has opted into embeddings by having some."""
+        if not self.db_file.exists():
+            return False
+        connection = self.connect()
+        try:
+            count = int(connection.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0])
+        except sqlite3.Error:
+            return False
+        finally:
+            connection.close()
+        return count > 0
 
     def store_embedding(self, memory_key: str, provider: str, model: str, vector: list[float], source: str) -> None:
         connection = self.connect()

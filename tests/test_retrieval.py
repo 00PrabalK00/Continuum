@@ -133,6 +133,43 @@ class OptionalSemanticTest(unittest.TestCase):
             self.assertEqual(len(identifiers), len(set(identifiers)))
 
 
+class RankFusionTest(unittest.TestCase):
+    """Semantic search returns its full quota of candidates whatever their
+    similarity, so taking that list first fills every slot and an exact wording
+    match disappears. Enabling embeddings would then make search worse."""
+
+    def events(self, *ids):
+        return [{"id": i, "created_at": "t", "kind": "handoff", "payload": {"task": f"e{i}"}} for i in ids]
+
+    def test_an_exact_match_survives_a_full_semantic_list(self):
+        semantic = self.events(*range(1, 9))
+        lexical = self.events(99, 1, 2, 3)
+        ids = [e["id"] for e in retrieval.merge([semantic, lexical], 8)]
+        self.assertIn(99, ids)
+
+    def test_an_item_both_sources_like_ranks_above_one_only_a_single_source_likes(self):
+        semantic = self.events(5, 1, 2)
+        lexical = self.events(5, 7, 8)
+        ids = [e["id"] for e in retrieval.merge([semantic, lexical], 3)]
+        self.assertEqual(ids[0], 5)
+
+    def test_neither_source_is_starved(self):
+        semantic = self.events(*range(1, 21))
+        lexical = self.events(*range(100, 120))
+        ids = [e["id"] for e in retrieval.merge([semantic, lexical], 10)]
+        self.assertTrue(any(i < 100 for i in ids))
+        self.assertTrue(any(i >= 100 for i in ids))
+
+    def test_results_are_not_duplicated(self):
+        both = self.events(1, 2, 3)
+        ids = [e["id"] for e in retrieval.merge([both, both], 5)]
+        self.assertEqual(ids, sorted(set(ids)))
+
+    def test_an_empty_source_is_harmless(self):
+        ids = [e["id"] for e in retrieval.merge([[], self.events(1, 2)], 5)]
+        self.assertEqual(ids, [1, 2])
+
+
 class SearchSurfacesTest(unittest.TestCase):
     def test_the_mcp_tool_reports_the_strategy(self):
         from continuum.mcp_server import call_tool
@@ -163,3 +200,71 @@ class FtsAvailabilityTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class IncrementalEmbeddingTest(unittest.TestCase):
+    """Indexing only at setup leaves every later decision invisible to
+    meaning-based search, while setup still reports that search matches
+    meaning."""
+
+    def store(self, temporary):
+        store = MemoryStore(Path(temporary) / "repo")
+        store.initialize(100000, 0.8)
+        return store
+
+    def test_a_new_handoff_is_embedded_when_the_project_uses_embeddings(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(temporary)
+            store.store_embedding("M:0", "ollama", "m", [0.1, 0.2], "seed")
+            with patch("continuum.providers.ProviderManager.embed", return_value=("m", [0.3, 0.4])):
+                store.event("handoff", {"task": "chose Redis for the rate limiter", "next_step": "wire it"})
+            handoff = next(e for e in reversed(store.recent_events(20)) if e["kind"] == "handoff")
+            self.assertTrue(store.has_embedding(f"M:{handoff['id']}"))
+
+    def test_projects_without_embeddings_are_left_alone(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(temporary)
+            with patch("continuum.providers.ProviderManager.embed") as embed:
+                store.event("handoff", {"task": "chose Redis", "next_step": "wire it"})
+            embed.assert_not_called()
+
+    def test_an_unreachable_model_does_not_break_recording(self):
+        from continuum.providers import ProviderError
+
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(temporary)
+            store.store_embedding("M:0", "ollama", "m", [0.1], "seed")
+            with patch("continuum.providers.ProviderManager.embed", side_effect=ProviderError("down")):
+                store.event("handoff", {"task": "chose Redis", "next_step": "wire it"})
+            self.assertTrue(any(e["kind"] == "handoff" for e in store.recent_events(10)))
+
+    def test_non_handoff_events_are_not_embedded(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(temporary)
+            store.store_embedding("M:0", "ollama", "m", [0.1], "seed")
+            with patch("continuum.providers.ProviderManager.embed") as embed:
+                store.event("agent_exit", {"summary": "done", "returncode": 0})
+            embed.assert_not_called()
+
+    def test_setup_indexing_reaches_past_the_recent_event_window(self):
+        from continuum import setup_ui
+
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(temporary)
+            store.event("handoff", {"task": "chose Redis for the rate limiter", "next_step": "wire it"})
+            for index in range(300):
+                store.event("agent_exit", {"summary": f"session {index}", "returncode": 0})
+            with patch("continuum.providers.ProviderManager.embed", return_value=("m", [0.5])):
+                report = setup_ui.index_existing_memory(store)
+            self.assertIn("indexed 1", report)
+
+    def test_setup_indexing_does_not_redo_work(self):
+        from continuum import setup_ui
+
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.store(temporary)
+            store.event("handoff", {"task": "chose Redis", "next_step": "wire it"})
+            with patch("continuum.providers.ProviderManager.embed", return_value=("m", [0.5])):
+                setup_ui.index_existing_memory(store)
+                report = setup_ui.index_existing_memory(store)
+            self.assertIn("indexed 0", report)

@@ -142,19 +142,35 @@ def semantic_events(store: "MemoryStore", query: str, limit: int) -> list[dict[s
     return events
 
 
+RRF_K = 60
+
+
 def merge(groups: list[list[dict[str, Any]]], limit: int) -> list[dict[str, Any]]:
-    merged: list[dict[str, Any]] = []
-    seen: set[int] = set()
+    """Fuse ranked lists by reciprocal rank, best first.
+
+    Taking one list before the other starves it: semantic search returns its
+    full quota of candidates whatever their similarity, so putting that group
+    first fills every slot and an exact wording match disappears. Enabling
+    embeddings would then make search worse than leaving them off, which is the
+    opposite of the point.
+
+    Reciprocal rank fusion scores each event by 1/(k + rank) summed across the
+    lists it appears in, so an item ranked highly by either source survives and
+    one ranked highly by both wins. The constant only damps the influence of
+    top ranks; at k=60, the value the method is usually published with, nothing
+    here is sensitive to it.
+    """
+    scores: dict[int, float] = {}
+    events: dict[int, dict[str, Any]] = {}
     for group in groups:
-        for event in group:
+        for rank, event in enumerate(group):
             identifier = int(event.get("id", -1))
-            if identifier in seen:
+            if identifier < 0:
                 continue
-            seen.add(identifier)
-            merged.append(event)
-            if len(merged) >= limit:
-                return merged
-    return merged
+            scores[identifier] = scores.get(identifier, 0.0) + 1.0 / (RRF_K + rank + 1)
+            events.setdefault(identifier, event)
+    ranked = sorted(scores, key=lambda identifier: (-scores[identifier], identifier))
+    return [events[identifier] for identifier in ranked[:limit]]
 
 
 def search(store: "MemoryStore", query: str, limit: int = 8) -> tuple[list[dict[str, Any]], str]:

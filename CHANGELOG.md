@@ -19,6 +19,23 @@ that asks instead of assuming.
   previously existed only as a CLI command. Planning executes nothing.
   Running requires an explicit list of files the writing roles may edit, the
   same gate `continuum team run --execute` enforces.
+- Search fuses the ranked text and meaning results by reciprocal rank instead
+  of listing one source before the other. Taking the semantic list first filled
+  every slot with its full quota of candidates whatever their similarity, so an
+  exact wording match could disappear entirely and enabling embeddings could
+  make search worse than leaving them off.
+- `run_workflow` runs the workflow `plan_workflow` returned, by id. It called
+  `execute`, which plans again, so following the documented flow left the
+  planned workflow and its tasks permanently PLANNED while a second workflow
+  ran.
+- Handoffs are embedded as they are recorded, so meaning-based search stays
+  level with the log rather than reflecting only what existed at setup. Setup
+  now indexes every recorded handoff rather than those inside a 200-event
+  window, and skips ones already indexed.
+- Ollama summaries are offered only when a chat model is actually downloaded,
+  and the model found is what gets recorded. A fresh Ollama installed for search
+  may hold only the embedding model, in which case every summary attempt failed
+  and fell back while setup reported success.
 - When Ollama is missing, `continuum install` offers to install it through the
   platform's package manager, printing the exact command before asking so
   agreeing means agreeing to something specific. The default answer is no, and
