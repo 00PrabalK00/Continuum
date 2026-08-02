@@ -21,9 +21,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import statistics
 import subprocess
+import tempfile
 import sys
 import time
 from pathlib import Path
@@ -123,12 +125,42 @@ def build_project(root: Path) -> MemoryStore:
     return store
 
 
+ANSWER_LINE = re.compile(r"^\s*\**\s*(\d{1,2})\s*[.)\]:-]\s*(.*)$")
+
+
+def split_answers(reply: str) -> dict[int, str]:
+    """Group a numbered reply into answers by question number.
+
+    Continuation lines belong to the answer above them, so a wrapped or
+    multi-line answer is not silently dropped.
+    """
+    answers: dict[int, list[str]] = {}
+    current: int | None = None
+    for line in reply.splitlines():
+        match = ANSWER_LINE.match(line)
+        if match:
+            current = int(match.group(1))
+            answers.setdefault(current, []).append(match.group(2))
+        elif current is not None and line.strip():
+            answers[current].append(line.strip())
+    return {number: " ".join(parts).strip().lower() for number, parts in answers.items()}
+
+
 def score(reply: str) -> tuple[int, list[str]]:
-    lowered = reply.lower()
+    """Score each probe against the answer numbered for it, and nothing else.
+
+    Searching the whole reply for every accepted term lets one answer satisfy a
+    different question: "the retry test asserts 3 attempts" contains "retry", so
+    it used to satisfy the separate question about the next action even when
+    that question went unanswered. Scoring per numbered answer is what makes a
+    reported percentage mean what it appears to mean.
+    """
+    answers = split_answers(reply)
     missed = []
     hits = 0
-    for name, accepted, _ in PROBES:
-        if any(term in lowered for term in accepted):
+    for index, (name, accepted, _question) in enumerate(PROBES, start=1):
+        answer = answers.get(index, "")
+        if answer and any(term in answer for term in accepted):
             hits += 1
         else:
             missed.append(name)
@@ -240,6 +272,28 @@ def conflict_trial(store: MemoryStore, agent: str) -> dict:
             "reply": reply.replace("\n", " ")[:80]}
 
 
+def with_isolated_project(run):
+    """Run `run(store)` against an empty project far away from this benchmark.
+
+    The control arm lets the agent read files, so it must not be able to reach
+    the other generated projects by walking up or sideways from its working
+    directory. A system temporary directory is unrelated to the benchmark tree;
+    a subdirectory of it is not.
+    """
+    with tempfile.TemporaryDirectory(prefix="continuum_control_") as temporary:
+        root = Path(temporary) / "repo"
+        root.mkdir()
+        # Codex refuses to run outside a Git repository, and a refusal recorded
+        # as a score of zero is what produced the bogus control result in
+        # docs/benchmarks.md.
+        subprocess.run(["git", "init", "-q"], cwd=root, check=False, capture_output=True)
+        subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "init"],
+                       cwd=root, check=False, capture_output=True)
+        blank = MemoryStore(root)
+        blank.initialize(100_000, 0.80)
+        return run(blank)
+
+
 def bare_agent_trial(store: MemoryStore, agent: str, question: str) -> dict:
     """Run the agent with no injected context, in a project that still has files.
 
@@ -262,6 +316,15 @@ def bare_agent_trial(store: MemoryStore, agent: str, question: str) -> dict:
     except (OSError, subprocess.TimeoutExpired) as error:
         return {"ok": False, "error": str(error)[:120]}
     reply = completed.stdout.strip()
+    if completed.returncode != 0:
+        # An agent that refused to start has not answered badly, it has not
+        # answered at all. Scoring the refusal as zero is what produced the
+        # bogus Codex control result recorded in docs/benchmarks.md, so a
+        # non-zero exit is reported as an incomplete trial instead.
+        detail = (completed.stderr or reply or "no output").strip().splitlines()
+        return {"ok": False, "error": f"exit {completed.returncode}: {detail[-1][:110] if detail else ''}"}
+    if not reply:
+        return {"ok": False, "error": "the agent produced no output"}
     hits, missed = score(reply)
     return {"ok": True, "seconds": round(time.time() - started, 1), "score": hits,
             "missed": missed, "prompt_tokens": estimate_tokens(question),
@@ -335,19 +398,14 @@ def main() -> int:
         report["fidelity"][f"{agent}/files_only"] = summarize(rows)
         print(f"  {agent}/files_only: {report['fidelity'][f'{agent}/files_only']}", flush=True)
 
-        # Arm C: no injection, no project memory at all.
-        empty = Path(__file__).resolve().parent / "empty"
-        force_remove(empty)
-        empty.mkdir(parents=True, exist_ok=True)
-        # Codex refuses to run outside a Git repository, so without this the
-        # control arm records a refusal as a score of zero and looks like a
-        # floor measurement when nothing was measured at all.
-        subprocess.run(["git", "init", "-q"], cwd=empty, check=False, capture_output=True)
-        subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "init"],
-                       cwd=empty, check=False, capture_output=True)
-        blank = MemoryStore(empty)
-        blank.initialize(100_000, 0.80)
-        rows = [bare_agent_trial(blank, agent, QUESTION) for _ in range(args.trials)]
+        # Arm C: no injection, no project memory at all. The agent is allowed to
+        # read files here, so this has to live somewhere unrelated to the
+        # benchmark: an earlier version put it beside the other generated
+        # projects and Codex found the answers by searching sibling directories,
+        # scoring 5/5 in a project that contained nothing.
+        rows = with_isolated_project(lambda blank: [
+            bare_agent_trial(blank, agent, QUESTION) for _ in range(args.trials)
+        ])
         report["fidelity"][f"{agent}/no_memory"] = summarize(rows)
         print(f"  {agent}/no_memory: {report['fidelity'][f'{agent}/no_memory']}", flush=True)
 
