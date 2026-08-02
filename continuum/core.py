@@ -1566,12 +1566,27 @@ Project: `{self.project}`
         budget = CONTEXT_BUDGETS[mode] * 4
         current = (self.state_dir / "current.md").read_text(encoding="utf-8") if (self.state_dir / "current.md").exists() else ""
         if mode == "compact":
-            return compact_text(current, budget)
+            return self._with_drift(compact_text(current, budget))
         handoff = (self.state_dir / "latest_handoff.md").read_text(encoding="utf-8") if (self.state_dir / "latest_handoff.md").exists() else ""
         if mode == "normal":
-            return compact_text(current + "\n" + handoff, budget)
+            return self._with_drift(compact_text(current + "\n" + handoff, budget))
         state = (self.state_dir / "current_state.md").read_text(encoding="utf-8") if (self.state_dir / "current_state.md").exists() else ""
-        return compact_text(current + "\n" + handoff + "\n" + state, budget)
+        return self._with_drift(compact_text(current + "\n" + handoff + "\n" + state, budget))
+
+    def _with_drift(self, context: str) -> str:
+        """Prepend the staleness warning, if there is one to give.
+
+        The agent receiving this cannot tell how old the context is, and the
+        text reads as present tense whether it was written a minute or a month
+        ago. Added before truncation would risk the warning being the part cut,
+        so it goes on afterwards.
+        """
+        from .freshness import age_note, describe
+
+        notes = [note for note in (age_note(self), describe(self)) if note]
+        if not notes or not context:
+            return context
+        return " ".join(notes) + "\n\n" + context
 
     def write_session_note(
         self, session_id: str, agent: str, returncode: int, tokens: int, output_tail: list[str]

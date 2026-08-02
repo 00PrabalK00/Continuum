@@ -33,6 +33,7 @@ from .objective import AGENT_PROVIDERS, ObjectiveError, plan_objective
 from .orchestration import OrchestrationError, Orchestrator
 from .policy import PolicyError, requires_approval, write_starter_policy
 from . import command_risk
+from . import freshness
 from . import mcp_trust
 from . import audit_export
 from .benchmark import capture_task, compare_captures, load_capture, render_comparison, write_capture
@@ -596,6 +597,9 @@ def quick_status(args: argparse.Namespace) -> int:
     handoff_file = store.state_dir / "latest_handoff.md"
     if handoff_file.exists():
         print(f"Saved: {format_age(handoff_file.stat().st_mtime)}")
+    drift = freshness.describe(store)
+    if drift:
+        print(drift)
     print()
     print("Continue:       continuum go            (saves again on exit)")
     print("Paste anywhere: continuum copy")
