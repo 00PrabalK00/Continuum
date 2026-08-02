@@ -4,11 +4,9 @@
 
 # Continuum
 
-**Your AI forgets. Continuum remembers.**
-
 Your AI runs out of context. Or you switch from Claude to Codex because one hit
-its limit. Either way you start over — re-explaining the codebase, the bug, what
-you already tried.
+its limit. Either way you start over, re-explaining the codebase, the bug, and
+what you already tried.
 
 Continuum saves that context on your machine and gives it to whichever AI you
 open next.
@@ -29,10 +27,10 @@ Then, in any project you work on:
 continuum install
 ```
 
-That's it. Continuum finds the AI tools you already have and sets itself up
-inside each one.
+That is the setup. Continuum finds the AI tools you already have and installs
+itself inside each one.
 
-Now just use your AI normally:
+Now use your AI the way you normally would:
 
 ```
 $ claude
@@ -54,8 +52,8 @@ When one AI runs out, open the next one with your context already loaded:
 continuum go
 ```
 
-It picks an AI you weren't just using, hands over your work, and saves an
-updated note when you're done.
+It picks an AI you were not just using, hands over your work, and saves an
+updated note when you are done.
 
 Want a specific one? Name it:
 
@@ -72,11 +70,7 @@ and paste it in:
 continuum copy
 ```
 
-Forgot where you were? Just run:
-
-```bash
-continuum
-```
+Forgot where you were? Run `continuum` on its own:
 
 ```
 Continuum - my-project
@@ -102,13 +96,10 @@ works both ways, and from a terminal too:
 continuum ask codex "is the retry fix safe to ship?"
 ```
 
-Two things to know:
-
-- **Gemini** needs you to sign in once. Run `gemini` in a terminal and finish
-  the browser login.
-- **Codex** can answer other AIs fine, but for Codex to *ask* others you need to
-  start it with `codex --sandbox danger-full-access`. That's Codex's rule, not
-  ours.
+Two things to know. Gemini needs you to sign in once: run `gemini` in a
+terminal and finish the browser login. Codex can answer other AIs fine, but for
+Codex to ask others you have to start it with
+`codex --sandbox danger-full-access`. That restriction is Codex's, not ours.
 
 ---
 
@@ -122,21 +113,46 @@ continuum go hermes
 continuum go opencode
 ```
 
-Most AI tools take their prompt the same way, which Continuum assumes. If yours
-is different, tell it once:
+Most AI tools take their prompt the same way, which is what Continuum assumes.
+If yours is different, tell it once:
 
 ```bash
-continuum agent add myagent --inject flag --flag=--task           # myagent --task "..."
-continuum agent add other --inject subcommand --subcommand run    # other run "..."
-continuum agent add piped --inject stdin                          # reads from stdin
+continuum agent add myagent --inject flag --flag=--task     # myagent --task "..."
+continuum agent add other --inject subcommand --subcommand run   # other run "..."
+continuum agent add piped --inject stdin                     # reads from stdin
 continuum agent list
 ```
 
 ---
 
+## Does it actually work
+
+Measured against real agent CLIs, on a project whose recorded state we control,
+asking five questions answerable only from that record.
+
+| | Claude | Codex |
+| --- | --- | --- |
+| Continuum injects the context | 100% correct, 6.5s | 100% correct, 37.6s |
+| No context at all | 13.3% | 20.0% |
+
+Compact context for that project is 74 tokens, against 1,604 tokens of raw
+event history.
+
+An agent that can open `.continuum/` itself also scores 100%, just slower: 29.1
+seconds for Claude instead of 6.5. So recording the files is what produces the
+accuracy, and injecting them is what makes it cheap. When the injected context
+and the files on disk were made to disagree, both agents answered from the
+injected version, 3 times out of 3.
+
+Three trials per number, one scenario, two agents. [docs/benchmarks.md](docs/benchmarks.md)
+has the full method, the knowledge-update and abstention results, and the two
+earlier versions of the harness that produced wrong numbers.
+
+---
+
 ## Nice to have
 
-Write a note yourself, any time — text after `|` is the next step:
+Write a note yourself, any time. Text after `|` is the next step:
 
 ```bash
 continuum save "fixed the auth bug | next: test the retry logic"
@@ -169,34 +185,35 @@ Everything stays on your machine, as plain files in your project:
 ```
 
 Nothing is uploaded unless you deliberately set up a hosted model. Keep
-`.continuum/` out of Git — Continuum adds the ignore rule for you. Session logs
+`.continuum/` out of Git; Continuum adds the ignore rule for you. Session logs
 contain whatever your AI saw, so read them before sharing.
 
 ---
 
-## There's more if you want it
+## There is more if you want it
 
 Continuum also handles multi-agent teams, isolated Git worktrees, task routing,
-governance rules and audit trails. You don't need any of it for everyday use.
+governance rules and audit trails. You do not need any of it for everyday use.
 
 ```bash
 continuum help --all
 ```
 
-| I want to… | Read |
+| I want to | Read |
 | --- | --- |
 | Start quickly | [Quickstart](docs/quickstart.md) |
-| Understand how it works | [Getting Started](docs/getting-started.md) · [Architecture](docs/architecture.md) |
+| Understand how it works | [Getting Started](docs/getting-started.md), [Architecture](docs/architecture.md) |
+| See the measurements | [Benchmarks](docs/benchmarks.md) |
 | Fix a problem | [Troubleshooting](docs/troubleshooting.md) |
 | Set up MCP by hand | [MCP Setup](docs/mcp-setup.md) |
 | Use local or hosted models | [Providers](docs/providers.md) |
 | Run AIs as a team | [Teams](docs/teams.md) |
-| Keep parallel work separate | [Worktrees](docs/worktrees.md) · [Parallel Worktrees](docs/parallel-worktrees.md) |
+| Keep parallel work separate | [Worktrees](docs/worktrees.md), [Parallel Worktrees](docs/parallel-worktrees.md) |
 | Track tasks and file ownership | [Tasks And Claims](docs/tasks-and-claims.md) |
-| Check what an AI actually did | [Workflow Timeline](docs/workflow-timeline.md) · [Control Center](docs/control-center.md) |
-| Run it as a background service | [Services](docs/services.md) · [Docker](docs/docker.md) |
+| Check what an AI actually did | [Workflow Timeline](docs/workflow-timeline.md), [Control Center](docs/control-center.md) |
+| Run it as a background service | [Services](docs/services.md), [Docker](docs/docker.md) |
 | See what changed | [Changelog](CHANGELOG.md) |
-| See what's next | [Roadmap](docs/roadmap.md) |
+| See what is next | [Roadmap](docs/roadmap.md) |
 
 ---
 
