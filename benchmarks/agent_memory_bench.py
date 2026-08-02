@@ -534,28 +534,63 @@ def render_chart(report: dict, path: Path) -> None:
                 f'<line x1="{x_low:.1f}" y1="{y + 5}" x2="{x_low:.1f}" y2="{y + bar_h - 5}" stroke="#22303c" stroke-width="2"/>'
                 f'<line x1="{x_high:.1f}" y1="{y + 5}" x2="{x_high:.1f}" y2="{y + bar_h - 5}" stroke="#22303c" stroke-width="2"/>'
             )
-            parts.append(
-                f'<text x="{left + bar + 8:.1f}" y="{y + 18}" fill="#222">{pct:.0f}% '
-                f'<tspan fill="#666">({low:.0f} to {high:.0f})</tspan></text>'
-            )
+            # A 100% bar reaches the right edge, so a label placed after it is
+            # clipped at the viewport and the interval disappears from exactly
+            # the results this chart exists to show. Past three quarters the
+            # label moves inside the bar and right-aligns instead.
+            label = f'{pct:.0f}% ({low:.0f} to {high:.0f})'
+            if pct > 75:
+                parts.append(
+                    f'<text x="{left + bar - 8:.1f}" y="{y + 18}" text-anchor="end" '
+                    f'fill="#ffffff">{label}</text>'
+                )
+            else:
+                parts.append(
+                    f'<text x="{left + bar + 8:.1f}" y="{y + 18}" fill="#222">{pct:.0f}% '
+                    f'<tspan fill="#666">({low:.0f} to {high:.0f})</tspan></text>'
+                )
     parts.append("</svg>")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(parts) + "\n", encoding="utf-8")
 
 
-def load_partial(path: Path) -> dict:
+# Bumped whenever a change makes older cells unsafe to keep: a different probe
+# set, a different scorer, or a different set of arms.
+SCHEMA = 2
+
+
+def load_partial(path: Path, trials: int) -> dict:
     """Reload a previous run so an interrupted one can be continued.
 
-    A full run is hours of real agent calls. Losing it to one quota failure
-    near the end would make the measurement impractical to repeat, which is the
-    same as not being reproducible.
+    A full run is hours of real agent calls. Losing it to one quota failure near
+    the end would make the measurement impractical to repeat, which is the same
+    as not being reproducible.
+
+    Cells are only kept when they were measured the same way. Resuming across a
+    scorer change, a probe change or a different trial count would republish old
+    numbers under the new run's headline, which is how the withdrawn three-trial
+    scores could have reappeared as thirty-trial results.
     """
     if not path.exists():
         return {}
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        previous = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
+    if not isinstance(previous, dict):
+        return {}
+
+    reasons = []
+    if int(previous.get("schema") or 0) != SCHEMA:
+        reasons.append(f"schema {previous.get('schema')!r}, expected {SCHEMA}")
+    if int(previous.get("trials") or 0) != trials:
+        reasons.append(f"{previous.get('trials')} trials, this run wants {trials}")
+    if previous.get("probe_kinds") != {probe[0]: probe[1] for probe in PROBES}:
+        reasons.append("a different probe set")
+    if reasons:
+        print(f"ignoring {path}: it was produced with " + "; ".join(reasons), flush=True)
+        return {}
+    return previous
 
 
 def main() -> int:
@@ -571,11 +606,13 @@ def main() -> int:
     agents = [name.strip() for name in args.agents.split(",") if name.strip()]
     out = Path(args.out)
 
-    previous = load_partial(out) if args.resume else {}
-    report: dict = {"probes": len(PROBES), "trials": args.trials,
+    out.parent.mkdir(parents=True, exist_ok=True)
+    previous = load_partial(out, args.trials) if args.resume else {}
+    report: dict = {"schema": SCHEMA, "probes": len(PROBES), "trials": args.trials,
                     "probe_kinds": {probe[0]: probe[1] for probe in PROBES}}
     if previous:
-        report.update({key: value for key, value in previous.items() if key not in ("probes", "trials")})
+        report.update({key: value for key, value in previous.items()
+                       if key not in ("schema", "probes", "trials", "probe_kinds")})
         print(f"resuming from {out}", flush=True)
 
     def save() -> None:
@@ -631,9 +668,15 @@ def main() -> int:
 
     # Arm D: injected context and on-disk files disagree. Which one is answered
     # from tells us whether injection or file access produced the earlier score.
-    report["conflict"] = {}
+    # Arm D and everything after it checkpoint the same way fidelity does. Each
+    # of these phases is another thirty real agent calls per agent, so losing a
+    # completed one to an interruption in the next is the same waste.
+    report.setdefault("conflict", {})
     conflict_root = Path(__file__).resolve().parent / "conflict"
     for agent in agents:
+        if args.resume and report["conflict"].get(agent, {}).get("trials"):
+            print(f"  conflict/{agent}: already recorded, skipping", flush=True)
+            continue
         conflict_store = build_project(conflict_root)
         conflict_store.write_handoff(CONFLICT_DISK_TASK, "confirm the rename")
         conflict_store.event("handoff", {"task": TASK, "next_step": NEXT_STEP})
@@ -641,23 +684,38 @@ def main() -> int:
         sources = [row.get("source") for row in rows if row.get("ok")]
         report["conflict"][agent] = {
             "trials": args.trials,
+            "completed": len(sources),
             "answered_from_injected": sources.count("injected_context"),
             "answered_from_disk": sources.count("read_from_disk"),
             "neither": sources.count("neither"),
             "samples": [row.get("reply") for row in rows if row.get("ok")][:2],
         }
         print(f"  conflict/{agent}: {report['conflict'][agent]}", flush=True)
+        save()
 
-    report["categories"] = []
+    report.setdefault("categories", [])
+    recorded = {(row.get("agent"), row.get("category")) for row in report["categories"]}
     suite_root = Path(__file__).resolve().parent / "suite"
     for agent in agents:
         for name, suite in FIDELITY_SUITES.items():
+            if args.resume and (agent, name) in recorded:
+                print(f"  {agent}/{name}: already recorded, skipping", flush=True)
+                continue
             row = run_suite(suite_root, agent, name, suite, args.trials)
-            report["categories"].append(row)
+            # Replace rather than append, so a partial rerun cannot leave two
+            # rows for the same cell.
+            report["categories"] = [
+                item for item in report["categories"]
+                if (item.get("agent"), item.get("category")) != (agent, name)
+            ] + [row]
             print(f"  {agent}/{name}: {row['passed']}/{row['trials']} {row['samples'][:1]}", flush=True)
+            save()
 
-    report["delegation"] = {}
+    report.setdefault("delegation", {})
     for agent in agents:
+        if args.resume and report["delegation"].get(agent, {}).get("completed"):
+            print(f"  delegation/{agent}: already recorded, skipping", flush=True)
+            continue
         rows = []
         for _ in range(args.trials):
             started = time.time()
@@ -665,11 +723,14 @@ def main() -> int:
                 result = ask(store, agent, "Reply with exactly: PONG", sender="benchmark", timeout=180)
                 rows.append({"ok": True, "seconds": round(time.time() - started, 1),
                              "prompt_tokens": result["prompt_tokens"],
-                             "score": 0, "reply_tokens": result["reply_tokens"], "missed": []})
+                             "score": 0, "reply_tokens": result["reply_tokens"], "missed": [],
+                             "by_probe": {}})
             except (DelegationError, OSError) as error:
                 rows.append({"ok": False, "error": str(error)[:120]})
         report["delegation"][agent] = summarize(rows)
-        print(f"  delegation/{agent}: {report['delegation'][agent]}", flush=True)
+        print(f"  delegation/{agent}: {report['delegation'][agent].get('seconds_mean')}s "
+              f"completed {report['delegation'][agent].get('completed')}/{args.trials}", flush=True)
+        save()
 
     save()
     print("\nwrote", out)
