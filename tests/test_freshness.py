@@ -243,7 +243,21 @@ class SurfacingTest(unittest.TestCase):
             store = MemoryStore(Path(temporary) / "plain")
             store.initialize(100000, 0.8)
             record_progress(store, "did a thing", "do the next thing")
-            self.assertNotIn("Recorded", store.resume_context("compact"))
+            self.assertIsNone(freshness.age_note(store))
+            self.assertFalse(store.resume_context("compact").startswith("Recorded"))
+
+    def test_a_timestamp_ahead_of_the_clock_is_not_a_negative_age(self):
+        # A file stamped slightly in the future, which a runner's clock and its
+        # filesystem can disagree about, was reported as "Recorded -1 days ago".
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "plain")
+            store.initialize(100000, 0.8)
+            record_progress(store, "did a thing", "do the next thing")
+            handoff = store.state_dir / "latest_handoff.md"
+            ahead = time.time() + 120
+            os.utime(handoff, (ahead, ahead))
+            self.assertEqual(freshness.age_days(store), 0)
+            self.assertIsNone(freshness.age_note(store))
 
     def test_one_day_is_not_described_as_days(self):
         with tempfile.TemporaryDirectory() as temporary:

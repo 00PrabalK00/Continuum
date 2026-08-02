@@ -82,7 +82,10 @@ def age_days(store: "MemoryStore") -> int | None:
     if not handoff.exists():
         return None
     seconds = time.time() - handoff.stat().st_mtime
-    return int(seconds // 86_400)
+    # A filesystem timestamp can sit slightly ahead of the clock, and a negative
+    # age would be reported as "Recorded -1 days ago". Nothing is younger than
+    # now, so floor it.
+    return max(0, int(seconds // 86_400))
 
 
 def age_note(store: "MemoryStore") -> str | None:
