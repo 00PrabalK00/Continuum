@@ -801,7 +801,7 @@ class ShellShimContextTest(unittest.TestCase):
 class HelpSurfaceTest(unittest.TestCase):
     def test_top_level_help_lists_only_the_daily_commands(self):
         text = parser().format_help()
-        self.assertIn("{go,copy,help}", text)
+        self.assertIn("{install,go,copy,help}", text)
         self.assertNotIn("flight-record", text)
         self.assertNotIn("pr-packet", text)
         self.assertIn("continuum help --all", text)

@@ -52,6 +52,14 @@ from .context_intel import (
     score_intel,
 )
 from .evidence import EvidenceError, gather_evidence, render_packet
+from .integrations import (
+    ALREADY as ALREADY_STATUS,
+    INSTALLED as INSTALLED_STATUS,
+    SKIPPED as SKIPPED_STATUS,
+    TARGETS as AGENT_TARGETS,
+    detect as detect_agents,
+    install as install_integrations,
+)
 from .delegation import DEFAULT_TIMEOUT as DELEGATION_TIMEOUT, DelegationError, ask as delegation_ask
 from .handoff_llm import generate_handoff, read_handoff_model, write_handoff_model
 from .flight import FlightRecordError, gather_flight_record, render_flight_record
@@ -569,6 +577,73 @@ def ask_agent_cmd(args: argparse.Namespace) -> int:
     print(f"Reply from {result['agent']} ({result['reply_tokens']} estimated tokens):")
     print()
     print(result["reply"])
+    return 0
+
+
+def hook_session_start(args: argparse.Namespace) -> int:
+    """Print the bounded context an agent should start from.
+
+    Wired to an agent's session-start hook by `continuum install`, so work
+    resumes with the previous context already loaded and nobody has to ask.
+    """
+    store = store_from(args)
+    if not store.config_file.exists():
+        return 0
+    if not (store.state_dir / "latest_handoff.md").exists():
+        return 0
+    context = store.resume_context("compact").strip()
+    if not context:
+        return 0
+    print("Continuum shared memory - where this project stands:")
+    print()
+    print(context)
+    print()
+    print("Continue from here. Record a handoff before you finish.")
+    return 0
+
+
+def hook_session_end(args: argparse.Namespace) -> int:
+    """Record a handoff when an agent session ends, without being asked."""
+    store = store_from(args)
+    if not store.config_file.exists():
+        return 0
+    generated = None
+    try:
+        generated = generate_handoff(store)
+    except ProviderError:
+        generated = None
+    task = generated or store.latest_task()
+    if not task:
+        return 0
+    store.event("handoff", {"task": task[0], "next_step": task[1], "source": "session_end"})
+    store.write_handoff(*task)
+    return 0
+
+
+def install_cmd(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    if not store.config_file.exists():
+        store.initialize(DEFAULT_CONTEXT_LIMIT, DEFAULT_THRESHOLD)
+    only = args.only or None
+    if args.dry_run:
+        targets = detect_agents() if not only else [t for t in AGENT_TARGETS if t.id in only]
+        print(f"Would install Continuum for: {', '.join(target.label for target in targets) or 'nothing detected'}")
+        return 0
+    results = install_integrations(store, only)
+    if not results:
+        print("No supported AI agents detected. Install one, then rerun `continuum install`.")
+        return 0
+    width = max(len(item.label) for item in results)
+    for item in results:
+        mark = {INSTALLED_STATUS: "+", ALREADY_STATUS: "=", SKIPPED_STATUS: "!"}.get(item.status, "-")
+        print(f"  {mark} {item.label.ljust(width)}  {item.detail}")
+    installed = sum(1 for item in results if item.status == INSTALLED_STATUS)
+    skipped = [item for item in results if item.status == SKIPPED_STATUS]
+    print()
+    print(f"Continuum is set up for {len({item.target for item in results})} agent target(s); {installed} newly written.")
+    if skipped:
+        print(f"{len(skipped)} needed attention — see the lines marked ! above.")
+    print("Your agents now read project context on their own. Nothing else to run.")
     return 0
 
 
@@ -2050,7 +2125,7 @@ def audit_export_cmd(args: argparse.Namespace) -> int:
 # Commands listed by `continuum --help`. Everything else still runs exactly as
 # before; it is reached through `continuum help --all`, the Control Center or
 # the MCP server rather than through the top-level help.
-DAILY_COMMANDS = ("go", "copy", "help")
+DAILY_COMMANDS = ("install", "go", "copy", "help")
 
 
 def collapse_help(commands: argparse._SubParsersAction) -> None:
@@ -2111,6 +2186,22 @@ def parser(collapse: bool = True) -> argparse.ArgumentParser:
         "setup", parents=[common], help="One-time setup: initialize memory and connect installed agent CLIs."
     )
     setup_cmd.set_defaults(func=setup)
+
+    install_parser = commands.add_parser(
+        "install",
+        parents=[common],
+        help="Detect the AI agents on this machine and set Continuum up inside each one.",
+    )
+    install_parser.add_argument("--only", action="append", help="Install for one named agent (repeatable).")
+    install_parser.add_argument("--dry-run", action="store_true", help="Show what would be installed.")
+    install_parser.set_defaults(func=install_cmd)
+
+    hook_cmd = commands.add_parser("hook", help="Entry points agents call automatically; not meant to be typed.")
+    hook_commands = hook_cmd.add_subparsers(dest="hook_command", required=True)
+    start_hook = hook_commands.add_parser("session-start", parents=[common], help="Print context for a starting agent.")
+    start_hook.set_defaults(func=hook_session_start)
+    end_hook = hook_commands.add_parser("session-end", parents=[common], help="Record a handoff for a finished agent.")
+    end_hook.set_defaults(func=hook_session_end)
 
     help_cmd = commands.add_parser("help", help="Show the daily commands, or every command with --all.")
     help_cmd.add_argument("--all", action="store_true", help="List every command, including the advanced surface.")

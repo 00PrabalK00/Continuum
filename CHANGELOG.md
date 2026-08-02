@@ -59,6 +59,15 @@ longer tied to a fixed set of agent CLIs.
   ahead and the reply notes that it was not recorded, instead of failing.
 - A launch refused by the calling agent's sandbox is reported as such, with the
   flag that relaxes it, rather than as a bare permission error.
+- Added `continuum install`: detects the AI coding agents on the machine and
+  sets Continuum up inside each one in that agent's native format — MCP server,
+  Claude Code skill and session hooks, Cursor/Windsurf/Cline rule files, and
+  `AGENTS.md` for anything else. Idempotent, previewable with `--dry-run`, and
+  scopeable with `--only`.
+- Added `continuum hook session-start` and `continuum hook session-end`, the
+  entry points those hooks call. With them installed, a Claude Code session
+  begins with the project context already loaded and records a handoff when it
+  ends, so Continuum needs no commands during normal work.
 - Fixed silent context truncation on Windows. Agents that resolve to a
   `.cmd`/`.bat` shim run through cmd.exe, which ends the command line at the
   first newline, so the injected handoff arrived as its first line only —
