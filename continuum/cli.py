@@ -39,6 +39,7 @@ from .benchmark import capture_task, compare_captures, load_capture, render_comp
 from .secrets_scan import scan_text
 from .roi import render_roi, roi_summary
 from .progress import record_progress
+from . import quota
 from .providers import DEFAULT_PROVIDERS, ProviderError, ProviderManager
 from .retrieval import search as retrieval_search
 from .setup_ui import (
@@ -421,11 +422,32 @@ def last_session(store: MemoryStore) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def limits_cmd(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    print(quota.render(quota.rank(store, installed_agents(store))))
+    return 0
+
+
 def choose_agent(store: MemoryStore) -> tuple[str, str]:
     """Pick the agent for a bare `continuum go` and explain the choice."""
     previous = last_session(store)
     last_agent = str(previous.get("agent") or "") or None
     installed = installed_agents(store)
+    # Prefer an agent that has not reported running out. Where nothing has been
+    # reported this changes nothing, which is the common case.
+    ranked = quota.rank(store, installed)
+    blocked = {item.agent: item for item in ranked if item.state == "blocked"}
+    if blocked and len(blocked) < len(installed):
+        usable = [item for item in ranked if item.state != "blocked"]
+        # Avoiding the agent that just ran is only a preference. Avoiding one
+        # that said it is out is a fact, so when the only usable agent is also
+        # the last one, reuse it rather than launching the blocked one.
+        first = next((item for item in usable if item.agent != last_agent), usable[0])
+        detail = blocked[sorted(blocked)[0]].reason
+        reason = f"{', '.join(sorted(blocked))} {detail}"
+        if first.agent == last_agent:
+            reason += "; it is the only agent left"
+        return first.agent, reason
     if last_agent and previous.get("checkpoint_triggered"):
         reason = f"{last_agent} reached its context checkpoint last session"
     elif last_agent and len(installed) > 1:
@@ -995,6 +1017,12 @@ def run_agent(args: argparse.Namespace, resumed: bool = False, injected_context:
     triggered = False
     checkpoint_tokens = 0
     tail: list[str] = []
+    started_at = utc_now()
+    tracker = quota.SessionTracker(args.agent, session_id)
+    # The injected prompt is part of what the session consumed. It was estimated
+    # for the context_injected event and then dropped, so the session total
+    # understated itself by the whole handoff.
+    injected_tokens = estimate_tokens(injected_context) if injected_context else 0
     try:
         command = agent_command(spec, agent_args)
         cwd = Path(getattr(args, "cwd", store.project))
@@ -1018,6 +1046,7 @@ def run_agent(args: argparse.Namespace, resumed: bool = False, injected_context:
                 output.write(line)
                 output.flush()
                 tokens += estimate_tokens(line)
+                tracker.observe(line)
                 tail.append(line)
                 tail = tail[-MAX_SESSION_EXCERPT_LINES:]
                 if not triggered and tokens >= int(limit * threshold):
@@ -1047,6 +1076,11 @@ def run_agent(args: argparse.Namespace, resumed: bool = False, injected_context:
     }
     write_text(store.state_dir / "token_usage.json", json.dumps(usage, indent=2) + "\n")
     store.event("agent_exit", {"summary": f"{args.agent} exited with {returncode}", "returncode": returncode})
+    quota.record_session(
+        store, agent=args.agent, session=session_id, started_at=started_at, ended_at=utc_now(),
+        injected_tokens=injected_tokens, output_tokens=tokens, estimate_quality="piped",
+        checkpoint_triggered=triggered, returncode=returncode, tracker=tracker,
+    )
     store.write_session_note(session_id, args.agent, returncode, tokens, tail)
     finalize_handoff(
         store, args.agent, session_id, tail, returncode, triggered, tokens > checkpoint_tokens
@@ -1098,6 +1132,9 @@ def run_interactive_agent(args: argparse.Namespace, resumed: bool = False, injec
     triggered = False
     checkpoint_tokens = 0
     tail: list[str] = []
+    started_at = utc_now()
+    tracker = quota.SessionTracker(args.agent, session_id)
+    injected_tokens = estimate_tokens(injected_context) if injected_context else 0
     try:
         command = agent_command(spec, agent_args)
         with log_file.open("w", encoding="utf-8") as output:
@@ -1106,7 +1143,8 @@ def run_interactive_agent(args: argparse.Namespace, resumed: bool = False, injec
                 print(chunk, end="", flush=True)
                 output.write(chunk)
                 output.flush()
-                tokens += estimate_tokens(chunk)
+                tokens += estimate_tokens(quota.clean(chunk))
+                tracker.observe(chunk)
                 tail.extend(chunk.splitlines(keepends=True))
                 tail = tail[-MAX_SESSION_EXCERPT_LINES:]
                 for event in adapter.feed(chunk):
@@ -1155,6 +1193,11 @@ def run_interactive_agent(args: argparse.Namespace, resumed: bool = False, injec
     store.event(
         "agent_exit",
         {"summary": f"{args.agent} interactive terminal exited with {returncode}", "returncode": returncode},
+    )
+    quota.record_session(
+        store, agent=args.agent, session=session_id, started_at=started_at, ended_at=utc_now(),
+        injected_tokens=injected_tokens, output_tokens=tokens, estimate_quality="terminal",
+        checkpoint_triggered=triggered, returncode=returncode, tracker=tracker,
     )
     store.write_session_note(session_id, args.agent, returncode, tokens, tail)
     finalize_handoff(
@@ -2331,6 +2374,12 @@ def parser(collapse: bool = True) -> argparse.ArgumentParser:
     start_hook.set_defaults(func=hook_session_start)
     end_hook = hook_commands.add_parser("session-end", parents=[common], help="Record a handoff for a finished agent.")
     end_hook.set_defaults(func=hook_session_end)
+
+    limits_parser = commands.add_parser(
+        "limits", parents=[common],
+        help="Show what each agent has reported about provider limits, and what it has used.",
+    )
+    limits_parser.set_defaults(func=limits_cmd)
 
     help_cmd = commands.add_parser("help", help="Show the daily commands, or every command with --all.")
     help_cmd.add_argument("--all", action="store_true", help="List every command, including the advanced surface.")

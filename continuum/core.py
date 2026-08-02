@@ -352,8 +352,144 @@ class MemoryStore:
                 UNIQUE(pid, process_created_at)
             )"""
         )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS agent_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session TEXT NOT NULL,
+                agent TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                ended_at TEXT NOT NULL,
+                injected_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                estimated_tokens INTEGER NOT NULL DEFAULT 0,
+                estimate_quality TEXT NOT NULL DEFAULT 'piped',
+                checkpoint_triggered INTEGER NOT NULL DEFAULT 0,
+                returncode INTEGER,
+                UNIQUE(session)
+            )"""
+        )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS agent_limit_signals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                observed_at TEXT NOT NULL,
+                agent TEXT NOT NULL,
+                session TEXT,
+                kind TEXT NOT NULL,
+                evidence TEXT NOT NULL,
+                reset_at TEXT,
+                confirmed INTEGER NOT NULL DEFAULT 0
+            )"""
+        )
         connection.commit()
         return connection
+
+    def record_agent_usage(
+        self,
+        *,
+        session: str,
+        agent: str,
+        started_at: str,
+        ended_at: str,
+        injected_tokens: int = 0,
+        output_tokens: int = 0,
+        estimate_quality: str = "piped",
+        checkpoint_triggered: bool = False,
+        returncode: int | None = None,
+    ) -> None:
+        """Record what one session consumed, as far as Continuum could see it.
+
+        `token_usage.json` keeps only the last session, so it cannot answer
+        anything about accumulation. This can, and it never overwrites.
+        """
+        connection = self.connect()
+        connection.execute(
+            """INSERT INTO agent_usage(session, agent, started_at, ended_at, injected_tokens,
+               output_tokens, estimated_tokens, estimate_quality, checkpoint_triggered, returncode)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(session) DO UPDATE SET ended_at = excluded.ended_at,
+               injected_tokens = excluded.injected_tokens, output_tokens = excluded.output_tokens,
+               estimated_tokens = excluded.estimated_tokens,
+               checkpoint_triggered = excluded.checkpoint_triggered,
+               returncode = excluded.returncode""",
+            (session, agent, started_at, ended_at, int(injected_tokens), int(output_tokens),
+             int(injected_tokens) + int(output_tokens), estimate_quality,
+             1 if checkpoint_triggered else 0, returncode),
+        )
+        connection.commit()
+        connection.close()
+
+    def record_limit_signal(
+        self,
+        *,
+        agent: str,
+        kind: str,
+        evidence: str,
+        session: str | None = None,
+        reset_at: str | None = None,
+        confirmed: bool = False,
+    ) -> None:
+        """Record, verbatim, what an agent said when it hit a limit.
+
+        Unconfirmed observations are stored too. They are what lets a user see
+        why Continuum did or did not route around an agent; only ranking filters
+        them out.
+        """
+        connection = self.connect()
+        connection.execute(
+            """INSERT INTO agent_limit_signals(observed_at, agent, session, kind, evidence,
+               reset_at, confirmed) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (utc_now(), agent, session, kind, compact_text(evidence, 200), reset_at,
+             1 if confirmed else 0),
+        )
+        connection.commit()
+        connection.close()
+
+    def agent_usage_since(self, since: str, agent: str | None = None) -> list[dict[str, Any]]:
+        if not self.db_file.exists():
+            return []
+        connection = self.connect()
+        try:
+            query = "SELECT session, agent, started_at, ended_at, estimated_tokens, " \
+                    "estimate_quality, checkpoint_triggered, returncode FROM agent_usage " \
+                    "WHERE ended_at >= ?"
+            params: list[Any] = [since]
+            if agent:
+                query += " AND agent = ?"
+                params.append(agent)
+            rows = connection.execute(query + " ORDER BY ended_at DESC", params).fetchall()
+        except sqlite3.Error:
+            return []
+        finally:
+            connection.close()
+        keys = ("session", "agent", "started_at", "ended_at", "estimated_tokens",
+                "estimate_quality", "checkpoint_triggered", "returncode")
+        return [dict(zip(keys, row)) for row in rows]
+
+    def limit_signals_since(self, since: str, agent: str | None = None) -> list[dict[str, Any]]:
+        """Signals observed since `since`, plus any whose stated reset is still
+        in the future.
+
+        A message like "resets in 1 day" outlives the usage window it was seen
+        in. Querying on observation time alone would let the agent look
+        unencumbered again while it is still, by its own account, blocked.
+        """
+        if not self.db_file.exists():
+            return []
+        connection = self.connect()
+        try:
+            query = ("SELECT observed_at, agent, session, kind, evidence, reset_at, confirmed "
+                     "FROM agent_limit_signals WHERE (observed_at >= ? OR reset_at > ?)")
+            params: list[Any] = [since, utc_now()]
+            if agent:
+                query += " AND agent = ?"
+                params.append(agent)
+            rows = connection.execute(query + " ORDER BY observed_at DESC", params).fetchall()
+        except sqlite3.Error:
+            return []
+        finally:
+            connection.close()
+        keys = ("observed_at", "agent", "session", "kind", "evidence", "reset_at", "confirmed")
+        return [dict(zip(keys, row)) for row in rows]
 
     @staticmethod
     def delegation_ref(graph_id: int) -> str:
