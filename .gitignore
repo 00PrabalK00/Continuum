@@ -6,3 +6,6 @@ dist/
 build/
 *.egg-info/
 .continuum/
+
+# Output from unrelated local tooling
+brag-output/
