@@ -35,11 +35,31 @@ def _git(project: Path, *args: str) -> str | None:
             ["git", "-C", str(project), *args],
             capture_output=True, text=True, timeout=10,
         )
-    except (OSError, subprocess.SubprocessError):
+    except Exception:
+        # Provenance is best-effort metadata. Recording a handoff must not fail
+        # because Git was missing, slow, or replaced by a test double, so every
+        # failure here means "unknown" rather than an exception on the save path.
         return None
     if finished.returncode != 0:
         return None
     return finished.stdout.strip() or None
+
+
+def _ok(project: Path, *args: str) -> bool:
+    """Whether the command succeeded. For git commands that answer by exit code
+    and print nothing, which `_git` cannot distinguish from failure."""
+    try:
+        return subprocess.run(
+            ["git", "-C", str(project), *args],
+            capture_output=True, text=True, timeout=10,
+        ).returncode == 0
+    except Exception:  # see _git: never fail a save over a Git probe
+        return False
+
+
+def _known(project: Path, commit: str) -> bool:
+    """Whether the commit is still an object in this repository."""
+    return _ok(project, "cat-file", "-e", f"{commit}^{{commit}}")
 
 
 def head_sha(project: Path) -> str | None:
@@ -93,21 +113,24 @@ def describe(store: "MemoryStore") -> str | None:
     if not current or current == recorded:
         return None
     short = recorded[:SHORT]
-    # `A..B` counts commits reachable from B and not from A. It fails outright
-    # when A is no longer in the repository, which is what a rewind looks like.
-    ahead = _git(store.project, "rev-list", "--count", f"{recorded}..HEAD")
-    if ahead is None:
+    if not _known(store.project, recorded):
         return (
             f"Recorded against commit {short}, which is no longer in this "
             "repository. This context may describe work that no longer exists."
         )
-    if ahead == "0":
-        # HEAD cannot reach the recorded commit, so the branch moved away from
-        # it rather than past it: a reset, a rebase, or a different branch.
+    # Ancestry first. `A..B` counts commits reachable from B and not from A, and
+    # on a sibling branch that count is positive even though B never descended
+    # from A. Reporting that as "3 commits ago" would describe a divergence as
+    # ordinary progress.
+    if not _ok(store.project, "merge-base", "--is-ancestor", recorded, "HEAD"):
         return (
-            f"Recorded against commit {short}, which is no longer on this "
-            "branch. This context may describe work that no longer exists."
+            f"Recorded against commit {short}, which is not an ancestor of the "
+            "current commit. The branch was reset, rebased, or switched, so this "
+            "context may describe work that no longer exists."
         )
+    ahead = _git(store.project, "rev-list", "--count", f"{recorded}..HEAD")
+    if ahead is None or ahead == "0":
+        return None
     count = int(ahead)
     commits = "commit" if count == 1 else "commits"
     return (

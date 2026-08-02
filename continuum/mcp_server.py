@@ -300,13 +300,28 @@ def tool_definitions() -> list[dict[str, Any]]:
     ]
 
 
+def with_freshness(store: MemoryStore, text: str) -> str:
+    """Prefix how old the context is and how far the code has moved since."""
+    from .freshness import age_note, describe
+
+    notes = [note for note in (age_note(store), describe(store)) if note]
+    if not notes or not text:
+        return text
+    return " ".join(notes) + "\n\n" + text
+
+
 def call_tool(store: MemoryStore, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     if name == "get_startup_context":
-        text = compact_text(read_note(store.state_dir / "current.md"), CONTEXT_BUDGETS["startup"] * 4)
+        # Every context read goes through the same freshness prefix. An agent
+        # reading through MCP is the recommended path, so leaving it out here
+        # would mean the warning reaches the CLI and misses the common case.
+        text = with_freshness(store, compact_text(
+            read_note(store.state_dir / "current.md"), CONTEXT_BUDGETS["startup"] * 4))
     elif name == "get_current_state":
-        text = compact_text(read_note(store.state_dir / "current_state.md"), 8_000)
+        text = with_freshness(store, compact_text(
+            read_note(store.state_dir / "current_state.md"), 8_000))
     elif name == "get_latest_handoff":
-        text = read_note(store.state_dir / "latest_handoff.md")
+        text = with_freshness(store, read_note(store.state_dir / "latest_handoff.md"))
     elif name == "search_memory":
         from .retrieval import search as search_memory
 

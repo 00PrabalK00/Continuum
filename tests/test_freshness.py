@@ -17,7 +17,7 @@ from io import StringIO
 from pathlib import Path
 
 from continuum import freshness
-from continuum.cli import quick_status
+from continuum.cli import main, quick_status
 from continuum.core import MemoryStore
 from continuum.progress import record_progress
 
@@ -112,8 +112,94 @@ class DescribeTest(unittest.TestCase):
             commit(store, "b.py")
             record_progress(store, "did a thing", "do the next thing")
             git(store.project, "reset", "--hard", first)
+            self.assertIn("not an ancestor", freshness.describe(store))
+
+    def test_a_sibling_branch_is_not_reported_as_ordinary_progress(self):
+        # `recorded..HEAD` counts commits reachable from HEAD and not from the
+        # recorded one, which is positive on a sibling branch even though HEAD
+        # never descended from it. Counting those would describe a divergence
+        # as progress.
+        with tempfile.TemporaryDirectory() as temporary:
+            store = repo(temporary)
+            base = commit(store, "a.py")
+            commit(store, "b.py")
+            record_progress(store, "did a thing", "do the next thing")
+            git(store.project, "checkout", "-q", "-b", "sibling", base)
+            commit(store, "c.py")
+            commit(store, "d.py")
             drift = freshness.describe(store)
-            self.assertIn("no longer on this branch", drift)
+            self.assertIn("not an ancestor", drift)
+            self.assertNotIn("commits ago", drift)
+
+
+class EveryPathTest(unittest.TestCase):
+    """A handoff written by any route has to carry its commit. Only the shared
+    record_progress path did, so the everyday `continuum go` session ending, the
+    session-end hook and `continuum handoff` all recorded none, and the newest
+    handoff is the one that gets compared."""
+
+    def test_the_session_end_path_records_the_commit(self):
+        from continuum.cli import finalize_handoff
+
+        with tempfile.TemporaryDirectory() as temporary:
+            store = repo(temporary)
+            sha = commit(store, "a.py")
+            with redirect_stdout(StringIO()):
+                finalize_handoff(store, "claude", "S1", ["out"], 0, False)
+            self.assertEqual(store.recent_handoffs(1)[0]["payload"].get("commit"), sha)
+
+    def test_the_hook_path_records_the_commit(self):
+        import argparse as argparse_module
+
+        from continuum.cli import hook_session_end
+
+        with tempfile.TemporaryDirectory() as temporary:
+            store = repo(temporary)
+            sha = commit(store, "a.py")
+            record_progress(store, "did a thing", "do the next thing")
+            with redirect_stdout(StringIO()):
+                hook_session_end(argparse_module.Namespace(project=str(store.project), vault=None))
+            self.assertEqual(store.recent_handoffs(1)[0]["payload"].get("commit"), sha)
+
+    def test_the_explicit_handoff_command_records_the_commit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = repo(temporary)
+            sha = commit(store, "a.py")
+            with redirect_stdout(StringIO()):
+                main(["handoff", "--project", str(store.project),
+                      "--task", "t", "--next-step", "n"])
+            self.assertEqual(store.recent_handoffs(1)[0]["payload"].get("commit"), sha)
+
+
+class McpTest(unittest.TestCase):
+    """Reading through MCP is the recommended path, so a warning that reaches
+    only the CLI misses the common case."""
+
+    def drifted(self, temporary):
+        store = repo(temporary)
+        commit(store, "a.py")
+        record_progress(store, "did a thing", "do the next thing")
+        commit(store, "b.py")
+        return store
+
+    def test_every_context_tool_carries_the_warning(self):
+        from continuum.mcp_server import call_tool
+
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.drifted(temporary)
+            for tool in ("get_startup_context", "get_current_state", "get_latest_handoff"):
+                text = call_tool(store, tool, {})["content"][0]["text"]
+                self.assertIn("1 commit ago", text, tool)
+
+    def test_current_context_is_not_prefixed(self):
+        from continuum.mcp_server import call_tool
+
+        with tempfile.TemporaryDirectory() as temporary:
+            store = repo(temporary)
+            commit(store, "a.py")
+            record_progress(store, "did a thing", "do the next thing")
+            text = call_tool(store, "get_startup_context", {})["content"][0]["text"]
+            self.assertNotIn("Recorded against commit", text)
 
 
 class SurfacingTest(unittest.TestCase):

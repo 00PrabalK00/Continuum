@@ -121,7 +121,8 @@ def handoff(args: argparse.Namespace) -> int:
     store = store_from(args)
     if not store.config_file.exists():
         store.initialize(DEFAULT_CONTEXT_LIMIT, DEFAULT_THRESHOLD)
-    store.event("handoff", {"task": args.task, "next_step": args.next_step})
+    store.event("handoff", {"task": args.task, "next_step": args.next_step,
+                            "commit": freshness.head_sha(store.project)})
     store.write_handoff(args.task, args.next_step)
     print(f"Wrote: {store.state_dir / 'latest_handoff.md'}")
     if store.notes_dir:
@@ -300,7 +301,8 @@ def finalize_handoff(
         base_next = next_step
     store.event(
         "handoff",
-        {"task": task, "next_step": next_step, "base_next_step": base_next, "session": session_id},
+        {"task": task, "next_step": next_step, "base_next_step": base_next,
+         "session": session_id, "commit": freshness.head_sha(store.project)},
     )
     store.write_handoff(task, next_step)
     print(f"Saved: {task}")
@@ -728,7 +730,8 @@ def hook_session_end(args: argparse.Namespace) -> int:
     task = generated or store.latest_task()
     if not task:
         return 0
-    store.event("handoff", {"task": task[0], "next_step": task[1], "source": "session_end"})
+    store.event("handoff", {"task": task[0], "next_step": task[1], "source": "session_end",
+                            "commit": freshness.head_sha(store.project)})
     store.write_handoff(*task)
     return 0
 
