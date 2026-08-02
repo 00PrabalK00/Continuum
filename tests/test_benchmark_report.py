@@ -140,8 +140,15 @@ class RoundTripTest(unittest.TestCase):
             results = Path(temporary) / "results.json"
             results.write_text(json.dumps(run()), encoding="utf-8")
             out = Path(temporary) / "benchmarks.md"
-            sys.argv = ["report.py", "--results", str(results), "--out", str(out), "--write"]
-            self.assertEqual(reporter.main(), 0)
+            # Restore argv: leaving it replaced breaks whichever test the runner
+            # happens to execute next, which is a different test under unittest
+            # than under pytest.
+            original = sys.argv
+            try:
+                sys.argv = ["report.py", "--results", str(results), "--out", str(out), "--write"]
+                self.assertEqual(reporter.main(), 0)
+            finally:
+                sys.argv = original
             text = out.read_text(encoding="utf-8")
             self.assertTrue(text.startswith("# Benchmarks"))
             self.assertTrue(text.endswith("\n"))
