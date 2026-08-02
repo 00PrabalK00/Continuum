@@ -199,24 +199,28 @@ def record_session(
             returncode=returncode,
         )
         if tracker:
-            for signal in tracker.confirmed(returncode):
+            confirmed = {id(signal) for signal in tracker.confirmed(returncode)}
+            for signal in tracker.signals:
+                is_confirmed = id(signal) in confirmed
                 store.record_limit_signal(
                     agent=agent,
                     kind=signal.kind,
                     evidence=signal.evidence,
                     session=session,
                     reset_at=signal.reset_at,
+                    confirmed=is_confirmed,
                 )
-                store.event(
-                    "quota_signal",
-                    {
-                        "agent": agent,
-                        "kind": signal.kind,
-                        "evidence": signal.evidence,
-                        "reset_at": signal.reset_at,
-                        "summary": f"{agent} reported a provider limit",
-                    },
-                )
+                if is_confirmed:
+                    store.event(
+                        "quota_signal",
+                        {
+                            "agent": agent,
+                            "kind": signal.kind,
+                            "evidence": signal.evidence,
+                            "reset_at": signal.reset_at,
+                            "summary": f"{agent} reported a provider limit",
+                        },
+                    )
     except (sqlite3.Error, OSError, ValueError):
         return
 
@@ -230,6 +234,17 @@ class Headroom:
     evidence: str | None = None
     sessions: int = 0
     estimated_tokens: int = 0
+    unconfirmed: int = 0
+
+
+def _minutes_since(timestamp: str, now: dt.datetime) -> float | None:
+    try:
+        moment = dt.datetime.fromisoformat(timestamp)
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=dt.timezone.utc)
+    return (now - moment).total_seconds() / 60
 
 
 def _ago(timestamp: str, now: dt.datetime) -> str:
@@ -260,9 +275,16 @@ def headroom(store: "MemoryStore", agent: str, window_hours: int = 5,
 
     sessions = len(usage)
     tokens = sum(int(row.get("estimated_tokens") or 0) for row in usage)
+    unconfirmed = [row for row in signals if not row.get("confirmed")]
+    signals = [row for row in signals if row.get("confirmed")]
     if not signals:
-        return Headroom(agent, "unknown", "no limit reported", sessions=sessions,
-                        estimated_tokens=tokens)
+        # An unconfirmed mention is worth showing and not worth acting on: an
+        # agent reading this file prints the phrase.
+        note = (f"{len(unconfirmed)} unconfirmed mention(s), not acted on"
+                if unconfirmed else "no limit reported")
+        return Headroom(agent, "unknown", note, sessions=sessions, estimated_tokens=tokens,
+                        evidence=unconfirmed[0]["evidence"] if unconfirmed else None,
+                        unconfirmed=len(unconfirmed))
 
     latest = signals[0]
     reset_at = latest.get("reset_at")
@@ -275,6 +297,9 @@ def headroom(store: "MemoryStore", agent: str, window_hours: int = 5,
             moment = dt.datetime.fromisoformat(str(reset_at))
             if moment.tzinfo is None:
                 moment = moment.replace(tzinfo=dt.timezone.utc)
+        except ValueError:
+            moment = None
+        if moment is not None:
             if moment > now:
                 return Headroom(
                     agent, "blocked",
@@ -283,13 +308,16 @@ def headroom(store: "MemoryStore", agent: str, window_hours: int = 5,
                     reset_at=str(reset_at), evidence=evidence,
                     sessions=sessions, estimated_tokens=tokens,
                 )
-        except ValueError:
-            pass
+            # The agent told us when it would be back and that time has passed.
+            # Its own word beats a cooldown Continuum invented.
+            return Headroom(
+                agent, "recently_limited",
+                f"reported a limit {when}, and the reset time it gave has passed",
+                evidence=evidence, sessions=sessions, estimated_tokens=tokens,
+            )
 
-    cooled = _ago(str(observed), now).endswith("d ago")
-    minutes_since = (now - dt.datetime.fromisoformat(str(observed)).replace(
-        tzinfo=dt.timezone.utc)).total_seconds() / 60 if observed else 0
-    if not cooled and minutes_since < cooldown_minutes:
+    minutes_since = _minutes_since(str(observed), now)
+    if minutes_since is not None and minutes_since < cooldown_minutes:
         return Headroom(agent, "blocked",
                         f"reported a limit {when} and gave no reset time",
                         evidence=evidence, sessions=sessions, estimated_tokens=tokens)
@@ -307,13 +335,25 @@ def rank(store: "MemoryStore", agents: list[str], now: dt.datetime | None = None
 def render(entries: list[Headroom]) -> str:
     """The `continuum limits` view. Says which tier every figure came from."""
     if not entries:
-        return "No agents to report on."
+        return "\n".join([
+            "No agent CLIs installed, so there is nothing to report.",
+            "",
+            "What these mean:",
+            "  observed  text Continuum read in the agent's own output",
+            "  estimated Continuum's own rough count of what it sent and saw",
+            "  unknown   how much quota you actually have left. There is no way to ask.",
+        ])
     lines = []
     for entry in entries:
         lines.append(entry.agent)
         if entry.evidence:
             lines.append(f'  it said: "{entry.evidence}"')
             lines.append(f"  state: {entry.state.replace('_', ' ')}, {entry.reason}")
+            if entry.unconfirmed:
+                lines.append(
+                    "  that phrase can appear in output an agent was merely reading, "
+                    "so it was recorded but not acted on"
+                )
         else:
             lines.append("  no limit message recorded")
         lines.append(

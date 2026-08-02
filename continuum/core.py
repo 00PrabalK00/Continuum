@@ -376,7 +376,8 @@ class MemoryStore:
                 session TEXT,
                 kind TEXT NOT NULL,
                 evidence TEXT NOT NULL,
-                reset_at TEXT
+                reset_at TEXT,
+                confirmed INTEGER NOT NULL DEFAULT 0
             )"""
         )
         connection.commit()
@@ -425,13 +426,20 @@ class MemoryStore:
         evidence: str,
         session: str | None = None,
         reset_at: str | None = None,
+        confirmed: bool = False,
     ) -> None:
-        """Record, verbatim, what an agent said when it hit a limit."""
+        """Record, verbatim, what an agent said when it hit a limit.
+
+        Unconfirmed observations are stored too. They are what lets a user see
+        why Continuum did or did not route around an agent; only ranking filters
+        them out.
+        """
         connection = self.connect()
         connection.execute(
-            """INSERT INTO agent_limit_signals(observed_at, agent, session, kind, evidence, reset_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (utc_now(), agent, session, kind, compact_text(evidence, 200), reset_at),
+            """INSERT INTO agent_limit_signals(observed_at, agent, session, kind, evidence,
+               reset_at, confirmed) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (utc_now(), agent, session, kind, compact_text(evidence, 200), reset_at,
+             1 if confirmed else 0),
         )
         connection.commit()
         connection.close()
@@ -458,13 +466,20 @@ class MemoryStore:
         return [dict(zip(keys, row)) for row in rows]
 
     def limit_signals_since(self, since: str, agent: str | None = None) -> list[dict[str, Any]]:
+        """Signals observed since `since`, plus any whose stated reset is still
+        in the future.
+
+        A message like "resets in 1 day" outlives the usage window it was seen
+        in. Querying on observation time alone would let the agent look
+        unencumbered again while it is still, by its own account, blocked.
+        """
         if not self.db_file.exists():
             return []
         connection = self.connect()
         try:
-            query = ("SELECT observed_at, agent, session, kind, evidence, reset_at "
-                     "FROM agent_limit_signals WHERE observed_at >= ?")
-            params: list[Any] = [since]
+            query = ("SELECT observed_at, agent, session, kind, evidence, reset_at, confirmed "
+                     "FROM agent_limit_signals WHERE (observed_at >= ? OR reset_at > ?)")
+            params: list[Any] = [since, utc_now()]
             if agent:
                 query += " AND agent = ?"
                 params.append(agent)
@@ -473,7 +488,7 @@ class MemoryStore:
             return []
         finally:
             connection.close()
-        keys = ("observed_at", "agent", "session", "kind", "evidence", "reset_at")
+        keys = ("observed_at", "agent", "session", "kind", "evidence", "reset_at", "confirmed")
         return [dict(zip(keys, row)) for row in rows]
 
     @staticmethod

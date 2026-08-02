@@ -424,11 +424,7 @@ def last_session(store: MemoryStore) -> dict:
 
 def limits_cmd(args: argparse.Namespace) -> int:
     store = store_from(args)
-    installed = installed_agents(store)
-    if not installed:
-        print("No agent CLIs installed.")
-        return 0
-    print(quota.render(quota.rank(store, installed)))
+    print(quota.render(quota.rank(store, installed_agents(store))))
     return 0
 
 
@@ -442,9 +438,16 @@ def choose_agent(store: MemoryStore) -> tuple[str, str]:
     ranked = quota.rank(store, installed)
     blocked = {item.agent: item for item in ranked if item.state == "blocked"}
     if blocked and len(blocked) < len(installed):
-        for item in ranked:
-            if item.state != "blocked" and item.agent != last_agent:
-                return item.agent, f"{', '.join(sorted(blocked))} {blocked[sorted(blocked)[0]].reason}"
+        usable = [item for item in ranked if item.state != "blocked"]
+        # Avoiding the agent that just ran is only a preference. Avoiding one
+        # that said it is out is a fact, so when the only usable agent is also
+        # the last one, reuse it rather than launching the blocked one.
+        first = next((item for item in usable if item.agent != last_agent), usable[0])
+        detail = blocked[sorted(blocked)[0]].reason
+        reason = f"{', '.join(sorted(blocked))} {detail}"
+        if first.agent == last_agent:
+            reason += "; it is the only agent left"
+        return first.agent, reason
     if last_agent and previous.get("checkpoint_triggered"):
         reason = f"{last_agent} reached its context checkpoint last session"
     elif last_agent and len(installed) > 1:

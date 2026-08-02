@@ -153,19 +153,109 @@ class HeadroomTest(unittest.TestCase):
             store = fresh(temporary)
             future = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=2)).isoformat()
             store.record_limit_signal(agent="claude", kind="exhausted",
-                                      evidence="usage limit reached", reset_at=future)
+                                      evidence="usage limit reached", reset_at=future,
+                                      confirmed=True)
             entry = quota.headroom(store, "claude")
             self.assertEqual(entry.state, "blocked")
             self.assertIn("resets at", entry.reason)
+
+    def test_an_unconfirmed_mention_is_recorded_but_does_not_block(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            store.record_limit_signal(agent="claude", kind="exhausted",
+                                      evidence="reading quota.py: usage limit reached",
+                                      confirmed=False)
+            entry = quota.headroom(store, "claude")
+            self.assertEqual(entry.state, "unknown")
+            self.assertEqual(entry.unconfirmed, 1)
+            # Still visible, so a user can see why nothing was acted on.
+            self.assertIn("usage limit reached", entry.evidence)
+
+    def test_a_reset_the_agent_stated_outlives_the_usage_window(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            tomorrow = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=1)).isoformat()
+            store.record_limit_signal(agent="claude", kind="exhausted",
+                                      evidence="resets in 1 day", reset_at=tomorrow,
+                                      confirmed=True)
+            # A five hour window would have lost this, while the agent is still
+            # blocked by its own account.
+            entry = quota.headroom(store, "claude", window_hours=1)
+            self.assertEqual(entry.state, "blocked")
+
+    def test_an_expired_stated_reset_releases_the_agent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            past = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=1)).isoformat()
+            store.record_limit_signal(agent="claude", kind="exhausted",
+                                      evidence="retry in 5 minutes", reset_at=past,
+                                      confirmed=True)
+            entry = quota.headroom(store, "claude")
+            # The agent's own word beats a cooldown Continuum invented.
+            self.assertEqual(entry.state, "recently_limited")
+            self.assertNotIn("gave no reset time", entry.reason)
 
     def test_an_agent_with_headroom_is_preferred(self):
         with tempfile.TemporaryDirectory() as temporary:
             store = fresh(temporary)
             future = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=2)).isoformat()
             store.record_limit_signal(agent="claude", kind="exhausted",
-                                      evidence="usage limit reached", reset_at=future)
+                                      evidence="usage limit reached", reset_at=future,
+                                      confirmed=True)
             order = [entry.agent for entry in quota.rank(store, ["claude", "codex"])]
             self.assertEqual(order[0], "codex")
+
+
+class RoutingTest(unittest.TestCase):
+    """Avoiding the agent that just ran is a preference. Avoiding one that said
+    it is out is a fact, so the fact has to win."""
+
+    def blocked(self, store, agent):
+        future = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=2)).isoformat()
+        store.record_limit_signal(agent=agent, kind="exhausted",
+                                  evidence="usage limit reached", reset_at=future,
+                                  confirmed=True)
+
+    def choose(self, store, installed, last_agent):
+        from unittest.mock import patch
+
+        from continuum.cli import choose_agent
+
+        with (
+            patch("continuum.cli.installed_agents", return_value=installed),
+            patch("continuum.cli.last_session", return_value={"agent": last_agent}),
+        ):
+            return choose_agent(store)
+
+    def test_the_blocked_agent_is_not_chosen_even_if_the_other_ran_last(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            self.blocked(store, "claude")
+            agent, reason = self.choose(store, ["claude", "codex"], "codex")
+            self.assertEqual(agent, "codex")
+            self.assertIn("only agent left", reason)
+
+    def test_a_free_agent_that_did_not_just_run_is_preferred(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            self.blocked(store, "claude")
+            agent, _ = self.choose(store, ["claude", "codex", "gemini"], "codex")
+            self.assertEqual(agent, "gemini")
+
+    def test_with_nothing_reported_the_behaviour_is_unchanged(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            agent, reason = self.choose(store, ["claude", "codex"], "claude")
+            self.assertEqual(agent, "codex")
+            self.assertIn("ran last session", reason)
+
+    def test_every_agent_blocked_still_returns_one(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            self.blocked(store, "claude")
+            self.blocked(store, "codex")
+            agent, _ = self.choose(store, ["claude", "codex"], "claude")
+            self.assertIn(agent, {"claude", "codex"})
 
 
 class HonestyTest(unittest.TestCase):
@@ -206,15 +296,35 @@ class HonestyTest(unittest.TestCase):
 
 
 class CommandTest(unittest.TestCase):
-    def test_the_limits_command_runs(self):
+    def test_the_limits_command_runs_with_no_agents_installed(self):
+        from unittest.mock import patch
+
         from continuum.cli import main
 
         with tempfile.TemporaryDirectory() as temporary:
             project = Path(temporary) / "repo"
             output = StringIO()
-            with redirect_stdout(output):
+            with (
+                patch("continuum.cli.installed_agents", return_value=[]),
+                redirect_stdout(output),
+            ):
                 self.assertEqual(main(["limits", "--project", str(project)]), 0)
-            self.assertTrue(output.getvalue())
+            self.assertIn("No agent CLIs installed", output.getvalue())
+
+    def test_the_limits_command_reports_a_known_agent(self):
+        from unittest.mock import patch
+
+        from continuum.cli import main
+
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            output = StringIO()
+            with (
+                patch("continuum.cli.installed_agents", return_value=["claude"]),
+                redirect_stdout(output),
+            ):
+                self.assertEqual(main(["limits", "--project", str(project)]), 0)
+            self.assertIn("claude", output.getvalue())
 
     def test_the_mcp_tool_reports_the_same_thing(self):
         from continuum.mcp_server import call_tool, tool_definitions
@@ -223,9 +333,18 @@ class CommandTest(unittest.TestCase):
         self.assertIn("get_agent_limits", names)
         tool = next(item for item in tool_definitions() if item["name"] == "get_agent_limits")
         self.assertIn("cannot report how much quota remains", tool["description"])
+        # A clean machine has no agent CLIs, so the report must still carry the
+        # disclaimer rather than depending on what happens to be on PATH.
+        from unittest.mock import patch
+
         with tempfile.TemporaryDirectory() as temporary:
-            text = call_tool(fresh(temporary), "get_agent_limits", {})["content"][0]["text"]
+            store = fresh(temporary)
+            with patch("continuum.agents.installed_agents", return_value=["claude"]):
+                text = call_tool(store, "get_agent_limits", {})["content"][0]["text"]
             self.assertIn("no way to ask", text)
+            with patch("continuum.agents.installed_agents", return_value=[]):
+                empty = call_tool(store, "get_agent_limits", {})["content"][0]["text"]
+            self.assertIn("no way to ask", empty)
 
 
 if __name__ == "__main__":
