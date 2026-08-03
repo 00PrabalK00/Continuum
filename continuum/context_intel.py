@@ -27,6 +27,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from .evidence import covered
+
 from .core import (
     IGNORE_DIRS,
     MemoryStore,
@@ -594,7 +596,13 @@ def score_intel(store: MemoryStore, task_ref: str | None = None, files: list[str
         if task:
             claimed = {lock["path"] for lock in task.get("locked_files", [])}
             if claimed:
-                out_of_scope = sorted(set(_changed_files(store)) - claimed)
+                # The same predicate evidence uses. Two answers to "is this file
+                # in scope" is worse than either answer alone: a flight record
+                # would show no risk at the top and an out-of-scope file in its
+                # score, from one set of facts.
+                out_of_scope = sorted(
+                    path for path in set(_changed_files(store)) if not covered(path, claimed)
+                )
 
     # Deterministic risk scoring.
     risk_points = 0

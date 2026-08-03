@@ -141,6 +141,25 @@ def _task_events(store: MemoryStore, task_id: str) -> list[dict[str, Any]]:
     return events
 
 
+def is_absolute(value: str) -> bool:
+    """Whether a recorded path is absolute rather than project-relative.
+
+    Stripping the leading separator before comparing would make `/src` and
+    `src` the same claim, so a claim pointing outside the project could
+    suppress the warning for an edit inside it.
+    """
+    text = value.replace("\\", "/")
+    return text.startswith("/") or (len(text) > 1 and text[1] == ":")
+
+
+def path_parts(value: str) -> list[str]:
+    """Path segments, separator-normalized, ignoring empties."""
+    text = value.replace("\\", "/")
+    if len(text) > 1 and text[1] == ":":
+        text = text[2:]
+    return [piece for piece in text.strip("/").split("/") if piece]
+
+
 def covered(path: str, claims: set[str]) -> bool:
     """Whether a changed file falls inside a claim.
 
@@ -153,13 +172,10 @@ def covered(path: str, claims: set[str]) -> bool:
     normalized so a claim recorded on Windows still matches a path reported by
     Git.
     """
-    def parts(value: str) -> list[str]:
-        return [piece for piece in value.replace("\\", "/").strip("/").split("/") if piece]
-
-    changed = parts(path)
+    changed = path_parts(path)
     for claim in claims:
-        wanted = parts(claim)
-        if wanted and changed[: len(wanted)] == wanted:
+        wanted = path_parts(claim)
+        if wanted and changed[: len(wanted)] == wanted and is_absolute(claim) == is_absolute(path):
             return True
     return False
 
