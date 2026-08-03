@@ -141,6 +141,29 @@ def _task_events(store: MemoryStore, task_id: str) -> list[dict[str, Any]]:
     return events
 
 
+def covered(path: str, claims: set[str]) -> bool:
+    """Whether a changed file falls inside a claim.
+
+    A lane is often claimed as a directory, so matching on the exact path alone
+    reported every nested file as an out-of-scope edit and put a risk on
+    evidence, flight records and ROI for work that was in scope all along.
+
+    Segment by segment rather than by string prefix, because `src` must cover
+    `src/app.py` without also covering `src-other/x.py`. Separators are
+    normalized so a claim recorded on Windows still matches a path reported by
+    Git.
+    """
+    def parts(value: str) -> list[str]:
+        return [piece for piece in value.replace("\\", "/").strip("/").split("/") if piece]
+
+    changed = parts(path)
+    for claim in claims:
+        wanted = parts(claim)
+        if wanted and changed[: len(wanted)] == wanted:
+            return True
+    return False
+
+
 def _risks(
     claimed_files: list[str],
     changed_files: list[str],
@@ -152,7 +175,7 @@ def _risks(
     risks: list[str] = []
     claim_set = set(claimed_files)
     if claim_set:
-        out_of_scope = sorted(path for path in changed_files if path not in claim_set)
+        out_of_scope = sorted(path for path in changed_files if not covered(path, claim_set))
         for path in out_of_scope:
             risks.append(f"Out-of-scope edit: `{path}` was changed but not claimed.")
     if test_gate["result"] != "PASS":
