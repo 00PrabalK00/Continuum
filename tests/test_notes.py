@@ -176,6 +176,66 @@ class ContextTest(unittest.TestCase):
             self.assertNotIn("decision number 0", store.resume_context("compact"))
 
 
+class ReachTest(unittest.TestCase):
+    """Four ways a typed claim can be recorded and never arrive."""
+
+    def prepared(self, temporary):
+        store = fresh(temporary)
+        record_progress(store, "renamed the payment client", "migrate callers")
+        notes.record(store, "decision", "chose PostgreSQL over MySQL")
+        notes.record(store, "fact", "the retry test asserts 3 attempts")
+        notes.record(store, "hypothesis", "it fails on the timeout")
+        return store
+
+    def test_every_mcp_context_tool_carries_the_claims(self):
+        # Reading over MCP is the path the integration instructions tell agents
+        # to use, and it had its own copy of the prefix that lacked them.
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.prepared(temporary)
+            for tool in ("get_startup_context", "get_current_state", "get_latest_handoff"):
+                text = call_tool(store, tool, {})["content"][0]["text"]
+                self.assertIn("chose PostgreSQL", text, tool)
+                self.assertIn("asserts 3 attempts", text, tool)
+                self.assertIn("not settled", text, tool)
+
+    def test_a_recorded_fact_reaches_the_agent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.prepared(temporary)
+            context = store.resume_context("compact")
+            self.assertIn("Observed:", context)
+            self.assertIn("asserts 3 attempts", context)
+
+    def test_a_claim_survives_a_thousand_later_events(self):
+        # A fixed window over the whole log silently drops older claims, and an
+        # old open hypothesis then cannot be confirmed or dropped either.
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            notes.record(store, "hypothesis", "the oldest open question")
+            oldest = notes.recent(store)[0]["id"]
+            for index in range(1_100):
+                store.event("agent_exit", {"summary": f"session {index}", "returncode": 0})
+            self.assertTrue(any(item["id"] == oldest for item in notes.recent(store)))
+            self.assertEqual(notes.resolve(store, oldest, notes.CONFIRMED)["state"], notes.CONFIRMED)
+
+    def test_a_new_branch_inherits_what_was_decided_before_it(self):
+        # switch() copies the task state forward, so hiding the decisions behind
+        # it leaves the new agent holding a conclusion without its reasoning.
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.prepared(temporary)
+            history.switch(store, "side")
+            context = notes.for_context(store)
+            self.assertIn("chose PostgreSQL", context)
+            self.assertIn("not settled", context)
+
+    def test_work_done_on_a_branch_stays_off_its_parent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = self.prepared(temporary)
+            history.switch(store, "side")
+            notes.record(store, "decision", "a side-only decision")
+            history.switch(store, "main")
+            self.assertNotIn("side-only", notes.for_context(store))
+
+
 class CommandTest(unittest.TestCase):
     def test_recording_says_a_hypothesis_stays_open(self):
         with tempfile.TemporaryDirectory() as temporary:

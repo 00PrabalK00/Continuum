@@ -319,13 +319,15 @@ def tool_definitions() -> list[dict[str, Any]]:
 
 
 def with_freshness(store: MemoryStore, text: str) -> str:
-    """Prefix how old the context is and how far the code has moved since."""
-    from .freshness import age_note, describe
+    """The same prefix resume_context puts on: age, drift and typed claims.
 
-    notes = [note for note in (age_note(store), describe(store)) if note]
-    if not notes or not text:
-        return text
-    return " ".join(notes) + "\n\n" + text
+    Through the store rather than reimplemented here. Two copies of "what goes
+    on the front of context" is how one of them ends up missing a piece, which
+    is exactly what happened: reading over MCP is the path the integration
+    instructions tell agents to use, and it was the path that lost recorded
+    decisions and open questions.
+    """
+    return store._with_drift(text)
 
 
 def call_tool(store: MemoryStore, name: str, arguments: dict[str, Any]) -> dict[str, Any]:

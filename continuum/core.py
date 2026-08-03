@@ -1574,6 +1574,28 @@ The planner role is preserving architecture intent and constraints while the exe
             for row in rows
         ]
 
+    def events_of_kind(self, kinds: tuple[str, ...], limit: int = 5_000) -> list[dict[str, Any]]:
+        """Every event of the given kinds, oldest first.
+
+        Selecting on kind rather than slicing the tail of the whole log, for the
+        same reason recent_handoffs does: a busy project records hundreds of
+        ordinary events between two interesting ones, so any fixed window over
+        everything silently drops the older ones.
+        """
+        if not self.db_file.exists() or not kinds:
+            return []
+        connection = self.connect()
+        rows = connection.execute(
+            "SELECT id, created_at, kind, payload FROM events "
+            f"WHERE kind IN ({','.join('?' for _ in kinds)}) ORDER BY id ASC LIMIT ?",
+            (*kinds, limit),
+        ).fetchall()
+        connection.close()
+        return [
+            {"id": row[0], "created_at": row[1], "kind": row[2], "payload": json.loads(row[3])}
+            for row in rows
+        ]
+
     def handoffs_mentioning(self, text: str) -> list[dict[str, Any]]:
         """Every handoff whose payload contains the text, oldest first.
 

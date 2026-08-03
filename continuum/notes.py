@@ -55,17 +55,49 @@ def record(store: "MemoryStore", kind: str, text: str, source: str = "cli") -> d
     return payload
 
 
+def ancestry(store: "MemoryStore", branch: str | None = None) -> list[tuple[str, int | None]]:
+    """Each branch a claim can be visible from, with the id it is visible up to.
+
+    A branch created after decisions were made inherits the task state it forked
+    from, so hiding the decisions and open questions belonging to that state
+    leaves the new agent holding the conclusion without the reasoning. It sees
+    its own branch without limit, and each ancestor only up to the point it
+    forked, which is what keeps later work on the parent out of it.
+    """
+    from .history import fork_point
+
+    seen: list[tuple[str, int | None]] = []
+    current = branch or store.current_branch()
+    ceiling: int | None = None
+    for _ in range(20):  # a cycle in recorded branch parents must not hang this
+        if any(name == current for name, _ in seen):
+            break
+        seen.append((current, ceiling))
+        start = fork_point(store, current)
+        parent = str((start or {}).get("payload", {}).get("branched_from") or "") if start else ""
+        if not parent:
+            break
+        ceiling = start["id"]
+        current = parent
+    return seen
+
+
 def recent(store: "MemoryStore", limit: int = 200) -> list[dict[str, Any]]:
-    """Claims on the current branch, newest first, with their resolutions applied."""
-    branch = store.current_branch()
+    """Claims visible from the current branch, newest first, resolutions applied."""
+    visible = {name: ceiling for name, ceiling in ancestry(store)}
     found, resolutions = [], {}
-    for item in store.recent_events(1_000):
+    for item in store.events_of_kind(("claim", "claim_resolved")):
         payload = item.get("payload") or {}
-        if item.get("kind") == "claim_resolved":
+        if item["kind"] == "claim_resolved":
             resolutions[int(payload.get("claim_id", 0))] = payload.get("state")
-        elif item.get("kind") == "claim":
-            if (payload.get("branch") or store.DEFAULT_BRANCH) == branch:
-                found.append({"id": item["id"], "created_at": item["created_at"], **payload})
+            continue
+        branch = payload.get("branch") or store.DEFAULT_BRANCH
+        if branch not in visible:
+            continue
+        ceiling = visible[branch]
+        if ceiling is not None and item["id"] > ceiling:
+            continue
+        found.append({"id": item["id"], "created_at": item["created_at"], **payload})
     for item in found:
         if item["id"] in resolutions:
             item["state"] = resolutions[item["id"]]
@@ -106,6 +138,10 @@ def decisions(store: "MemoryStore") -> list[dict[str, Any]]:
     return [item for item in recent(store) if item["type"] == "decision"]
 
 
+def facts(store: "MemoryStore") -> list[dict[str, Any]]:
+    return [item for item in recent(store) if item["type"] == "fact"]
+
+
 def render(store: "MemoryStore") -> str:
     found = recent(store)
     if not found:
@@ -132,6 +168,12 @@ def for_context(store: "MemoryStore", limit: int = 3) -> str:
     settled = decisions(store)[:limit]
     if settled:
         parts.append("Decisions: " + "; ".join(item["text"] for item in settled))
+    observed = facts(store)[:limit]
+    if observed:
+        # A recorded fact has to reach the next session, or `continuum note
+        # fact` promises something it does not do. Labelled rather than folded
+        # into the surrounding prose, since the labelling is the point.
+        parts.append("Observed: " + "; ".join(item["text"] for item in observed))
     questions = open_questions(store)[:limit]
     if questions:
         parts.append(
