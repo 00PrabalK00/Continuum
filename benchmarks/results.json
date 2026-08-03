@@ -12,8 +12,14 @@
   "context_tokens": {
     "raw_history": 1710,
     "compact": 109,
-    "normal": 426,
-    "deep": 601
+    "normal": 417,
+    "deep": 584,
+    "characters": {
+      "raw_history": 6837,
+      "compact": 436,
+      "normal": 1668,
+      "deep": 2334
+    }
   },
   "fidelity": {
     "claude/injected": {
@@ -24,13 +30,15 @@
       "score_sd": 0.0,
       "accuracy_pct": 100.0,
       "accuracy_ci95": [
-        100.0,
+        97.5,
         100.0
       ],
-      "seconds_mean": 5.0,
-      "seconds_median": 4.9,
+      "seconds_mean": 5.8,
+      "seconds_median": 5.5,
+      "seconds_max": 8.6,
+      "timing_suspect": false,
       "prompt_tokens": 395,
-      "reply_tokens_mean": 16.2,
+      "reply_tokens_mean": 16.1,
       "per_probe_pct": {
         "class": 100.0,
         "count": 100.0,
@@ -43,19 +51,21 @@
     },
     "claude/files_only": {
       "runs": 30,
-      "completed": 29,
-      "completion_pct": 96.7,
+      "completed": 30,
+      "completion_pct": 100.0,
       "score_mean": 5,
       "score_sd": 0.0,
       "accuracy_pct": 100.0,
       "accuracy_ci95": [
-        100.0,
+        97.5,
         100.0
       ],
-      "seconds_mean": 13.4,
-      "seconds_median": 14.0,
+      "seconds_mean": 16.4,
+      "seconds_median": 17.1,
+      "seconds_max": 25.3,
+      "timing_suspect": false,
       "prompt_tokens": 156,
-      "reply_tokens_mean": 17.0,
+      "reply_tokens_mean": 17.1,
       "per_probe_pct": {
         "class": 100.0,
         "count": 100.0,
@@ -64,31 +74,31 @@
         "owner": 100.0
       },
       "missed": [],
-      "errors": [
-        "Command '['C:\\\\Users\\\\Prabal\\\\AppData\\\\Local\\\\Microsoft\\\\WinGet\\\\Packages\\\\Anthropic.ClaudeCode_Microsoft.Winget.Source_"
-      ]
+      "errors": []
     },
     "claude/no_memory": {
       "runs": 30,
       "completed": 30,
       "completion_pct": 100.0,
-      "score_mean": 0.9,
-      "score_sd": 0.3,
-      "accuracy_pct": 18.0,
+      "score_mean": 0.87,
+      "score_sd": 0.34,
+      "accuracy_pct": 17.3,
       "accuracy_ci95": [
-        15.33,
-        20.0
+        12.11,
+        24.19
       ],
-      "seconds_mean": 19.9,
-      "seconds_median": 19.8,
+      "seconds_mean": 21.4,
+      "seconds_median": 21.4,
+      "seconds_max": 29.2,
+      "timing_suspect": false,
       "prompt_tokens": 156,
-      "reply_tokens_mean": 69.3,
+      "reply_tokens_mean": 66.4,
       "per_probe_pct": {
         "class": 0.0,
         "count": 0.0,
         "file": 0.0,
         "headroom": 0.0,
-        "owner": 90.0
+        "owner": 86.7
       },
       "missed": [
         "class",
@@ -107,13 +117,42 @@
       "score_sd": 0.0,
       "accuracy_pct": 100.0,
       "accuracy_ci95": [
-        100.0,
+        97.5,
         100.0
       ],
-      "seconds_mean": 18.9,
-      "seconds_median": 17.9,
+      "seconds_mean": 22.3,
+      "seconds_median": 22.9,
+      "seconds_max": 30.0,
+      "timing_suspect": false,
       "prompt_tokens": 395,
-      "reply_tokens_mean": 16,
+      "reply_tokens_mean": 16.4,
+      "per_probe_pct": {
+        "class": 100.0,
+        "count": 100.0,
+        "file": 100.0,
+        "headroom": 100.0,
+        "owner": 100.0
+      },
+      "missed": [],
+      "errors": []
+    },
+    "codex/files_only": {
+      "runs": 30,
+      "completed": 30,
+      "completion_pct": 100.0,
+      "score_mean": 5,
+      "score_sd": 0.0,
+      "accuracy_pct": 100.0,
+      "accuracy_ci95": [
+        97.5,
+        100.0
+      ],
+      "seconds_mean": 38.4,
+      "seconds_median": 29.9,
+      "seconds_max": 92.5,
+      "timing_suspect": false,
+      "prompt_tokens": 156,
+      "reply_tokens_mean": 16.7,
       "per_probe_pct": {
         "class": 100.0,
         "count": 100.0,
@@ -126,17 +165,19 @@
     },
     "codex/no_memory": {
       "runs": 30,
-      "completed": 29,
-      "completion_pct": 96.7,
+      "completed": 30,
+      "completion_pct": 100.0,
       "score_mean": 1,
       "score_sd": 0.0,
       "accuracy_pct": 20.0,
       "accuracy_ci95": [
-        20.0,
-        20.0
+        14.38,
+        27.11
       ],
-      "seconds_mean": 131.0,
-      "seconds_median": 106.7,
+      "seconds_mean": 100.7,
+      "seconds_median": 94.5,
+      "seconds_max": 145.5,
+      "timing_suspect": false,
       "prompt_tokens": 156,
       "reply_tokens_mean": 14,
       "per_probe_pct": {
@@ -152,35 +193,6 @@
         "file",
         "headroom"
       ],
-      "errors": [
-        "Command '['C:\\\\Users\\\\Prabal\\\\AppData\\\\Local\\\\Programs\\\\OpenAI\\\\Codex\\\\bin\\\\codex.EXE', 'exec', 'Answer these five quest"
-      ]
-    },
-    "codex/files_only": {
-      "runs": 30,
-      "completed": 30,
-      "completion_pct": 100.0,
-      "score_mean": 5,
-      "score_sd": 0.0,
-      "accuracy_pct": 100.0,
-      "accuracy_ci95": [
-        100.0,
-        100.0
-      ],
-      "seconds_mean": 35.0,
-      "seconds_median": 30.6,
-      "seconds_max": 62.1,
-      "timing_suspect": false,
-      "prompt_tokens": 156,
-      "reply_tokens_mean": 17.1,
-      "per_probe_pct": {
-        "class": 100.0,
-        "count": 100.0,
-        "file": 100.0,
-        "headroom": 100.0,
-        "owner": 100.0
-      },
-      "missed": [],
       "errors": []
     }
   },
@@ -323,11 +335,13 @@
       "score_sd": 0.0,
       "accuracy_pct": 100.0,
       "accuracy_ci95": [
-        100.0,
+        88.65,
         100.0
       ],
-      "seconds_mean": 4.9,
-      "seconds_median": 4.7,
+      "seconds_mean": 5.2,
+      "seconds_median": 5.1,
+      "seconds_max": 7.3,
+      "timing_suspect": false,
       "prompt_tokens": 246,
       "reply_tokens_mean": 1,
       "per_probe_pct": {
@@ -344,11 +358,13 @@
       "score_sd": 0.0,
       "accuracy_pct": 100.0,
       "accuracy_ci95": [
-        100.0,
+        88.65,
         100.0
       ],
-      "seconds_mean": 17.5,
+      "seconds_mean": 17.4,
       "seconds_median": 17.2,
+      "seconds_max": 21.9,
+      "timing_suspect": false,
       "prompt_tokens": 246,
       "reply_tokens_mean": 1,
       "per_probe_pct": {

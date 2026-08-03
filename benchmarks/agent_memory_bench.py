@@ -278,16 +278,24 @@ def context_sizes(store: MemoryStore) -> dict:
     raw = "\n".join(
         json.dumps(item, ensure_ascii=True) for item in store.recent_events(200)
     )
-    sizes = {"raw_history": estimate_tokens(raw)}
+    # The handoff file records the absolute project path, so the measured size
+    # of the normal and deep modes moved with the length of the temporary
+    # directory: 427 tokens under one name and 436 under a longer one. That is a
+    # fact about where the benchmark ran, not about how much context Continuum
+    # produces, and it made two of the four published figures unreproducible.
+    def measured(text: str) -> str:
+        return text.replace(str(store.project), "<project>")
+
+    sizes = {"raw_history": estimate_tokens(measured(raw))}
     for mode in ("compact", "normal", "deep"):
-        sizes[mode] = estimate_tokens(store.resume_context(mode))
+        sizes[mode] = estimate_tokens(measured(store.resume_context(mode)))
     # Characters as well, because they are exact. estimate_tokens divides by
     # four, so the token figures are an estimate and should be published as one.
     # The ratio between two of them is unaffected, since the same divisor is on
     # both sides.
     sizes["characters"] = {
-        "raw_history": len(raw),
-        **{mode: len(store.resume_context(mode)) for mode in ("compact", "normal", "deep")},
+        "raw_history": len(measured(raw)),
+        **{mode: len(measured(store.resume_context(mode))) for mode in ("compact", "normal", "deep")},
     }
     return sizes
 

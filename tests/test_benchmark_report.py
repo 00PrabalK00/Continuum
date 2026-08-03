@@ -361,6 +361,21 @@ class ReadmeGenerationTest(unittest.TestCase):
         self.assertIn(reporter.README_START, text)
         self.assertIn(reporter.README_END, text)
 
+    def test_a_run_without_character_counts_does_not_print_zero(self):
+        section = reporter.readme_section(run(
+            context_tokens={"raw_history": 1000, "compact": 100}
+        ))
+        self.assertNotIn("0 characters", section)
+        self.assertIn("about 100 tokens", section)
+
+    def test_characters_lead_when_they_were_recorded(self):
+        section = reporter.readme_section(run(context_tokens={
+            "raw_history": 1000, "compact": 100,
+            "characters": {"raw_history": 4000, "compact": 400},
+        }))
+        self.assertIn("400 characters", section)
+        self.assertIn("4,000", section)
+
     def test_the_context_saving_is_computed_rather_than_quoted(self):
         section = reporter.readme_section(run(
             context_tokens={"raw_history": 1000, "compact": 100}

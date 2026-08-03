@@ -242,5 +242,31 @@ class SuspendedTrialTest(unittest.TestCase):
         self.assertFalse(bench.summarize(self.rows(40))["timing_suspect"])
 
 
+class ContextSizeTest(unittest.TestCase):
+    """The handoff file records the absolute project path, so two of the four
+    published context figures moved with the length of the temporary directory:
+    427 tokens under a short name and 436 under a long one."""
+
+    def sizes(self, name):
+        with tempfile.TemporaryDirectory() as temporary:
+            return bench.context_sizes(bench.build_project(Path(temporary) / name))
+
+    def test_the_sizes_do_not_depend_on_where_the_project_sits(self):
+        short = self.sizes("p")
+        long = self.sizes("a-much-longer-project-directory-name")
+        for mode in ("raw_history", "compact", "normal", "deep"):
+            self.assertEqual(short[mode], long[mode], mode)
+
+    def test_exact_characters_are_recorded_alongside_the_estimate(self):
+        sizes = self.sizes("p")
+        for mode in ("raw_history", "compact", "normal", "deep"):
+            self.assertIn(mode, sizes["characters"])
+            self.assertGreater(sizes["characters"][mode], sizes[mode])
+
+    def test_compact_is_smaller_than_the_raw_history_it_replaces(self):
+        sizes = self.sizes("p")
+        self.assertLess(sizes["compact"], sizes["raw_history"])
+
+
 if __name__ == "__main__":
     unittest.main()

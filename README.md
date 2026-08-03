@@ -140,17 +140,19 @@ continuum agent list
 <!-- benchmark-results:start -->
 
 Measured against real agent CLIs, 30 trials per cell, on a project whose
-recorded state we control. The interval is a 95% percentile bootstrap.
+recorded state we control. The interval is a 95% Wilson score interval.
 
 | Arm | claude | codex |
 | --- | --- | --- |
-| Continuum injects the context | 100% (100 to 100) | 100% (100 to 100) |
-| No injection, the agent reads `.continuum/` itself | 100% (100 to 100) | 100% (100 to 100) |
-| No project memory at all | 18% (15 to 20) | 20% (20 to 20) |
+| Continuum injects the context | 100% (98 to 100) | 100% (98 to 100) |
+| No injection, the agent reads `.continuum/` itself | 100% (98 to 100) | 100% (98 to 100) |
+| No project memory at all | 17% (12 to 24) | 20% (14 to 27) |
 
-Compact context for that project is 109 tokens against 1,710 of raw
-event history, 94% smaller. That figure needs no agent and no API key,
-so it can be checked in seconds.
+Compact context for that project is 436 characters against 6,837 of
+raw event history, 94% smaller. That is roughly 109 tokens against 1,710,
+though the token figures are characters divided by four rather than real
+tokenization, so the ratio is the exact part. It needs no agent and no API
+key, and can be checked in seconds.
 
 The middle row is the uncomfortable one, and it stays in the table. An agent
 left to open `.continuum/` itself answers just as well, so recording the
@@ -158,9 +160,9 @@ context is what produces the accuracy. Injecting it is what makes it fast:
 
 | Arm | claude | codex |
 | --- | --- | --- |
-| Continuum injects the context | 4.9s | 17.9s |
-| No injection, the agent reads `.continuum/` itself | 14.0s | 30.6s |
-| No project memory at all | 19.8s | 106.7s |
+| Continuum injects the context | 5.5s | 22.9s |
+| No injection, the agent reads `.continuum/` itself | 17.1s | 29.9s |
+| No project memory at all | 21.4s | 94.5s |
 
 [docs/benchmarks.md](docs/benchmarks.md) has the method, the per-probe
 breakdown, what this does not measure, and the faults this benchmark has had.

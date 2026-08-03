@@ -400,6 +400,32 @@ README_START = "<!-- benchmark-results:start -->"
 README_END = "<!-- benchmark-results:end -->"
 
 
+def context_sentence(sizes: dict, chars: dict, saved: float) -> list[str]:
+    """The size claim, leading with whatever is exact.
+
+    Characters are measured; tokens are characters divided by four. A run that
+    recorded no character counts must not have them rendered as zero, which is
+    how a missing measurement becomes a stated one.
+    """
+    if chars.get("compact") and chars.get("raw_history"):
+        return [
+            f"Compact context for that project is {chars['compact']:,} characters "
+            f"against {chars['raw_history']:,} of",
+            f"raw event history, {saved:.0f}% smaller. That is roughly "
+            f"{sizes['compact']:,} tokens against {sizes['raw_history']:,},",
+            "though the token figures are characters divided by four rather than real",
+            "tokenization, so the ratio is the exact part. It needs no agent and no API",
+            "key, and can be checked in seconds.",
+        ]
+    return [
+        f"Compact context for that project is about {sizes['compact']:,} tokens "
+        f"against {sizes['raw_history']:,}",
+        f"of raw event history, {saved:.0f}% smaller. The token figures are characters",
+        "divided by four rather than real tokenization, so the ratio is the exact",
+        "part. It needs no agent and no API key, and can be checked in seconds.",
+    ]
+
+
 def readme_section(report: dict) -> str:
     """The README's results block, generated from the same run as the full page.
 
@@ -418,13 +444,11 @@ def readme_section(report: dict) -> str:
         accuracy_table(report),
         "",
     ]
+    chars = sizes.get("characters") or {}
     if sizes.get("raw_history") and sizes.get("compact"):
         saved = 100 - 100 * sizes["compact"] / sizes["raw_history"]
         lines += [
-            f"Compact context for that project is {sizes['compact']:,} tokens against "
-            f"{sizes['raw_history']:,} of raw",
-            f"event history, {saved:.0f}% smaller. That figure needs no agent and no API key,",
-            "so it can be checked in seconds.",
+            *context_sentence(sizes, chars, saved),
             "",
         ]
     lines += [
