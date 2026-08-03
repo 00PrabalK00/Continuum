@@ -1484,22 +1484,68 @@ The planner role is preserving architecture intent and constraints while the exe
             text = compact_text(text, CONTEXT_BUDGETS[mode] * 4)
         return {"role": role, "mode": mode, "estimated_tokens": estimate_tokens(text), "text": text}
 
-    def recent_handoffs(self, limit: int = 30) -> list[dict[str, Any]]:
-        """Recent handoff events, newest first.
+    DEFAULT_BRANCH = "main"
+
+    @property
+    def branch_file(self) -> Path:
+        return self.state_dir / "branch"
+
+    def current_branch(self) -> str:
+        """The context line checkpoints are recorded on and read from."""
+        if self.branch_file.exists():
+            name = self.branch_file.read_text(encoding="utf-8").strip()
+            if name:
+                return name
+        return self.DEFAULT_BRANCH
+
+    def set_branch(self, name: str) -> None:
+        write_text(self.branch_file, name.strip() + "\n")
+
+    def branches(self) -> list[str]:
+        """Every branch that has a checkpoint, plus the current one."""
+        found = {self.current_branch(), self.DEFAULT_BRANCH}
+        if self.db_file.exists():
+            connection = self.connect()
+            rows = connection.execute(
+                "SELECT DISTINCT COALESCE(json_extract(payload, '$.branch'), ?) "
+                "FROM events WHERE kind = 'handoff'",
+                (self.DEFAULT_BRANCH,),
+            ).fetchall()
+            connection.close()
+            found.update(row[0] for row in rows if row[0])
+        return sorted(found)
+
+    def recent_handoffs(self, limit: int = 30, branch: str | None = None,
+                        every_branch: bool = False) -> list[dict[str, Any]]:
+        """Recent handoff events on one branch, newest first.
 
         Selecting on kind rather than slicing the tail of the event log matters
         because a busy project can record hundreds of ordinary events between
         two handoffs, which would push the earlier handoff out of any fixed
         window over all events.
+
+        Scoped to the current branch by default, so every existing caller reads
+        the line it is working on rather than a mixture of everyone's. A project
+        that never branches records nothing but the default, and behaves exactly
+        as before. Checkpoints written before branches existed have no branch
+        recorded and belong to the default one.
         """
         if not self.db_file.exists():
             return []
         connection = self.connect()
-        rows = connection.execute(
-            "SELECT id, created_at, kind, payload FROM events WHERE kind = 'handoff' "
-            "ORDER BY id DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
+        if every_branch:
+            rows = connection.execute(
+                "SELECT id, created_at, kind, payload FROM events WHERE kind = 'handoff' "
+                "ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                "SELECT id, created_at, kind, payload FROM events WHERE kind = 'handoff' "
+                "AND COALESCE(json_extract(payload, '$.branch'), ?) = ? "
+                "ORDER BY id DESC LIMIT ?",
+                (self.DEFAULT_BRANCH, branch or self.current_branch(), limit),
+            ).fetchall()
         connection.close()
         return [
             {"id": row[0], "created_at": row[1], "kind": row[2], "payload": json.loads(row[3])}
@@ -1558,15 +1604,20 @@ The planner role is preserving architecture intent and constraints while the exe
         return seen
 
     def latest_task(self) -> tuple[str, str | None] | None:
+        """The newest recorded task on the current branch.
+
+        Through recent_handoffs rather than the last hundred events of any kind,
+        so that a burst of ordinary activity cannot push the handoff out of the
+        window, and so that this follows the branch like every other read.
+        """
         fallback: tuple[str, str | None] | None = None
-        for item in reversed(self.recent_events(100)):
-            if item["kind"] == "handoff":
-                task = item["payload"].get("task", "")
-                latest = (task, item["payload"].get("next_step"))
-                if fallback is None:
-                    fallback = latest
-                if not self.is_synthetic_task(task):
-                    return latest
+        for item in self.recent_handoffs(60):
+            task = item["payload"].get("task", "")
+            latest = (task, item["payload"].get("next_step"))
+            if fallback is None:
+                fallback = latest
+            if not self.is_synthetic_task(task):
+                return latest
         return fallback
 
     @staticmethod

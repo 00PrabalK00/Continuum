@@ -123,7 +123,8 @@ def handoff(args: argparse.Namespace) -> int:
     if not store.config_file.exists():
         store.initialize(DEFAULT_CONTEXT_LIMIT, DEFAULT_THRESHOLD)
     store.event("handoff", {"task": args.task, "next_step": args.next_step,
-                            "commit": freshness.head_sha(store.project)})
+                            "commit": freshness.head_sha(store.project),
+                            "branch": store.current_branch()})
     store.write_handoff(args.task, args.next_step)
     print(f"Wrote: {store.state_dir / 'latest_handoff.md'}")
     if store.notes_dir:
@@ -303,7 +304,8 @@ def finalize_handoff(
     store.event(
         "handoff",
         {"task": task, "next_step": next_step, "base_next_step": base_next,
-         "session": session_id, "commit": freshness.head_sha(store.project)},
+         "session": session_id, "commit": freshness.head_sha(store.project),
+         "branch": store.current_branch()},
     )
     store.write_handoff(task, next_step)
     print(f"Saved: {task}")
@@ -629,6 +631,53 @@ def checkpoint_diff(args: argparse.Namespace) -> int:
     return 0
 
 
+def context_branch(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    current = store.current_branch()
+    if not args.name:
+        for name in store.branches():
+            recent = store.recent_handoffs(1, branch=name)
+            task = history.one_line(history.field(recent[0], "task")) if recent else "nothing recorded yet"
+            marker = "*" if name == current else " "
+            print(f"{marker} {name:<16} {task}")
+        return 0
+    name = args.name.strip()
+    if not name:
+        raise SystemExit("Give the branch a name.")
+    if name == current:
+        print(f"Already on branch {name}.")
+        return 0
+    moved = history.switch(store, name)
+    if moved["created"]:
+        print(f"Started branch {name} from {moved['from']}.")
+    else:
+        print(f"On branch {name}.")
+    latest = moved["latest"]
+    if latest:
+        print(f"Task: {latest[0]}")
+        if latest[1]:
+            print(f"Next: {latest[1]}")
+    else:
+        print("Nothing recorded on it yet.")
+    return 0
+
+
+def context_merge(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    try:
+        merged = history.merge(store, args.branch.strip(), force=args.theirs)
+    except history.MergeConflict as clash:
+        print(str(clash))
+        return 1
+    print(f"Merged {merged['from']} into {merged['branch']}.")
+    print(f"Task: {merged['task']}")
+    if merged["next_step"]:
+        print(f"Next: {merged['next_step']}")
+    if merged["resolved"]:
+        print(f"Took {merged['from']} for: {', '.join(merged['resolved'])}.")
+    return 0
+
+
 def checkpoint_blame(args: argparse.Namespace) -> int:
     text = " ".join(args.text).strip()
     if not text:
@@ -661,7 +710,9 @@ def quick_status(args: argparse.Namespace) -> int:
         print("Start: continuum go        (auto-initializes and opens an agent)")
         print("Paste into a web chat instead: continuum copy")
         return 0
-    print(f"Continuum - {project_name}")
+    branch = store.current_branch()
+    suffix = "" if branch == store.DEFAULT_BRANCH else f" [{branch}]"
+    print(f"Continuum - {project_name}{suffix}")
     latest = store.latest_task()
     if latest:
         print(f"Task: {latest[0]}")
@@ -778,7 +829,8 @@ def hook_session_end(args: argparse.Namespace) -> int:
     if not task:
         return 0
     store.event("handoff", {"task": task[0], "next_step": task[1], "source": "session_end",
-                            "commit": freshness.head_sha(store.project)})
+                            "commit": freshness.head_sha(store.project),
+                            "branch": store.current_branch()})
     store.write_handoff(*task)
     return 0
 
@@ -2528,6 +2580,22 @@ def parser(collapse: bool = True) -> argparse.ArgumentParser:
     show_diff.add_argument("older", nargs="?", help="Checkpoint id, for example C6. Defaults to the one before newest.")
     show_diff.add_argument("newer", nargs="?", help="Checkpoint id. Defaults to the newest.")
     show_diff.set_defaults(func=checkpoint_diff)
+
+    branches = commands.add_parser(
+        "branch", parents=[common],
+        help="List context branches, or switch to one. Creates it if new.",
+    )
+    branches.add_argument("name", nargs="?", help="Branch to switch to. Omit to list.")
+    branches.set_defaults(func=context_branch)
+
+    do_merge = commands.add_parser(
+        "merge", parents=[common],
+        help="Bring another branch's context onto this one, or report the conflict.",
+    )
+    do_merge.add_argument("branch", help="Branch to merge from.")
+    do_merge.add_argument("--theirs", action="store_true",
+                          help="On a conflict, take the other branch rather than stopping.")
+    do_merge.set_defaults(func=context_merge)
 
     show_blame = commands.add_parser(
         "blame", parents=[common],

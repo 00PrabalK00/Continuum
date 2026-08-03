@@ -103,10 +103,134 @@ def restore(store: "MemoryStore", wanted: dict[str, Any]) -> dict[str, str]:
             "source": "restore",
             "restored_from": wanted["id"],
             "commit": head_sha(store.project),
+            "branch": store.current_branch(),
         },
     )
     store.write_handoff(task, next_step or None)
     return {"task": task, "next_step": next_step}
+
+
+def switch(store: "MemoryStore", name: str) -> dict[str, Any]:
+    """Move to a branch, and make the files an agent reads follow it.
+
+    `current.md` and `latest_handoff.md` are what a launched agent is actually
+    given. Changing only the recorded branch would leave those holding the
+    previous branch's work, so `continuum go` would hand over the wrong context
+    while the status card claimed otherwise.
+
+    A branch that does not exist yet starts from where you are, the way `git
+    branch` points at the current commit. That start is recorded as a checkpoint
+    on the new branch rather than inferred later, so the branch has a readable
+    head from the moment it exists.
+    """
+    known = store.branches()
+    previous = store.current_branch()
+    inherited = store.latest_task()
+    store.set_branch(name)
+    created = name not in known
+    if created and inherited:
+        store.event(
+            "handoff",
+            {
+                "task": inherited[0],
+                "next_step": inherited[1],
+                "base_next_step": inherited[1],
+                "source": "branch",
+                "branched_from": previous,
+                "commit": head_sha(store.project),
+                "branch": name,
+            },
+        )
+    latest = store.latest_task()
+    if latest:
+        store.write_handoff(latest[0], latest[1])
+    return {"branch": name, "created": created, "from": previous, "latest": latest}
+
+
+class MergeConflict(HistoryError):
+    """Two branches changed the same thing since they diverged."""
+
+    def __init__(self, report: str, fields: list[str]) -> None:
+        super().__init__(report)
+        self.fields = fields
+
+
+def fork_point(store: "MemoryStore", branch: str) -> dict[str, Any] | None:
+    """The checkpoint a branch started from, if it recorded one."""
+    for item in reversed(store.recent_handoffs(500, branch=branch)):
+        if field(item, "source") == "branch":
+            return item
+    return None
+
+
+def merge(store: "MemoryStore", other: str, force: bool = False) -> dict[str, Any]:
+    """Bring another branch's state onto this one, or refuse and say why.
+
+    Last write wins is what Continuum did before, and it is the behaviour a
+    version control system exists to refuse: two agents assert different things
+    and the newer one silently erases the older. So this compares both sides
+    against the point they diverged, and where both moved the same field it
+    stops and prints them rather than picking.
+
+    A field only one side changed is taken without asking, which is the ordinary
+    case and needs no ceremony.
+    """
+    current = store.current_branch()
+    if other == current:
+        raise HistoryError(f"{other} is the current branch.")
+    if other not in store.branches():
+        raise HistoryError(f"No branch {other}. `continuum branch` lists them.")
+    theirs = store.recent_handoffs(1, branch=other)
+    if not theirs:
+        raise HistoryError(f"Branch {other} has no checkpoints to merge.")
+    theirs = theirs[0]
+    ours = store.recent_handoffs(1, branch=current)
+    ours = ours[0] if ours else None
+    base = fork_point(store, other) or fork_point(store, current)
+
+    taken, clashes = {}, []
+    for name in ("task", "next_step"):
+        mine = field(ours, name) if ours else ""
+        yours = field(theirs, name)
+        origin = field(base, name) if base else ""
+        if mine == yours:
+            taken[name] = yours
+        elif mine == origin:
+            taken[name] = yours
+        elif yours == origin:
+            taken[name] = mine
+        else:
+            clashes.append((name, mine, yours))
+            taken[name] = yours if force else mine
+
+    if clashes and not force:
+        lines = [f"{other} and {current} both changed the same thing since they diverged."]
+        for name, mine, yours in clashes:
+            heading = "Task" if name == "task" else "Next step"
+            lines += ["", heading, f"  {current}: {mine}", f"  {other}: {yours}"]
+        lines += [
+            "",
+            "Nothing was recorded. Decide which is right and save it, or re-run",
+            f"with --theirs to take {other}.",
+        ]
+        raise MergeConflict("\n".join(lines), [name for name, _, _ in clashes])
+
+    store.event(
+        "handoff",
+        {
+            "task": taken["task"],
+            "next_step": taken["next_step"] or None,
+            "base_next_step": taken["next_step"] or None,
+            "source": "merge",
+            "merged_from": other,
+            "merged_checkpoint": theirs["id"],
+            "resolved": [name for name, _, _ in clashes] or None,
+            "commit": head_sha(store.project),
+            "branch": current,
+        },
+    )
+    store.write_handoff(taken["task"], taken["next_step"] or None)
+    return {"branch": current, "from": other, "resolved": [n for n, _, _ in clashes], **taken}
 
 
 def mentions(item: dict[str, Any], text: str) -> bool:

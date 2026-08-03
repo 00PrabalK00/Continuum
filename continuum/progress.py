@@ -113,6 +113,7 @@ def record_progress(
             # What the code looked like when this was written, so a later read
             # can say how far it has drifted instead of presenting it as current.
             "commit": head_sha(store.project),
+            "branch": store.current_branch(),
         },
     )
     store.write_handoff(task, next_step or None)
