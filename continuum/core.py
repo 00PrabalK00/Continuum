@@ -852,6 +852,8 @@ The planner role is preserving architecture intent and constraints while the exe
             raise ValueError(f"Unknown task: {task_ref}")
         if task["status"] in FINAL_TASK_STATUSES:
             raise ValueError(f"Cannot claim files for final task: {task_ref}")
+        from .evidence import is_absolute, path_parts
+
         normalized = []
         for path in files:
             if not path.strip():
@@ -859,6 +861,14 @@ The planner role is preserving architecture intent and constraints while the exe
             value = str(Path(path).as_posix())
             while value.startswith("./"):
                 value = value[2:]
+            # An absolute claim cannot be compared with the project-relative
+            # paths Git reports, and accepting one would let a claim outside the
+            # project appear to cover an edit inside it.
+            if is_absolute(value):
+                raise ValueError(
+                    f"Claim paths are relative to the project: {path}. "
+                    "Use src/app.py rather than an absolute path."
+                )
             normalized.append(value)
         normalized = sorted(set(normalized))
         if not normalized:
@@ -869,14 +879,26 @@ The planner role is preserving architecture intent and constraints while the exe
                 raise ValueError(f"File denied by policy and cannot be claimed: {path}")
         connection = self.connect()
         task_id = self.parse_task_ref(task_ref)
-        conflicts = connection.execute(
-            f"SELECT path, task_id, agent FROM file_locks WHERE path IN ({','.join('?' for _ in normalized)}) AND task_id != ?",
-            (*normalized, task_id),
+        # Exact matches are not the whole conflict. A claim on a directory owns
+        # everything beneath it, so `src` and `src/app.py` held by two tasks
+        # would let both present the same file as in scope, which is the
+        # exclusive-claim model gone.
+        existing = connection.execute(
+            "SELECT path, task_id, agent FROM file_locks WHERE task_id != ?", (task_id,)
         ).fetchall()
-        if conflicts:
-            connection.close()
-            path, owner_id, owner_agent = conflicts[0]
-            raise ValueError(f"File already claimed: {path} by {self.task_ref(owner_id)} ({owner_agent})")
+        for path in normalized:
+            wanted = path_parts(path)
+            for other, owner_id, owner_agent in existing:
+                theirs = path_parts(other)
+                shorter, longer = sorted((wanted, theirs), key=len)
+                if shorter and longer[: len(shorter)] == shorter:
+                    connection.close()
+                    relation = "is already claimed" if other == path else (
+                        f"overlaps `{other}`, which is claimed"
+                    )
+                    raise ValueError(
+                        f"File {relation} by {self.task_ref(owner_id)} ({owner_agent}): {path}"
+                    )
         now = utc_now()
         for path in normalized:
             connection.execute(
