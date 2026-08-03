@@ -107,6 +107,24 @@ def tool_definitions() -> list[dict[str, Any]]:
             },
         },
         {
+            "name": "record_claim",
+            "description": (
+                "Record something as a decision, a hypothesis or a fact, so the next session "
+                "knows which it is. Use decision for a choice that stands, hypothesis for "
+                "something you believe but have not confirmed, and fact for something you "
+                "observed. A hypothesis stays open until confirmed or dropped, and open ones "
+                "are shown to later sessions as unsettled rather than as established."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "type": {"type": "string", "enum": ["decision", "hypothesis", "fact"]},
+                    "text": {"type": "string"},
+                },
+                "required": ["type", "text"],
+            },
+        },
+        {
             "name": "get_open_tasks",
             "description": "List non-final controlled tasks in this project.",
             "inputSchema": {"type": "object", "properties": {}},
@@ -301,13 +319,15 @@ def tool_definitions() -> list[dict[str, Any]]:
 
 
 def with_freshness(store: MemoryStore, text: str) -> str:
-    """Prefix how old the context is and how far the code has moved since."""
-    from .freshness import age_note, describe
+    """The same prefix resume_context puts on: age, drift and typed claims.
 
-    notes = [note for note in (age_note(store), describe(store)) if note]
-    if not notes or not text:
-        return text
-    return " ".join(notes) + "\n\n" + text
+    Through the store rather than reimplemented here. Two copies of "what goes
+    on the front of context" is how one of them ends up missing a piece, which
+    is exactly what happened: reading over MCP is the path the integration
+    instructions tell agents to use, and it was the path that lost recorded
+    decisions and open questions.
+    """
+    return store._with_drift(text)
 
 
 def call_tool(store: MemoryStore, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -322,6 +342,14 @@ def call_tool(store: MemoryStore, name: str, arguments: dict[str, Any]) -> dict[
             read_note(store.state_dir / "current_state.md"), 8_000))
     elif name == "get_latest_handoff":
         text = with_freshness(store, read_note(store.state_dir / "latest_handoff.md"))
+    elif name == "record_claim":
+        from .notes import record
+
+        recorded = record(store, str(arguments.get("type", "")), str(arguments.get("text", "")),
+                          source="agent")
+        text = f"Recorded {recorded['type']}: {recorded['text']}"
+        if recorded["type"] == "hypothesis":
+            text += ". It stays open until confirmed or dropped."
     elif name == "search_memory":
         from .retrieval import search as search_memory
 
