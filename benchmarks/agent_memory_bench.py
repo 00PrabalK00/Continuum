@@ -336,6 +336,13 @@ def summarize(rows: list[dict], max_score: int | None = None) -> dict:
         "accuracy_ci95": [low, high],
         "seconds_mean": round(statistics.mean(seconds), 1),
         "seconds_median": round(statistics.median(seconds), 1),
+        "seconds_max": round(max(seconds), 1),
+        # A machine that suspends mid-trial charges the whole suspension to that
+        # trial. It happened: a laptop slept for ten hours and moved a cell's
+        # mean from about forty seconds to 1217.5. Accuracy is unharmed, since a
+        # correct answer stays correct, but the timing is not a measurement of
+        # anything. Flag it rather than drop it, so the decision is visible.
+        "timing_suspect": max(seconds) > 20 * max(statistics.median(seconds), 0.1),
         "prompt_tokens": good[0].get("prompt_tokens"),
         "reply_tokens_mean": round(statistics.mean(r["reply_tokens"] for r in good), 1),
         "per_probe_pct": {
