@@ -1833,19 +1833,27 @@ Project: `{self.project}`
         return self._with_drift(compact_text(current + "\n" + handoff + "\n" + state, budget))
 
     def _with_drift(self, context: str) -> str:
-        """Prepend the staleness warning, if there is one to give.
+        """Prepend how old the context is and which claims are which.
 
         The agent receiving this cannot tell how old the context is, and the
         text reads as present tense whether it was written a minute or a month
         ago. Added before truncation would risk the warning being the part cut,
         so it goes on afterwards.
+
+        Recorded decisions and unresolved hypotheses go on for the same reason.
+        Flattened into the surrounding prose, a guess someone made on Tuesday
+        comes back on Friday sounding like something the project settled.
         """
+        from .notes import for_context
         from .freshness import age_note, describe
 
-        notes = [note for note in (age_note(self), describe(self)) if note]
-        if not notes or not context:
+        if not context:
             return context
-        return " ".join(notes) + "\n\n" + context
+        notes = [note for note in (age_note(self), describe(self)) if note]
+        header = " ".join(notes)
+        typed = for_context(self)
+        prefix = "\n\n".join(part for part in (header, typed) if part)
+        return prefix + "\n\n" + context if prefix else context
 
     def write_session_note(
         self, session_id: str, agent: str, returncode: int, tokens: int, output_tail: list[str]

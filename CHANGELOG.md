@@ -5,6 +5,11 @@
 Continuum's history became something you can inspect, and its published
 numbers became something you can trace to a run.
 
+- `continuum note` records a decision, a hypothesis or a fact, so the next
+  session is told which it is. A hypothesis stays open until confirmed or
+  dropped and reaches an agent marked as unsettled, because a guess carried
+  forward unmarked looks more certain every time it is repeated. Agents can
+  record one over MCP with `record_claim`.
 - `continuum log`, `diff`, `blame` and `restore`. Checkpoints can be listed,
   compared, attributed and returned to. Restoring appends a checkpoint carrying
   the old state forward rather than rewriting the log, the way `git revert`

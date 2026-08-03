@@ -138,6 +138,30 @@ Context goes stale in a way code cannot, so saying nothing would be the lie.
 When your project is not a Git repository there is no commit to compare, and
 Continuum reports the age alone rather than guessing.
 
+## Saying which claims are settled
+
+A decision and a hunch read the same once they are written down, so a guess
+from Tuesday comes back on Friday sounding like something the project agreed.
+
+```bash
+continuum note decision "chose PostgreSQL over MySQL for the audit log"
+continuum note hypothesis "the retry test probably fails on the timeout"
+continuum note fact "the retry test asserts 3 attempts"
+continuum note                   # list them
+continuum note confirm 2         # or: continuum note drop 2
+```
+
+A hypothesis stays open until you confirm or drop it, and open ones reach the
+next agent marked as unsettled:
+
+```
+Decisions: chose PostgreSQL over MySQL for the audit log
+Open questions, not settled: the retry test probably fails on the timeout
+```
+
+Resolving one records that it was resolved rather than editing the original, so
+the log still shows that somebody doubted it.
+
 ## Two AIs, two lines of context
 
 Give each agent its own branch and they stop overwriting each other:
@@ -235,6 +259,7 @@ hand to an AI without spending its context on your history.
 | Branch | An agent's own line of context |
 | Merge conflict | Two agents claiming different things |
 | Blame | Where a claim came from |
+| Signed tag | A decision, against a hypothesis nobody has resolved |
 | Restore | Resume from an earlier state |
 
 Everything stays on your machine, as plain files in your project:

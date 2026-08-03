@@ -32,6 +32,7 @@ from .mcp_server import serve_stdio
 from .objective import AGENT_PROVIDERS, ObjectiveError, plan_objective
 from .orchestration import OrchestrationError, Orchestrator
 from .policy import PolicyError, requires_approval, write_starter_policy
+from . import notes
 from . import command_risk
 from . import freshness
 from . import history
@@ -632,6 +633,25 @@ def checkpoint_diff(args: argparse.Namespace) -> int:
             raise SystemExit("Fewer than two checkpoints recorded, so there is nothing to compare.")
         newer, older = recent[0], recent[1]
     print(history.render_diff(store, older, newer))
+    return 0
+
+
+def context_note(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    if not args.kind:
+        print(notes.render(store))
+        return 0
+    text = " ".join(args.text).strip()
+    if args.kind in ("confirm", "drop"):
+        if not text.isdigit():
+            raise SystemExit(f"Which claim? `continuum note {args.kind} 12`, with an id from `continuum note`.")
+        state = notes.CONFIRMED if args.kind == "confirm" else notes.DROPPED
+        resolved = notes.resolve(store, int(text), state)
+        print(f"Claim {resolved['id']} {state}: {resolved['text']}")
+        return 0
+    recorded = notes.record(store, args.kind, text)
+    suffix = " It stays open until you confirm or drop it." if args.kind == "hypothesis" else ""
+    print(f"Recorded {recorded['type']}: {recorded['text']}.{suffix}")
     return 0
 
 
@@ -2600,6 +2620,15 @@ def parser(collapse: bool = True) -> argparse.ArgumentParser:
     do_merge.add_argument("--theirs", action="store_true",
                           help="On a conflict, take the other branch rather than stopping.")
     do_merge.set_defaults(func=context_merge)
+
+    note = commands.add_parser(
+        "note", parents=[common],
+        help="Record a decision, a hypothesis or a fact, so the next agent knows which it is.",
+    )
+    note.add_argument("kind", nargs="?", choices=list(notes.KINDS) + ["confirm", "drop"],
+                      help="Omit to list what has been recorded.")
+    note.add_argument("text", nargs="*", help="The claim, or the claim id for confirm and drop.")
+    note.set_defaults(func=context_note)
 
     show_blame = commands.add_parser(
         "blame", parents=[common],
