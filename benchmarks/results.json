@@ -1,96 +1,194 @@
 {
+  "schema": 2,
   "probes": 5,
-  "trials": 3,
+  "trials": 30,
+  "probe_kinds": {
+    "class": "distractor",
+    "file": "recall",
+    "count": "recall",
+    "headroom": "inference",
+    "owner": "unanswerable"
+  },
   "context_tokens": {
-    "raw_history": 1604,
-    "compact": 74,
-    "normal": 412,
-    "deep": 608
+    "raw_history": 1710,
+    "compact": 109,
+    "normal": 426,
+    "deep": 601
   },
   "fidelity": {
     "claude/injected": {
-      "runs": 3,
-      "completed": 3,
+      "runs": 30,
+      "completed": 30,
+      "completion_pct": 100.0,
       "score_mean": 5,
       "score_sd": 0.0,
       "accuracy_pct": 100.0,
-      "seconds_mean": 6.5,
-      "prompt_tokens": 286,
-      "reply_tokens_mean": 24,
-      "missed": []
+      "accuracy_ci95": [
+        100.0,
+        100.0
+      ],
+      "seconds_mean": 5.0,
+      "seconds_median": 4.9,
+      "prompt_tokens": 395,
+      "reply_tokens_mean": 16.2,
+      "per_probe_pct": {
+        "class": 100.0,
+        "count": 100.0,
+        "file": 100.0,
+        "headroom": 100.0,
+        "owner": 100.0
+      },
+      "missed": [],
+      "errors": []
     },
     "claude/files_only": {
-      "runs": 3,
-      "completed": 3,
+      "runs": 30,
+      "completed": 29,
+      "completion_pct": 96.7,
       "score_mean": 5,
       "score_sd": 0.0,
       "accuracy_pct": 100.0,
-      "seconds_mean": 29.1,
-      "prompt_tokens": 82,
-      "reply_tokens_mean": 25.7,
-      "missed": []
+      "accuracy_ci95": [
+        100.0,
+        100.0
+      ],
+      "seconds_mean": 13.4,
+      "seconds_median": 14.0,
+      "prompt_tokens": 156,
+      "reply_tokens_mean": 17.0,
+      "per_probe_pct": {
+        "class": 100.0,
+        "count": 100.0,
+        "file": 100.0,
+        "headroom": 100.0,
+        "owner": 100.0
+      },
+      "missed": [],
+      "errors": [
+        "Command '['C:\\\\Users\\\\Prabal\\\\AppData\\\\Local\\\\Microsoft\\\\WinGet\\\\Packages\\\\Anthropic.ClaudeCode_Microsoft.Winget.Source_"
+      ]
     },
     "claude/no_memory": {
-      "runs": 3,
-      "completed": 3,
-      "score_mean": 0.67,
-      "score_sd": 0.47,
-      "accuracy_pct": 13.3,
-      "seconds_mean": 20.2,
-      "prompt_tokens": 82,
-      "reply_tokens_mean": 72.7,
+      "runs": 30,
+      "completed": 30,
+      "completion_pct": 100.0,
+      "score_mean": 0.9,
+      "score_sd": 0.3,
+      "accuracy_pct": 18.0,
+      "accuracy_ci95": [
+        15.33,
+        20.0
+      ],
+      "seconds_mean": 19.9,
+      "seconds_median": 19.8,
+      "prompt_tokens": 156,
+      "reply_tokens_mean": 69.3,
+      "per_probe_pct": {
+        "class": 0.0,
+        "count": 0.0,
+        "file": 0.0,
+        "headroom": 0.0,
+        "owner": 90.0
+      },
       "missed": [
         "class",
         "count",
         "file",
-        "phase",
-        "verb"
-      ]
+        "headroom",
+        "owner"
+      ],
+      "errors": []
     },
     "codex/injected": {
-      "runs": 3,
-      "completed": 3,
+      "runs": 30,
+      "completed": 30,
+      "completion_pct": 100.0,
       "score_mean": 5,
       "score_sd": 0.0,
       "accuracy_pct": 100.0,
-      "seconds_mean": 37.6,
-      "prompt_tokens": 286,
-      "reply_tokens_mean": 22.7,
-      "missed": []
-    },
-    "codex/files_only": {
-      "runs": 3,
-      "completed": 3,
-      "score_mean": 5,
-      "score_sd": 0.0,
-      "accuracy_pct": 100.0,
-      "seconds_mean": 49.0,
-      "prompt_tokens": 82,
-      "reply_tokens_mean": 26.3,
-      "missed": []
+      "accuracy_ci95": [
+        100.0,
+        100.0
+      ],
+      "seconds_mean": 18.9,
+      "seconds_median": 17.9,
+      "prompt_tokens": 395,
+      "reply_tokens_mean": 16,
+      "per_probe_pct": {
+        "class": 100.0,
+        "count": 100.0,
+        "file": 100.0,
+        "headroom": 100.0,
+        "owner": 100.0
+      },
+      "missed": [],
+      "errors": []
     },
     "codex/no_memory": {
-      "runs": 3,
-      "completed": 3,
-      "score_mean": 0,
+      "runs": 30,
+      "completed": 29,
+      "completion_pct": 96.7,
+      "score_mean": 1,
       "score_sd": 0.0,
-      "accuracy_pct": 0.0,
-      "seconds_mean": 0.6,
-      "prompt_tokens": 82,
-      "reply_tokens_mean": 0,
+      "accuracy_pct": 20.0,
+      "accuracy_ci95": [
+        20.0,
+        20.0
+      ],
+      "seconds_mean": 131.0,
+      "seconds_median": 106.7,
+      "prompt_tokens": 156,
+      "reply_tokens_mean": 14,
+      "per_probe_pct": {
+        "class": 0.0,
+        "count": 0.0,
+        "file": 0.0,
+        "headroom": 0.0,
+        "owner": 100.0
+      },
       "missed": [
         "class",
         "count",
         "file",
-        "phase",
-        "verb"
+        "headroom"
+      ],
+      "errors": [
+        "Command '['C:\\\\Users\\\\Prabal\\\\AppData\\\\Local\\\\Programs\\\\OpenAI\\\\Codex\\\\bin\\\\codex.EXE', 'exec', 'Answer these five quest"
       ]
+    },
+    "codex/files_only": {
+      "runs": 30,
+      "completed": 30,
+      "completion_pct": 100.0,
+      "score_mean": 5,
+      "score_sd": 0.0,
+      "accuracy_pct": 100.0,
+      "accuracy_ci95": [
+        100.0,
+        100.0
+      ],
+      "seconds_mean": 35.0,
+      "seconds_median": 30.6,
+      "seconds_max": 62.1,
+      "timing_suspect": false,
+      "prompt_tokens": 156,
+      "reply_tokens_mean": 17.1,
+      "per_probe_pct": {
+        "class": 100.0,
+        "count": 100.0,
+        "file": 100.0,
+        "headroom": 100.0,
+        "owner": 100.0
+      },
+      "missed": [],
+      "errors": []
     }
   },
   "conflict": {
     "claude": {
-      "trials": 3,
-      "answered_from_injected": 3,
+      "trials": 30,
+      "completed": 30,
+      "answered_from_injected": 30,
       "answered_from_disk": 0,
       "neither": 0,
       "samples": [
@@ -99,8 +197,9 @@
       ]
     },
     "codex": {
-      "trials": 3,
-      "answered_from_injected": 3,
+      "trials": 30,
+      "completed": 30,
+      "answered_from_injected": 30,
       "answered_from_disk": 0,
       "neither": 0,
       "samples": [
@@ -113,11 +212,11 @@
     {
       "category": "knowledge_update",
       "agent": "claude",
-      "trials": 3,
-      "completed": 3,
-      "passed": 3,
+      "trials": 30,
+      "completed": 30,
+      "passed": 30,
       "pass_pct": 100.0,
-      "seconds_mean": 5.8,
+      "seconds_mean": 4.9,
       "samples": [
         "7",
         "7"
@@ -126,37 +225,37 @@
     {
       "category": "temporal",
       "agent": "claude",
-      "trials": 3,
-      "completed": 3,
-      "passed": 3,
+      "trials": 30,
+      "completed": 30,
+      "passed": 30,
       "pass_pct": 100.0,
-      "seconds_mean": 6.7,
+      "seconds_mean": 5.9,
       "samples": [
-        "Writing migration first.  Order per context: \"Earlier: wrote the migration script\" \u00e2\u2020\u2019 \"Ta",
-        "Writing migration came first.  Order per context: 1. Wrote migration script (\"Earlier\") 2."
+        "Writing migration came first. Staging run second.  Order from context: \"Earlier: wrote the",
+        "Writing migration came first.  Order from context: 1. Wrote migration script (`Earlier`) 2"
       ]
     },
     {
       "category": "multi_session",
       "agent": "claude",
-      "trials": 3,
-      "completed": 3,
-      "passed": 3,
+      "trials": 30,
+      "completed": 30,
+      "passed": 30,
       "pass_pct": 100.0,
-      "seconds_mean": 7.4,
+      "seconds_mean": 5.7,
       "samples": [
-        "PostgreSQL. Chosen over MySQL.  Next step recorded: add indexes to audit log schema.",
-        "PostgreSQL. Chosen over MySQL.  Next step recorded: add indexes to audit log schema."
+        "PostgreSQL chosen. Chosen over MySQL.  Context: decision made for audit log storage. Schem",
+        "PostgreSQL. Chosen over MySQL for audit log.  Context: schema written. Next step: add inde"
       ]
     },
     {
       "category": "abstention",
       "agent": "claude",
-      "trials": 3,
-      "completed": 3,
-      "passed": 3,
+      "trials": 30,
+      "completed": 30,
+      "passed": 30,
       "pass_pct": 100.0,
-      "seconds_mean": 6.4,
+      "seconds_mean": 5.5,
       "samples": [
         "UNKNOWN",
         "UNKNOWN"
@@ -165,11 +264,11 @@
     {
       "category": "knowledge_update",
       "agent": "codex",
-      "trials": 3,
-      "completed": 3,
-      "passed": 3,
+      "trials": 30,
+      "completed": 30,
+      "passed": 30,
       "pass_pct": 100.0,
-      "seconds_mean": 27.3,
+      "seconds_mean": 17.9,
       "samples": [
         "7",
         "7"
@@ -178,24 +277,24 @@
     {
       "category": "temporal",
       "agent": "codex",
-      "trials": 3,
-      "completed": 3,
-      "passed": 3,
+      "trials": 30,
+      "completed": 30,
+      "passed": 30,
       "pass_pct": 100.0,
-      "seconds_mean": 27.1,
+      "seconds_mean": 17.8,
       "samples": [
-        "Writing the migration script happened first; it was then run on staging.",
-        "Writing the migration happened first; running it on staging happened afterward."
+        "Writing the migration happened first; it was run on staging afterward.",
+        "Writing the migration happened first; it was then run on staging."
       ]
     },
     {
       "category": "multi_session",
       "agent": "codex",
-      "trials": 3,
-      "completed": 3,
-      "passed": 3,
+      "trials": 30,
+      "completed": 30,
+      "passed": 30,
       "pass_pct": 100.0,
-      "seconds_mean": 24.4,
+      "seconds_mean": 17.8,
       "samples": [
         "PostgreSQL was chosen for the audit log over MySQL.",
         "PostgreSQL was chosen for the audit log over MySQL."
@@ -204,11 +303,11 @@
     {
       "category": "abstention",
       "agent": "codex",
-      "trials": 3,
-      "completed": 3,
-      "passed": 3,
+      "trials": 30,
+      "completed": 30,
+      "passed": 30,
       "pass_pct": 100.0,
-      "seconds_mean": 24.7,
+      "seconds_mean": 17.9,
       "samples": [
         "UNKNOWN",
         "UNKNOWN"
@@ -217,26 +316,46 @@
   ],
   "delegation": {
     "claude": {
-      "runs": 3,
-      "completed": 3,
-      "score_mean": 0,
+      "runs": 30,
+      "completed": 30,
+      "completion_pct": 100.0,
+      "score_mean": 1,
       "score_sd": 0.0,
-      "accuracy_pct": 0.0,
-      "seconds_mean": 7.3,
-      "prompt_tokens": 210,
+      "accuracy_pct": 100.0,
+      "accuracy_ci95": [
+        100.0,
+        100.0
+      ],
+      "seconds_mean": 4.9,
+      "seconds_median": 4.7,
+      "prompt_tokens": 246,
       "reply_tokens_mean": 1,
-      "missed": []
+      "per_probe_pct": {
+        "pong": 100.0
+      },
+      "missed": [],
+      "errors": []
     },
     "codex": {
-      "runs": 3,
-      "completed": 3,
-      "score_mean": 0,
+      "runs": 30,
+      "completed": 30,
+      "completion_pct": 100.0,
+      "score_mean": 1,
       "score_sd": 0.0,
-      "accuracy_pct": 0.0,
-      "seconds_mean": 24.7,
-      "prompt_tokens": 210,
+      "accuracy_pct": 100.0,
+      "accuracy_ci95": [
+        100.0,
+        100.0
+      ],
+      "seconds_mean": 17.5,
+      "seconds_median": 17.2,
+      "prompt_tokens": 246,
       "reply_tokens_mean": 1,
-      "missed": []
+      "per_probe_pct": {
+        "pong": 100.0
+      },
+      "missed": [],
+      "errors": []
     }
   }
 }

@@ -19,20 +19,12 @@ stops being possible.
 `report.py` refuses to render a results file whose `schema` does not match the
 harness, so an older run cannot be published as a current result.
 
-## The file kept in this directory
+## The results file
 
-`results.json` here is the raw output of one earlier run, kept as a record of
-what the harness used to produce. **Nothing in it should be quoted.** It
-predates the current scorer and the current probe set, and `report.py` will
-refuse to render it.
-
-Its accuracy figures were scored by matching each accepted answer against the
-whole reply rather than against the question it belonged to, so an answer to one
-question could satisfy another and a reply that skipped a question could still
-score full marks. Its `codex/no_memory` row reports 0% in 0.6 seconds, which was
-Codex refusing to start outside a Git repository rather than Codex answering
-badly. Its category rows were collected before the compact-context fix that
-keeps earlier decisions in `current.md`.
+`results.json` is the run every published figure comes from. The pre-scorer-fix
+file that used to sit here has been deleted rather than kept alongside it: two
+results files in one directory, one of them withdrawn, is how a withdrawn number
+finds its way back onto a page.
 
 ## Tests
 

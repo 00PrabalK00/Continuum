@@ -139,16 +139,31 @@ continuum agent list
 
 <!-- benchmark-results:start -->
 
-**The figures that were here have been withdrawn while they are re-measured.**
-Review found that the scorer matched each accepted answer against the whole
-reply rather than against the question it belonged to, so an answer to one
-question could satisfy an unrelated one and a reply that skipped a question
-entirely could still score full marks. Any accuracy number it produced is
-unreliable, in an unknown direction.
+Measured against real agent CLIs, 30 trials per cell, on a project whose
+recorded state we control. The interval is a 95% percentile bootstrap.
 
-A re-measurement is underway with per-question scoring, adversarial and
-unanswerable probes, 30 trials per cell and confidence intervals.
-[docs/benchmarks.md](docs/benchmarks.md) records the method and what went wrong.
+| Arm | claude | codex |
+| --- | --- | --- |
+| Continuum injects the context | 100% (100 to 100) | 100% (100 to 100) |
+| No injection, the agent reads `.continuum/` itself | 100% (100 to 100) | 100% (100 to 100) |
+| No project memory at all | 18% (15 to 20) | 20% (20 to 20) |
+
+Compact context for that project is 109 tokens against 1,710 of raw
+event history, 94% smaller. That figure needs no agent and no API key,
+so it can be checked in seconds.
+
+The middle row is the uncomfortable one, and it stays in the table. An agent
+left to open `.continuum/` itself answers just as well, so recording the
+context is what produces the accuracy. Injecting it is what makes it fast:
+
+| Arm | claude | codex |
+| --- | --- | --- |
+| Continuum injects the context | 4.9s | 17.9s |
+| No injection, the agent reads `.continuum/` itself | 14.0s | 30.6s |
+| No project memory at all | 19.8s | 106.7s |
+
+[docs/benchmarks.md](docs/benchmarks.md) has the method, the per-probe
+breakdown, what this does not measure, and the faults this benchmark has had.
 
 <!-- benchmark-results:end -->
 
