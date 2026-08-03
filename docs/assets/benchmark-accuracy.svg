@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="810" height="360" viewBox="0 0 810 360" font-family="system-ui,sans-serif" font-size="13">
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="150" y="24" font-size="15" font-weight="600">Answers correct by arm, 30 trials each, 95% confidence interval</text>
+<line x1="150" y1="40" x2="150" y2="326" stroke="#e6e6e6"/>
+<text x="150" y="342" text-anchor="middle" fill="#666">0%</text>
+<line x1="305" y1="40" x2="305" y2="326" stroke="#e6e6e6"/>
+<text x="305" y="342" text-anchor="middle" fill="#666">25%</text>
+<line x1="460" y1="40" x2="460" y2="326" stroke="#e6e6e6"/>
+<text x="460" y="342" text-anchor="middle" fill="#666">50%</text>
+<line x1="615" y1="40" x2="615" y2="326" stroke="#e6e6e6"/>
+<text x="615" y="342" text-anchor="middle" fill="#666">75%</text>
+<line x1="770" y1="40" x2="770" y2="326" stroke="#e6e6e6"/>
+<text x="770" y="342" text-anchor="middle" fill="#666">100%</text>
+<text x="8" y="54" font-weight="600">claude</text>
+<text x="142" y="82" text-anchor="end" fill="#444">Continuum injects</text>
+<rect x="150" y="64" width="620.0" height="26" fill="#2f6f4e" rx="3"/>
+<line x1="754.5" y1="77.0" x2="770.0" y2="77.0" stroke="#22303c" stroke-width="2"/><line x1="754.5" y1="69" x2="754.5" y2="85" stroke="#22303c" stroke-width="2"/><line x1="770.0" y1="69" x2="770.0" y2="85" stroke="#22303c" stroke-width="2"/>
+<text x="762.0" y="82" text-anchor="end" fill="#ffffff">100% (98 to 100)</text>
+<text x="142" y="116" text-anchor="end" fill="#444">reads files itself</text>
+<rect x="150" y="98" width="620.0" height="26" fill="#7d8ca3" rx="3"/>
+<line x1="754.5" y1="111.0" x2="770.0" y2="111.0" stroke="#22303c" stroke-width="2"/><line x1="754.5" y1="103" x2="754.5" y2="119" stroke="#22303c" stroke-width="2"/><line x1="770.0" y1="103" x2="770.0" y2="119" stroke="#22303c" stroke-width="2"/>
+<text x="762.0" y="116" text-anchor="end" fill="#ffffff">100% (98 to 100)</text>
+<text x="142" y="150" text-anchor="end" fill="#444">no memory</text>
+<rect x="150" y="132" width="107.3" height="26" fill="#b4544a" rx="3"/>
+<line x1="225.1" y1="145.0" x2="300.0" y2="145.0" stroke="#22303c" stroke-width="2"/><line x1="225.1" y1="137" x2="225.1" y2="153" stroke="#22303c" stroke-width="2"/><line x1="300.0" y1="137" x2="300.0" y2="153" stroke="#22303c" stroke-width="2"/>
+<text x="265.3" y="150" fill="#222">17% <tspan fill="#666">(12 to 24)</tspan></text>
+<text x="8" y="194" font-weight="600">codex</text>
+<text x="142" y="222" text-anchor="end" fill="#444">Continuum injects</text>
+<rect x="150" y="204" width="620.0" height="26" fill="#2f6f4e" rx="3"/>
+<line x1="754.5" y1="217.0" x2="770.0" y2="217.0" stroke="#22303c" stroke-width="2"/><line x1="754.5" y1="209" x2="754.5" y2="225" stroke="#22303c" stroke-width="2"/><line x1="770.0" y1="209" x2="770.0" y2="225" stroke="#22303c" stroke-width="2"/>
+<text x="762.0" y="222" text-anchor="end" fill="#ffffff">100% (98 to 100)</text>
+<text x="142" y="256" text-anchor="end" fill="#444">reads files itself</text>
+<rect x="150" y="238" width="620.0" height="26" fill="#7d8ca3" rx="3"/>
+<line x1="754.5" y1="251.0" x2="770.0" y2="251.0" stroke="#22303c" stroke-width="2"/><line x1="754.5" y1="243" x2="754.5" y2="259" stroke="#22303c" stroke-width="2"/><line x1="770.0" y1="243" x2="770.0" y2="259" stroke="#22303c" stroke-width="2"/>
+<text x="762.0" y="256" text-anchor="end" fill="#ffffff">100% (98 to 100)</text>
+<text x="142" y="290" text-anchor="end" fill="#444">no memory</text>
+<rect x="150" y="272" width="124.0" height="26" fill="#b4544a" rx="3"/>
+<line x1="239.2" y1="285.0" x2="318.1" y2="285.0" stroke="#22303c" stroke-width="2"/><line x1="239.2" y1="277" x2="239.2" y2="293" stroke="#22303c" stroke-width="2"/><line x1="318.1" y1="277" x2="318.1" y2="293" stroke="#22303c" stroke-width="2"/>
+<text x="282.0" y="290" fill="#222">20% <tspan fill="#666">(14 to 27)</tspan></text>
+</svg>

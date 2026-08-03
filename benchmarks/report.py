@@ -116,7 +116,13 @@ def seconds(entry: dict) -> str:
         value = entry.get("seconds_mean")
     if value is None:
         return "-"
-    return f"{value:.1f}s"
+    text = f"{value:.1f}s"
+    if "timing_suspect" not in entry:
+        # Recorded before the outlier check existed. Printing it unmarked would
+        # claim it passed a check that was never run, which is what the page
+        # says it does for every timing on it.
+        text += " (unchecked)"
+    return text
 
 
 def timing_table(report: dict) -> str:
@@ -155,16 +161,19 @@ def probe_table(report: dict) -> str:
 
 def context_table(report: dict) -> str:
     sizes = report.get("context_tokens") or {}
+    characters = sizes.get("characters") or {}
     raw = sizes.get("raw_history")
     rows = []
     for mode in ("deep", "normal", "compact"):
         if mode not in sizes:
             continue
         saved = f"{100 - 100 * sizes[mode] / raw:.0f}% smaller" if raw else ""
-        rows.append([mode, f"{sizes[mode]:,}", saved])
+        exact = f"{characters[mode]:,}" if mode in characters else "-"
+        rows.append([mode, exact, f"~{sizes[mode]:,}", saved])
     if raw:
-        rows.insert(0, ["raw event history", f"{raw:,}", ""])
-    return table(rows, ["", "tokens", "against raw"])
+        exact = f"{characters.get('raw_history', 0):,}" if characters else "-"
+        rows.insert(0, ["raw event history", exact, f"~{raw:,}", ""])
+    return table(rows, ["", "characters", "estimated tokens", "against raw"])
 
 
 def conflict_table(report: dict) -> str:
@@ -241,9 +250,9 @@ def render(report: dict) -> str:
         "",
         "Every figure on this page is generated from `benchmarks/results.json` by",
         "`benchmarks/report.py`, which is the only way to keep a published number",
-        "and the run that produced it from drifting apart. Three of the four faults",
-        "this benchmark has had were found by checking how a number was produced,",
-        "not by looking at the number.",
+        "and the run that produced it from drifting apart. Most of the faults this",
+        "benchmark has had were found by checking how a number was produced, not",
+        "by looking at the number.",
         "",
         "Reproduce with:",
         "",
@@ -273,7 +282,10 @@ def render(report: dict) -> str:
         "## Accuracy",
         "",
         f"{trials} trials per cell, a fresh agent process each time. The interval is a",
-        "95% percentile bootstrap, so no distribution is assumed.",
+        "95% Wilson score interval on the probe answers. A percentile bootstrap",
+        "was used before and is not used now: when every trial scores the same it",
+        "can only resample that one value, so it printed 100 to 100 and asserted",
+        "no uncertainty at all from 30 trials.",
         "",
         accuracy_table(report),
         "",
@@ -319,7 +331,19 @@ def render(report: dict) -> str:
         ]
     delegation = delegation_table(report)
     if delegation:
-        parts += ["## Delegation", "", "One agent consulting another.", "", delegation, ""]
+        parts += [
+            "## Launching an agent and getting its reply back",
+            "",
+            "Continuum starts an agent, sends it a prompt and reads what comes back.",
+            "This is the mechanism cross-agent delegation is built on, measured on its",
+            "own. It is not a measurement of one agent consulting another: no calling",
+            "agent is started, and nothing here exercises an agent reaching Continuum",
+            "through its own tool wiring, which is where the sandbox and tool-access",
+            "failures live.",
+            "",
+            delegation,
+            "",
+        ]
 
     parts += [
         "## What this does not measure",
@@ -330,6 +354,16 @@ def render(report: dict) -> str:
         "Substring matching against accepted answers, per question. It is",
         "reproducible and needs no judge, but it cannot tell a correct answer from a",
         "differently-worded correct answer it was not told to accept.",
+        "",
+        "Cross-agent delegation end to end. The table above measures Continuum",
+        "launching an agent and reading its reply. Whether one agent can reach",
+        "another through its own tool wiring depends on that agent's sandbox and",
+        "tool permissions, and is not measured here.",
+        "",
+        "Token counts. The sizes above are characters divided by four, not",
+        "tokenized, so the token column is an estimate and the character column is",
+        "not. A ratio between two of them is unaffected, since the same divisor is",
+        "on both sides.",
         "",
         "Gemini is absent: it stops on a browser sign-in prompt before answering, so",
         "there is nothing to measure without a signed-in machine.",
@@ -348,6 +382,15 @@ def render(report: dict) -> str:
         "   infrastructure failure into a model result.",
         "4. Two runs were left calling the same CLIs at once, so a set of timings was",
         "   measured under contention and had to be discarded and repeated.",
+        "5. The delegation arm scored every trial zero without reading the reply,",
+        "   and that zero was divided by the five fidelity probes, so a cell that",
+        "   never checked an answer published delegation as zero percent accurate",
+        "   over 30 trials, with a confidence interval to match.",
+        "6. The machine suspended for ten hours mid-run and charged the whole",
+        "   suspension to the trial in flight, moving one cell's mean from about",
+        "   forty seconds to 1217.5. Timings are now published as medians, and a",
+        "   cell whose longest trial exceeds twenty times its median is flagged",
+        "   rather than quietly dropped.",
         "",
     ]
     return "\n".join(parts).rstrip() + "\n"
@@ -355,6 +398,32 @@ def render(report: dict) -> str:
 
 README_START = "<!-- benchmark-results:start -->"
 README_END = "<!-- benchmark-results:end -->"
+
+
+def context_sentence(sizes: dict, chars: dict, saved: float) -> list[str]:
+    """The size claim, leading with whatever is exact.
+
+    Characters are measured; tokens are characters divided by four. A run that
+    recorded no character counts must not have them rendered as zero, which is
+    how a missing measurement becomes a stated one.
+    """
+    if chars.get("compact") and chars.get("raw_history"):
+        return [
+            f"Compact context for that project is {chars['compact']:,} characters "
+            f"against {chars['raw_history']:,} of",
+            f"raw event history, {saved:.0f}% smaller. That is roughly "
+            f"{sizes['compact']:,} tokens against {sizes['raw_history']:,},",
+            "though the token figures are characters divided by four rather than real",
+            "tokenization, so the ratio is the exact part. It needs no agent and no API",
+            "key, and can be checked in seconds.",
+        ]
+    return [
+        f"Compact context for that project is about {sizes['compact']:,} tokens "
+        f"against {sizes['raw_history']:,}",
+        f"of raw event history, {saved:.0f}% smaller. The token figures are characters",
+        "divided by four rather than real tokenization, so the ratio is the exact",
+        "part. It needs no agent and no API key, and can be checked in seconds.",
+    ]
 
 
 def readme_section(report: dict) -> str:
@@ -370,18 +439,16 @@ def readme_section(report: dict) -> str:
         README_START,
         "",
         f"Measured against real agent CLIs, {trials} trials per cell, on a project whose",
-        "recorded state we control. The interval is a 95% percentile bootstrap.",
+        "recorded state we control. The interval is a 95% Wilson score interval.",
         "",
         accuracy_table(report),
         "",
     ]
+    chars = sizes.get("characters") or {}
     if sizes.get("raw_history") and sizes.get("compact"):
         saved = 100 - 100 * sizes["compact"] / sizes["raw_history"]
         lines += [
-            f"Compact context for that project is {sizes['compact']:,} tokens against "
-            f"{sizes['raw_history']:,} of raw",
-            f"event history, {saved:.0f}% smaller. That figure needs no agent and no API key,",
-            "so it can be checked in seconds.",
+            *context_sentence(sizes, chars, saved),
             "",
         ]
     lines += [
