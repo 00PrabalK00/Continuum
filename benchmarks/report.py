@@ -100,9 +100,21 @@ def accuracy_table(report: dict) -> str:
 
 
 def seconds(entry: dict) -> str:
-    """Mean duration, or a dash. summarize() records None when nothing ran."""
-    value = entry.get("seconds_mean")
-    if not entry.get("completed") or value is None:
+    """Median duration, or a dash. summarize() records None when nothing ran.
+
+    The median rather than the mean, because one trial that ran while the
+    machine was suspended moves a mean by an order of magnitude and a median
+    not at all. A cell flagged as suspect says so instead of printing a number
+    that describes the laptop rather than the agent.
+    """
+    if not entry.get("completed"):
+        return "-"
+    if entry.get("timing_suspect"):
+        return "not measured"
+    value = entry.get("seconds_median")
+    if value is None:
+        value = entry.get("seconds_mean")
+    if value is None:
         return "-"
     return f"{value:.1f}s"
 

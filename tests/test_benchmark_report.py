@@ -223,6 +223,32 @@ class TimingTest(unittest.TestCase):
         self.assertIn("-", reporter.timing_table(report))
 
 
+class TimingTableTest(unittest.TestCase):
+    def entry(self, **fields):
+        base = {"runs": 30, "completed": 30, "accuracy_pct": 100.0,
+                "accuracy_ci95": [100.0, 100.0], "seconds_mean": 1217.5,
+                "seconds_median": 41.3, "per_probe_pct": {}}
+        base.update(fields)
+        return base
+
+    def test_the_median_is_published_not_the_mean(self):
+        text = reporter.timing_table(run(fidelity={"claude/injected": self.entry()}))
+        self.assertIn("41.3s", text)
+        self.assertNotIn("1217.5s", text)
+
+    def test_a_suspect_cell_says_so_rather_than_printing_a_number(self):
+        text = reporter.timing_table(run(fidelity={
+            "claude/injected": self.entry(timing_suspect=True)}))
+        self.assertIn("not measured", text)
+        self.assertNotIn("41.3s", text)
+
+    def test_an_older_entry_without_a_median_still_renders(self):
+        entry = self.entry()
+        entry.pop("seconds_median")
+        text = reporter.timing_table(run(fidelity={"claude/injected": entry}))
+        self.assertIn("1217.5s", text)
+
+
 class DelegationTableTest(unittest.TestCase):
     """Delivery is measured only by a harness that read the reply."""
 

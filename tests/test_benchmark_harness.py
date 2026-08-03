@@ -214,5 +214,33 @@ class DelegationScoringTest(unittest.TestCase):
         self.assertEqual(bench.summarize(self.rows(0), max_score=1)["accuracy_pct"], 0.0)
 
 
+class SuspendedTrialTest(unittest.TestCase):
+    """A machine that sleeps mid-trial charges the whole suspension to that
+    trial. A laptop slept for ten hours during a run and moved one cell's mean
+    from about forty seconds to 1217.5."""
+
+    def rows(self, *durations):
+        return [{"ok": True, "score": 5, "seconds": value, "reply_tokens": 10,
+                 "missed": [], "by_probe": {}} for value in durations]
+
+    def test_one_suspended_trial_is_flagged(self):
+        summary = bench.summarize(self.rows(40, 41, 39, 42, 36_000))
+        self.assertTrue(summary["timing_suspect"])
+
+    def test_ordinary_variation_is_not_flagged(self):
+        self.assertFalse(bench.summarize(self.rows(40, 41, 39, 42, 120))["timing_suspect"])
+
+    def test_the_median_survives_a_suspended_trial(self):
+        summary = bench.summarize(self.rows(40, 41, 39, 42, 36_000))
+        self.assertLess(summary["seconds_median"], 100)
+        self.assertGreater(summary["seconds_mean"], 100)
+
+    def test_the_longest_trial_is_recorded_so_it_can_be_checked(self):
+        self.assertEqual(bench.summarize(self.rows(40, 36_000))["seconds_max"], 36_000)
+
+    def test_a_single_trial_is_not_flagged_against_itself(self):
+        self.assertFalse(bench.summarize(self.rows(40))["timing_suspect"])
+
+
 if __name__ == "__main__":
     unittest.main()
