@@ -114,21 +114,24 @@ def mentions(item: dict[str, Any], text: str) -> bool:
     return any(wanted in field(item, name).lower() for name in ("task", "next_step"))
 
 
-def blame(store: "MemoryStore", text: str, limit: int = 500) -> list[dict[str, Any]]:
+def blame(store: "MemoryStore", text: str) -> list[dict[str, Any]]:
     """Every checkpoint whose task or next step mentions the text, oldest first.
 
-    Deliberately literal. An agent reading `current.md` is told a thing and has
-    no way to ask where it came from, and the useful answer is "this checkpoint,
-    on this date, against this commit", not a guess about which session probably
-    meant it. Nothing here infers; it reports where the words appear.
+    The whole history, not a recent window. "First recorded in C3" is a claim
+    about everything that came before it, so answering it from the newest N
+    checkpoints would report the oldest one in the window as the first mention
+    and call anything older than the window unrecorded.
+
+    Deliberately literal otherwise. An agent reading `current.md` is told a
+    thing and has no way to ask where it came from, and the useful answer is
+    "this checkpoint, on this date, against this commit", not a guess about
+    which session probably meant it.
     """
-    found = [item for item in checkpoints(store, limit) if mentions(item, text)]
-    found.reverse()
-    return found
+    return [item for item in store.handoffs_mentioning(text) if mentions(item, text)]
 
 
-def render_blame(store: "MemoryStore", text: str, limit: int = 500) -> str:
-    found = blame(store, text, limit)
+def render_blame(store: "MemoryStore", text: str) -> str:
+    found = blame(store, text)
     if not found:
         return (
             f"No checkpoint mentions {text!r}. `continuum log` lists what was "

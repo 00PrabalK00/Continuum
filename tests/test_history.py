@@ -364,6 +364,30 @@ class BlameTest(unittest.TestCase):
             record_progress(store, "renamed it to BillingGateway", "migrate callers")
             self.assertIn(sha[:7], run(checkpoint_blame, store, text=["BillingGateway"]))
 
+    def test_a_term_older_than_any_recent_window_is_still_attributed(self):
+        # "first recorded in C3" is a claim about everything before it. A
+        # recent-window search is wrong in two directions at once: a term only
+        # older than the window reads as never recorded, and one repeated inside
+        # it is attributed to the later mention as though that were the first.
+        # 600 checkpoints, comfortably past the 500 this used to scan.
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            record_progress(store, "renamed it to BillingGateway", "chose PostgreSQL")
+            oldest = history.checkpoints(store, 1)[0]
+            for index in range(600):
+                record_progress(store, f"routine work {index}", f"next {index}")
+            self.assertEqual(history.blame(store, "BillingGateway")[0]["id"], oldest["id"])
+            self.assertNotIn("No checkpoint mentions",
+                             run(checkpoint_blame, store, text=["PostgreSQL"]))
+
+    def test_a_payload_key_is_not_mistaken_for_a_recorded_word(self):
+        # The database narrows on the raw payload, so "next_step" and "commit"
+        # appear in every row. Only the recorded task and next step count.
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            self.history(store)
+            self.assertEqual(history.blame(store, "next_step"), [])
+
     def test_an_empty_query_is_refused(self):
         with tempfile.TemporaryDirectory() as temporary:
             store = fresh(temporary)
