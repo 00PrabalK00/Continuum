@@ -1,6 +1,6 @@
 {
   "name": "continuum-agent-memory",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "Local shared memory for AI coding agents: switch between Claude, Codex and Gemini without starting over.",
   "license": "MIT",
   "author": "Continuum contributors",
