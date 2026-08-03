@@ -165,7 +165,13 @@ class Orchestrator:
             self._run_step(workflow, team, request, step, allowed, context_mode)
         summary = f"Sequential workflow completed for {request}."
         completed = self.store.update_workflow(workflow_id, "DONE", len(workflow["steps"]), summary)
-        self.store.event("handoff", {"task": request, "next_step": f"Review completed workflow {workflow_id} outputs and commit verified changes."})
+        # Every handoff writer records the branch, or the checkpoint lands on
+        # main and the branch it was actually produced on never sees it.
+        self.store.event("handoff", {
+            "task": request,
+            "next_step": f"Review completed workflow {workflow_id} outputs and commit verified changes.",
+            "branch": self.store.current_branch(),
+        })
         self.store.write_handoff(request, f"Review completed workflow {workflow_id} outputs and commit verified changes.")
         return completed
 
@@ -210,7 +216,11 @@ class Orchestrator:
             self.store.set_task_status(task_id, "FAILED", message)
             self.store.update_workflow(workflow_id, "FAILED", step["order"], message)
             self.store.send_message("continuum", role, message, "error", workflow_id, task_id)
-            self.store.event("handoff", {"task": request, "next_step": f"Inspect failed workflow {workflow_id} step {step['order']}: {message}"})
+            self.store.event("handoff", {
+                "task": request,
+                "next_step": f"Inspect failed workflow {workflow_id} step {step['order']}: {message}",
+                "branch": self.store.current_branch(),
+            })
             self.store.write_handoff(request, f"Inspect failed workflow {workflow_id} step {step['order']}: {message}")
             raise OrchestrationError(message) from error
 

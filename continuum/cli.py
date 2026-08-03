@@ -225,12 +225,16 @@ def recorded_next_step(store: MemoryStore) -> tuple[str | None, str | None]:
     Continuum annotates a carried-forward next step to say it has not been
     confirmed. Rebuilding from the original rather than the annotated text is
     what stops those annotations stacking up over successive sessions.
+
+    Through recent_handoffs so this follows the current branch. Scanning the
+    last hundred events of any kind saw every branch at once, so ending a
+    wrapped session after switching back recorded the other branch's work under
+    this one and materialized it, which is the isolation gone.
     """
-    for item in reversed(store.recent_events(100)):
-        if item["kind"] == "handoff":
-            payload = item["payload"]
-            base = payload.get("base_next_step") or payload.get("next_step")
-            return payload.get("task"), base
+    for item in store.recent_handoffs(60):
+        payload = item["payload"]
+        base = payload.get("base_next_step") or payload.get("next_step")
+        return payload.get("task"), base
     return None, None
 
 

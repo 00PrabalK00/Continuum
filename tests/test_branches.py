@@ -122,6 +122,34 @@ class BranchTest(unittest.TestCase):
             self.assertEqual(len(store.recent_handoffs(50)), before)
 
 
+class IsolationTest(unittest.TestCase):
+    """Branch isolation only holds if every read and every write follows the
+    branch. One writer scanning all branches puts the other branch's work into
+    this one and materializes it."""
+
+    def test_a_wrapped_session_ending_does_not_pull_in_another_branch(self):
+        from continuum.cli import recorded_next_step
+
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            record_progress(store, "work on main", "next on main")
+            history.switch(store, "side")
+            record_progress(store, "work on side", "next on side")
+            history.switch(store, "main")
+            self.assertEqual(recorded_next_step(store), ("work on main", "next on main"))
+
+    def test_a_workflow_handoff_lands_on_the_branch_that_produced_it(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            record_progress(store, "work on main", "next on main")
+            history.switch(store, "side")
+            store.event("handoff", {"task": "workflow finished", "next_step": "review it",
+                                    "branch": store.current_branch()})
+            self.assertEqual(store.latest_task()[0], "workflow finished")
+            history.switch(store, "main")
+            self.assertEqual(store.latest_task()[0], "work on main")
+
+
 class MergeTest(unittest.TestCase):
     def test_a_field_only_one_side_moved_is_taken(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -208,6 +236,38 @@ class MergeTest(unittest.TestCase):
             with self.assertRaises(history.HistoryError) as caught:
                 history.merge(store, "nowhere")
             self.assertIn("continuum branch", str(caught.exception))
+
+    def test_a_second_merge_does_not_invent_a_conflict(self):
+        # Comparing against the original fork forever reports a field as
+        # changed on both sides when only one has moved since they were last
+        # reconciled, and --theirs on a false conflict overwrites newer state
+        # with older.
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            record_progress(store, "shared task", "first step")
+            history.switch(store, "side")
+            record_progress(store, "side moved on", "second step")
+            history.switch(store, "main")
+            history.merge(store, "side")
+            record_progress(store, "main moved on after merging", "third step")
+            merged = history.merge(store, "side")
+            self.assertEqual(merged["task"], "main moved on after merging")
+            self.assertEqual(merged["resolved"], [])
+
+    def test_a_real_conflict_after_a_merge_is_still_caught(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            record_progress(store, "shared task", "first step")
+            history.switch(store, "side")
+            record_progress(store, "side moved on", "second step")
+            history.switch(store, "main")
+            history.merge(store, "side")
+            record_progress(store, "main says one thing", "third step")
+            history.switch(store, "side")
+            record_progress(store, "side says another", "fourth step")
+            history.switch(store, "main")
+            with self.assertRaises(history.MergeConflict):
+                history.merge(store, "side")
 
     def test_the_merged_state_reaches_the_files_an_agent_reads(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -163,6 +163,26 @@ def fork_point(store: "MemoryStore", branch: str) -> dict[str, Any] | None:
     return None
 
 
+def merge_base(store: "MemoryStore", current: str, other: str) -> dict[str, Any] | None:
+    """What both sides should be compared against.
+
+    The fork point until the branches have been merged once. After that it is
+    the checkpoint that merge took, because comparing against the original fork
+    forever reports a field as changed on both sides when only one of them has
+    moved since they were last reconciled. That produces a conflict where there
+    is none, and --theirs on a false conflict overwrites newer state with older.
+    """
+    base = fork_point(store, other) or fork_point(store, current)
+    for item in store.recent_handoffs(500, branch=current):
+        if field(item, "source") == "merge" and field(item, "merged_from") == other:
+            taken = (item.get("payload") or {}).get("merged_checkpoint")
+            merged = store.get_memory(int(taken)) if taken else None
+            if merged and (base is None or merged["id"] > base["id"]):
+                return merged
+            break
+    return base
+
+
 def merge(store: "MemoryStore", other: str, force: bool = False) -> dict[str, Any]:
     """Bring another branch's state onto this one, or refuse and say why.
 
@@ -186,7 +206,7 @@ def merge(store: "MemoryStore", other: str, force: bool = False) -> dict[str, An
     theirs = theirs[0]
     ours = store.recent_handoffs(1, branch=current)
     ours = ours[0] if ours else None
-    base = fork_point(store, other) or fork_point(store, current)
+    base = merge_base(store, current, other)
 
     taken, clashes = {}, []
     for name in ("task", "next_step"):
