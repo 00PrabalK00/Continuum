@@ -109,6 +109,56 @@ def restore(store: "MemoryStore", wanted: dict[str, Any]) -> dict[str, str]:
     return {"task": task, "next_step": next_step}
 
 
+def mentions(item: dict[str, Any], text: str) -> bool:
+    wanted = text.lower()
+    return any(wanted in field(item, name).lower() for name in ("task", "next_step"))
+
+
+def blame(store: "MemoryStore", text: str, limit: int = 500) -> list[dict[str, Any]]:
+    """Every checkpoint whose task or next step mentions the text, oldest first.
+
+    Deliberately literal. An agent reading `current.md` is told a thing and has
+    no way to ask where it came from, and the useful answer is "this checkpoint,
+    on this date, against this commit", not a guess about which session probably
+    meant it. Nothing here infers; it reports where the words appear.
+    """
+    found = [item for item in checkpoints(store, limit) if mentions(item, text)]
+    found.reverse()
+    return found
+
+
+def render_blame(store: "MemoryStore", text: str, limit: int = 500) -> str:
+    found = blame(store, text, limit)
+    if not found:
+        return (
+            f"No checkpoint mentions {text!r}. `continuum log` lists what was "
+            "recorded, and `continuum search` looks through the whole event log "
+            "rather than checkpoints alone."
+        )
+    first, last = found[0], found[-1]
+    lines = [f"{text!r} first recorded in {label(first)}, {stamp(first)}{against(first)}."]
+    source = field(first, "source")
+    if source:
+        lines[-1] = lines[-1][:-1] + f", by {source}."
+    if last is not first:
+        lines.append(f"Still present in {label(last)}, {stamp(last)}.")
+        if len(found) > 2:
+            middle = ", ".join(label(item) for item in found[1:-1])
+            lines.append(f"Also in {middle}.")
+    else:
+        lines.append("Recorded once and not repeated since.")
+    return "\n".join(lines)
+
+
+def stamp(item: dict[str, Any]) -> str:
+    return str(item["created_at"])[:16].replace("T", " ")
+
+
+def against(item: dict[str, Any]) -> str:
+    commit = field(item, "commit")
+    return f", against commit {commit[:SHORT]}" if commit else ""
+
+
 def render_log(store: "MemoryStore", limit: int = 20) -> str:
     found = checkpoints(store, limit)
     if not found:
@@ -116,10 +166,9 @@ def render_log(store: "MemoryStore", limit: int = 20) -> str:
     lines = []
     for item in found:
         commit = field(item, "commit")
-        stamp = str(item["created_at"])[:16].replace("T", " ")
         suffix = f"  ({commit[:SHORT]})" if commit else ""
         task = one_line(field(item, "task")) or "(no task recorded)"
-        lines.append(f"{label(item):<6} {stamp}  {task}{suffix}")
+        lines.append(f"{label(item):<6} {stamp(item)}  {task}{suffix}")
     return "\n".join(lines)
 
 

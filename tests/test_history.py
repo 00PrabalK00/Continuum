@@ -15,7 +15,12 @@ from io import StringIO
 from pathlib import Path
 
 from continuum import history
-from continuum.cli import checkpoint_diff, checkpoint_log, checkpoint_restore
+from continuum.cli import (
+    checkpoint_blame,
+    checkpoint_diff,
+    checkpoint_log,
+    checkpoint_restore,
+)
 from continuum.core import MemoryStore
 from continuum.progress import record_progress
 
@@ -280,6 +285,90 @@ class RestoreTest(unittest.TestCase):
             two(store)
             with self.assertRaises(history.HistoryError):
                 run(checkpoint_restore, store, checkpoint="C9999")
+
+
+class BlameTest(unittest.TestCase):
+    """An agent reading current.md is told a thing and cannot ask where it came
+    from. Blame answers with a checkpoint, a date and a commit, and infers
+    nothing beyond where the words appear."""
+
+    def history(self, store):
+        record_progress(store, "considered LedgerClient for the payment client", "decide the name")
+        record_progress(store, "renamed the payment client to BillingGateway", "migrate callers")
+        record_progress(store, "migrated the callers to BillingGateway", "fix the retry test")
+
+    def test_the_first_checkpoint_to_mention_it_is_named(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            self.history(store)
+            oldest = history.checkpoints(store, 3)[-1]
+            text = run(checkpoint_blame, store, text=["LedgerClient"])
+            self.assertIn(history.label(oldest), text)
+
+    def test_a_term_still_current_says_where_it_was_last_seen(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            self.history(store)
+            newest = history.checkpoints(store, 1)[0]
+            text = run(checkpoint_blame, store, text=["BillingGateway"])
+            self.assertIn("Still present in", text)
+            self.assertIn(history.label(newest), text)
+
+    def test_a_term_recorded_once_says_so(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            self.history(store)
+            self.assertIn("not repeated since",
+                          run(checkpoint_blame, store, text=["LedgerClient"]))
+
+    def test_an_absent_term_points_at_the_wider_search(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            self.history(store)
+            text = run(checkpoint_blame, store, text=["PostgreSQL"])
+            self.assertIn("No checkpoint mentions", text)
+            self.assertIn("continuum search", text)
+
+    def test_the_match_ignores_case(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            self.history(store)
+            self.assertEqual(len(history.blame(store, "billinggateway")), 2)
+
+    def test_the_next_step_is_searched_as_well_as_the_task(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            record_progress(store, "did a thing", "fix the retry test")
+            self.assertEqual(len(history.blame(store, "retry test")), 1)
+
+    def test_results_are_oldest_first_so_the_first_mention_is_first(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            self.history(store)
+            found = history.blame(store, "BillingGateway")
+            self.assertLess(found[0]["id"], found[-1]["id"])
+
+    def test_the_recording_commit_is_reported(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "repo"
+            project.mkdir()
+            git(project, "init")
+            git(project, "config", "user.email", "t@example.com")
+            git(project, "config", "user.name", "Test")
+            store = MemoryStore(project)
+            store.initialize(100000, 0.8)
+            (project / "a.py").write_text("a", encoding="utf-8")
+            git(project, "add", "a.py")
+            git(project, "commit", "-m", "first")
+            sha = git(project, "rev-parse", "HEAD")
+            record_progress(store, "renamed it to BillingGateway", "migrate callers")
+            self.assertIn(sha[:7], run(checkpoint_blame, store, text=["BillingGateway"]))
+
+    def test_an_empty_query_is_refused(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            with self.assertRaises(SystemExit):
+                run(checkpoint_blame, store, text=["   "])
 
 
 if __name__ == "__main__":
