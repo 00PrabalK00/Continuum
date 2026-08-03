@@ -53,7 +53,7 @@ Continuum records that as you go and hands it to whichever AI you open next.
 ## Install
 
 ```bash
-pip install continuum-agent-memory
+pip install git+https://github.com/00PrabalK00/Continuum.git
 ```
 
 Then, in any project:
