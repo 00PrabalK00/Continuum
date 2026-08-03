@@ -4,136 +4,8 @@
 
 # Continuum
 
-**Git keeps the history of your code. Continuum keeps the working context
-around it.**
-
-Switch AI without starting over.
-
-Your AI runs out of context. Or you switch from Claude to Codex because one hit
-its limit. Either way you start over, re-explaining the codebase, the bug, and
-what you already tried.
-
-Continuum saves that context on your machine and gives it to whichever AI you
-open next.
-
----
-
-## Get started
-
-```bash
-git clone https://github.com/00PrabalK00/Continuum.git
-cd Continuum
-python -m pip install -e .
-```
-
-Then, in any project you work on:
-
-```bash
-continuum install
-```
-
-That is the setup. Continuum finds the AI tools you already have, installs
-itself inside each one, then asks whether you also want meaning-based search and
-automatic session summaries. Say yes and it does the rest, including downloading
-a local embedding model if you want one.
-
-Answer nothing and press enter to take the defaults. `continuum install --yes`
-skips the questions, which is also what happens when there is no terminal
-attached, so scripts and CI keep working.
-
-Now use your AI the way you normally would:
-
-```
-$ claude
-> What am I working on?
-
-Task: renamed payment client to BillingGateway.
-Next: fix failing retry test.
-```
-
-Nobody told it. It already knew.
-
----
-
-## Switching AI
-
-When one AI runs out, open the next one with your context already loaded:
-
-```bash
-continuum go
-```
-
-It picks an AI you were not just using, hands over your work, and saves an
-updated note when you are done.
-
-Want a specific one? Name it:
-
-```bash
-continuum go claude
-continuum go codex
-continuum go gemini
-```
-
-Using ChatGPT or another AI in a browser? Copy your context to the clipboard
-and paste it in:
-
-```bash
-continuum copy
-```
-
-Forgot where you were? Run `continuum` on its own:
-
-```
-Continuum - my-project
-Task: renamed the payment client to BillingGateway
-Next: fix the failing retry test
-Saved: 2 hours ago
-```
-
----
-
-## Your AIs can ask each other things
-
-```
-You:     Ask Codex whether the retry fix is safe to ship.
-
-Claude:  Codex says it's safe, but wants a regression test first.
-```
-
-Codex sees the same project context you do, so nothing needs re-explaining. It
-works both ways, and from a terminal too:
-
-```bash
-continuum ask codex "is the retry fix safe to ship?"
-```
-
-Each AI needs to be signed in on your machine before Continuum can reach it,
-and some sandbox their tools by default, which can stop them starting another
-agent. Continuum reports which one is refusing and why rather than hanging.
-
----
-
-## Any AI tool works
-
-`claude`, `codex` and `gemini` work immediately. Anything else works as soon as
-you name it:
-
-```bash
-continuum go hermes
-continuum go opencode
-```
-
-Most AI tools take their prompt the same way, which is what Continuum assumes.
-If yours is different, tell it once:
-
-```bash
-continuum agent add myagent --inject flag --flag=--task     # myagent --task "..."
-continuum agent add other --inject subcommand --subcommand run   # other run "..."
-continuum agent add piped --inject stdin                     # reads from stdin
-continuum agent list
-```
-
----
+Git keeps the history of your code. Continuum keeps the working context around
+it, on your machine, so you can switch AI without starting over.
 
 ## Does it actually work
 
@@ -169,42 +41,170 @@ breakdown, what this does not measure, and the faults this benchmark has had.
 
 <!-- benchmark-results:end -->
 
----
+## The problem
 
-## Running a team of AIs
+You are three hours into a bug. Your AI hits its context limit, or you switch
+from Claude to Codex because one of them ran out, and the new session knows
+nothing. You re-explain the codebase, the bug, what you already tried and which
+two fixes did not work.
 
-One AI can also plan and run a whole sequence of others. Ask for it in
-conversation:
+Continuum records that as you go and hands it to whichever AI you open next.
 
-```
-You:     Use Continuum to plan a workflow for fixing the retry test.
-
-Claude:  Planned W0001 on team local_agent_team.
-         1. tester via codex
-         Run it and codex takes the step.
-```
-
-Teams are named sets of roles, each bound to a provider, so `local_agent_team`
-might send exploration to Gemini, implementation to Claude and testing to Codex.
-List them with `continuum team list` and install one with
-`continuum team init <name>`.
-
-Planning never runs anything. Running a workflow needs an explicit list of files
-the writing roles may edit, and a step that touches anything else stops the
-workflow. From a terminal:
+## Install
 
 ```bash
-continuum team run local_agent_team "fix the retry test"
-continuum team run local_agent_team "fix the retry test" --execute --allow-file src/retry.py
+pip install continuum-agent-memory
 ```
 
----
+Then, in any project:
+
+```bash
+continuum install
+```
+
+That is the setup. Continuum finds the AI tools you already have, installs
+itself into each one, and asks whether you also want meaning-based search and
+automatic session summaries. Press enter to take the defaults, or run
+`continuum install --yes` to skip the questions, which is also what happens when
+no terminal is attached so scripts and CI keep working.
+
+Now use your AI normally:
+
+```
+$ claude
+> What am I working on?
+
+Task: renamed payment client to BillingGateway.
+Next: fix failing retry test.
+```
+
+Nobody told it. It already knew.
+
+## Switching AI
+
+When one runs out, open the next with your context already loaded:
+
+```bash
+continuum go
+```
+
+It picks an AI you were not just using, hands over your work, and saves an
+updated note when the session ends. Name one if you would rather choose:
+
+```bash
+continuum go codex
+```
+
+Using ChatGPT or anything else in a browser? Put the context on your clipboard:
+
+```bash
+continuum copy
+```
+
+Forgot where you were? Run `continuum` on its own:
+
+```
+Continuum - my-project
+Task: renamed the payment client to BillingGateway
+Next: fix the failing retry test
+Saved: 2 hours ago
+```
+
+## Git for context
+
+Your code has a history you can inspect. Until now the context around it did
+not, so when your AI believed something wrong you had no way to find out when
+that started.
+
+```bash
+continuum log                    # checkpoints, when, against which commit
+continuum diff C6 C9             # what changed between two of them
+continuum blame BillingGateway   # where a claim entered, and if it is still current
+continuum restore C6             # go back to an earlier state
+```
+
+Restoring appends rather than erases, the way `git revert` does and `git reset`
+does not, so the log keeps saying what actually happened.
+
+Each checkpoint records the commit it was written against, and reads report the
+drift:
+
+```
+Recorded 37 days ago. Recorded against commit 7bab8ee, 14 commits ago.
+Check it still describes the code before continuing from it.
+```
+
+Context goes stale in a way code cannot, so saying nothing would be the lie.
+When your project is not a Git repository there is no commit to compare, and
+Continuum reports the age alone rather than guessing.
+
+## Two AIs, two lines of context
+
+Give each agent its own branch and they stop overwriting each other:
+
+```bash
+continuum branch codex-lane
+continuum branch                 # list them, current one marked
+continuum merge codex-lane       # bring it back
+```
+
+When both branches changed the same thing, the merge stops instead of letting
+the most recent save win:
+
+```
+codex-lane and main both changed the same thing since they diverged.
+
+Task
+  main: renamed it to BillingGateway
+  codex-lane: renamed it to LedgerClient
+
+Nothing was recorded. Decide which is right and save it, or re-run
+with --theirs to take codex-lane.
+```
+
+## Your AIs can ask each other things
+
+```
+You:     Ask Codex whether the retry fix is safe to ship.
+
+Claude:  Codex says it is safe, but wants a regression test first.
+```
+
+Codex sees the same project context you do, so nothing needs re-explaining. It
+works in both directions, and from a terminal:
+
+```bash
+continuum ask codex "is the retry fix safe to ship?"
+```
+
+Each AI has to be signed in on your machine first. Some sandbox their tools by
+default, which can stop them starting another agent, and Continuum reports which
+one is refusing rather than hanging.
+
+## Any AI tool works
+
+`claude`, `codex` and `gemini` work immediately. Anything else works as soon as
+you name it:
+
+```bash
+continuum go hermes
+continuum go opencode
+```
+
+Most AI tools take their prompt the same way, which is what Continuum assumes.
+If yours is different, say so once:
+
+```bash
+continuum agent add myagent --inject flag --flag=--task
+continuum agent add other --inject subcommand --subcommand run
+continuum agent add piped --inject stdin
+```
 
 ## Searching what you recorded
 
-Agents look things up in your project memory by meaning as well as by wording,
-so "which database did we pick" finds the session where you chose PostgreSQL
-even though neither word appears in the question.
+Ask in your own words. An exact phrase from the log is not required, so "which
+database did we pick" finds the session where you chose PostgreSQL even though
+neither word appears in the question.
 
 ```bash
 continuum search "which database did we pick"
@@ -212,65 +212,30 @@ continuum search "which database did we pick"
 
 Word matching is ranked and always available, because SQLite provides it and
 nothing needs installing. Meaning-based matching needs a local embedding model,
-which `continuum install` offers to set up for you. Both are used together and
-neither crowds the other out, so an exact wording match is still found when
-meaning-based results are also available. Without a model, search works on
-wording alone and says so.
-
----
-
-## Nice to have
-
-Write a note yourself, any time. Text after `|` is the next step:
-
-```bash
-continuum save "fixed the auth bug | next: test the retry logic"
-```
-
-Have a small model write your notes for you:
-
-```bash
-continuum handoff-llm set ollama llama3.1:8b
-```
-
-See everything in a browser:
-
-```bash
-continuum ui --open
-```
-
----
+which `continuum install` offers to set up. Both run together, so an exact
+wording match is still found when meaning-based results are also available.
+Without a model, search works on wording alone and says so.
 
 ## How it works
 
-Three layers, and the comparison to Git is the point rather than a metaphor.
+Three layers, and the comparison to Git is structural rather than decorative.
 
 Everything an AI does is appended to a log that is never rewritten: sessions
-started, files changed, decisions recorded, errors hit. That log is the history.
-
-Handoffs are checkpoints taken against it, the way a commit is taken against
-your working tree. Each one is a snapshot of where the work stood.
-
-`current.md` is the materialized view of the newest checkpoint, kept small
-enough to hand to an AI without spending its context on your history. That is
-what a new session reads.
+started, files changed, decisions recorded, errors hit. Handoffs are checkpoints
+taken against that log, the way a commit is taken against your working tree.
+`current.md` is the materialized view of the newest one, kept small enough to
+hand to an AI without spending its context on your history.
 
 | Git | Continuum |
 | --- | --- |
 | Repository | Project memory |
-| Commit | Handoff |
+| Commit | Checkpoint |
 | HEAD | `current.md` |
 | Log | Decisions, attempts and outcomes |
-| Branch | An agent's or task's own context |
-
-Code has canonical contents. Context does not: it goes stale, it can be
-incomplete, and two agents can believe different things. Continuum records when
-each claim was made and against which state, so a claim can be checked rather
-than assumed. See [Limitations](#limitations) for how far that goes today.
-
----
-
-## Your data
+| Branch | An agent's own line of context |
+| Merge conflict | Two agents claiming different things |
+| Blame | Where a claim came from |
+| Restore | Resume from an earlier state |
 
 Everything stays on your machine, as plain files in your project:
 
@@ -282,65 +247,30 @@ Everything stays on your machine, as plain files in your project:
   session_logs/       # what each AI actually did
 ```
 
-Nothing is uploaded unless you deliberately set up a hosted model. Keep
+Nothing is uploaded unless you deliberately configure a hosted model. Keep
 `.continuum/` out of Git; Continuum adds the ignore rule for you. Session logs
 contain whatever your AI saw, so read them before sharing.
-
----
-
-## There is more if you want it
-
-Continuum also handles multi-agent teams, isolated Git worktrees, task routing,
-governance rules and audit trails. You do not need any of it for everyday use.
-
-```bash
-continuum help --all
-```
-
-| I want to | Read |
-| --- | --- |
-| Start quickly | [Quickstart](docs/quickstart.md) |
-| Understand how it works | [Getting Started](docs/getting-started.md), [Architecture](docs/architecture.md) |
-| See the measurements | [Benchmarks](docs/benchmarks.md) |
-| Fix a problem | [Troubleshooting](docs/troubleshooting.md) |
-| Set up MCP by hand | [MCP Setup](docs/mcp-setup.md) |
-| Use local or hosted models | [Providers](docs/providers.md) |
-| Run AIs as a team | [Teams](docs/teams.md) |
-| Keep parallel work separate | [Worktrees](docs/worktrees.md), [Parallel Worktrees](docs/parallel-worktrees.md) |
-| Track tasks and file ownership | [Tasks And Claims](docs/tasks-and-claims.md) |
-| Check what an AI actually did | [Workflow Timeline](docs/workflow-timeline.md), [Control Center](docs/control-center.md) |
-| Run it as a background service | [Services](docs/services.md), [Docker](docs/docker.md) |
-| See what changed | [Changelog](CHANGELOG.md) |
-| Cut a release | [Releasing](docs/releasing.md) |
-| See what is next | [Roadmap](docs/roadmap.md) |
-
----
 
 ## Limitations
 
 Worth knowing before you rely on it.
 
-`current.md` can go stale without saying so. It records what the last session
-believed, not what your working tree now contains, and it does not yet check
-itself against your current commit. If you rewind or rebase, it will not notice.
-
-Context sizes are estimated at four characters per token, not tokenized. The
-estimate is close enough to decide when to checkpoint and not close enough to
-quote.
+Context sizes are estimated at four characters per token rather than tokenized.
+Close enough to decide when to checkpoint, not close enough to quote.
 
 Continuum cannot ask a provider how much quota you have left. It notices when an
 agent says it has run out and remembers that across sessions, but it never shows
 a percentage, because it does not have one.
 
-Gemini needs its own sign-in before Continuum can drive it, and Codex sandboxes
-its tools by default, which can stop it starting another agent. Continuum
-reports which one is refusing rather than hanging.
+Gemini needs its own sign-in before Continuum can drive it. Codex sandboxes its
+tools by default, which can stop it starting another agent.
+
+Merge compares the recorded task and next step. It does not reconcile the
+underlying files, so two agents editing the same code still need the usual care.
 
 The benchmark covers one project and one recorded state, with two agents. It
-shows that a handoff arrives and is used. It does not show how Continuum behaves
-across a long real project.
-
----
+shows that a handoff arrives and gets used. It does not show how Continuum
+behaves across a long real project.
 
 ## Contributing
 
@@ -364,11 +294,30 @@ python benchmarks/report.py --write
 ```
 
 The second command regenerates [docs/benchmarks.md](docs/benchmarks.md) and the
-results block above. Neither is edited by hand, so a published figure can always
-be traced to the run that produced it. See
-[benchmarks/README.md](benchmarks/README.md).
+results block above. Neither is edited by hand, so any published figure can be
+traced back to the run that produced it.
 
----
+## More
+
+Continuum also handles multi-agent teams, isolated Git worktrees, task routing,
+governance rules and audit trails. You do not need any of it day to day.
+
+```bash
+continuum help --all
+```
+
+| I want to | Read |
+| --- | --- |
+| Start quickly | [Quickstart](docs/quickstart.md) |
+| Understand how it works | [Getting started](docs/getting-started.md), [Architecture](docs/architecture.md) |
+| See the measurements | [Benchmarks](docs/benchmarks.md) |
+| Fix a problem | [Troubleshooting](docs/troubleshooting.md) |
+| Set up MCP by hand | [MCP setup](docs/mcp-setup.md) |
+| Use local or hosted models | [Providers](docs/providers.md) |
+| Run AIs as a team | [Teams](docs/teams.md) |
+| Keep parallel work separate | [Worktrees](docs/worktrees.md) |
+| Check what an AI actually did | [Control center](docs/control-center.md) |
+| See what changed | [Changelog](CHANGELOG.md) |
 
 ## License
 

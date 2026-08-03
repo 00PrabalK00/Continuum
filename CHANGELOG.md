@@ -1,7 +1,37 @@
 # Changelog
 
-## Unreleased
+## 0.13.0
 
+Continuum's history became something you can inspect, and its published
+numbers became something you can trace to a run.
+
+- `continuum log`, `diff`, `blame` and `restore`. Checkpoints can be listed,
+  compared, attributed and returned to. Restoring appends a checkpoint carrying
+  the old state forward rather than rewriting the log, the way `git revert`
+  does and `git reset` does not.
+- Checkpoints record the commit they were written against, and every read
+  reports the drift. Continuum's own context had spent five merged pull
+  requests telling each agent to review one that had already merged.
+- `continuum branch` and `continuum merge`. Two agents on one project used to
+  share a single line of context, so the newer save silently erased the older.
+  Each agent can have its own branch, and a merge where both sides changed the
+  same thing stops and prints both claims rather than letting the most recent
+  write win.
+- Benchmark accuracy is re-measured and published: 100% (98 to 100) with
+  context injected, 17% to 20% without, 30 trials per cell across two agents.
+  Every figure on docs/benchmarks.md and in the README is generated from
+  benchmarks/results.json rather than typed.
+- Confidence intervals are Wilson score rather than a percentile bootstrap. The
+  bootstrap could only resample the values it was given, so a cell where every
+  trial scored the same printed "100 to 100" and asserted no uncertainty at all
+  from 30 observations.
+- Six instrument faults are documented on the benchmark page, including two
+  found during this release: the delegation arm scored every trial zero without
+  reading the reply, and a machine that suspended mid-run charged the whole
+  suspension to one trial.
+- The README is rewritten around the results, and its install command now names
+  the right package. It said `continuum-memory`, which is a different project
+  already on PyPI.
 - Added cross-session quota awareness. Continuum records what each agent
   consumed per session in a new `agent_usage` table, and records verbatim any
   message an agent printed when it ran out. `continuum limits` and the
