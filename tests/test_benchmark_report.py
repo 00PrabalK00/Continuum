@@ -49,7 +49,7 @@ class NoInventedNumbersTest(unittest.TestCase):
     def test_every_percentage_printed_is_in_the_results(self):
         report = run()
         text = reporter.render(report)
-        allowed = {"95", "100", "30"}  # prose: the interval level, the axis, the trial count
+        allowed = {"95", "100", "30", "20"}  # prose: interval level, axis, trials, the outlier factor
         for entry in report["fidelity"].values():
             allowed.add(f"{entry['accuracy_pct']:.0f}")
             allowed.update(f"{value:.0f}" for value in entry["accuracy_ci95"])
@@ -73,7 +73,7 @@ class NoInventedNumbersTest(unittest.TestCase):
 
     def test_sections_with_no_data_are_omitted_entirely(self):
         text = reporter.render(run())
-        for absent in ("## Delegation", "## Categories", "## Which source"):
+        for absent in ("Launching an agent", "## Categories", "## Which source"):
             self.assertNotIn(absent, text)
 
     def test_sections_appear_once_their_data_does(self):
@@ -83,10 +83,36 @@ class NoInventedNumbersTest(unittest.TestCase):
             delegation={"claude": {"completed": 30, "runs": 30, "seconds_mean": 7.3}},
         )
         text = reporter.render(report)
-        self.assertIn("## Delegation", text)
+        self.assertIn("Launching an agent and getting its reply back", text)
         self.assertIn("## Categories", text)
         self.assertIn("29/30", text)
         self.assertIn("30/30", text)
+
+
+class ContextSizeTest(unittest.TestCase):
+    """estimate_tokens divides characters by four. Publishing the result as a
+    token count states a precision the method does not have, and this README
+    already says the estimate is not close enough to quote."""
+
+    def test_the_token_column_is_marked_as_an_estimate(self):
+        text = reporter.context_table(run(context_tokens={
+            "raw_history": 1000, "compact": 100,
+            "characters": {"raw_history": 4000, "compact": 400},
+        }))
+        self.assertIn("estimated tokens", text)
+        self.assertIn("~1,000", text)
+
+    def test_exact_characters_are_published_alongside(self):
+        text = reporter.context_table(run(context_tokens={
+            "raw_history": 1000, "compact": 100,
+            "characters": {"raw_history": 4000, "compact": 400},
+        }))
+        self.assertIn("4,000", text)
+        self.assertIn("400", text)
+
+    def test_a_run_without_character_counts_still_renders(self):
+        text = reporter.context_table(run(context_tokens={"raw_history": 1000, "compact": 100}))
+        self.assertIn("~100", text)
 
 
 class ContentTest(unittest.TestCase):
@@ -242,6 +268,17 @@ class TimingTableTest(unittest.TestCase):
         self.assertIn("not measured", text)
         self.assertNotIn("41.3s", text)
 
+    def test_a_cell_recorded_before_the_check_existed_says_unchecked(self):
+        entry = self.entry()
+        entry.pop("timing_suspect", None)
+        text = reporter.timing_table(run(fidelity={"claude/injected": entry}))
+        self.assertIn("unchecked", text)
+
+    def test_a_checked_cell_is_not_labelled_unchecked(self):
+        text = reporter.timing_table(run(fidelity={
+            "claude/injected": self.entry(timing_suspect=False)}))
+        self.assertNotIn("unchecked", text)
+
     def test_an_older_entry_without_a_median_still_renders(self):
         entry = self.entry()
         entry.pop("seconds_median")
@@ -323,6 +360,21 @@ class ReadmeGenerationTest(unittest.TestCase):
         text = readme.read_text(encoding="utf-8")
         self.assertIn(reporter.README_START, text)
         self.assertIn(reporter.README_END, text)
+
+    def test_a_run_without_character_counts_does_not_print_zero(self):
+        section = reporter.readme_section(run(
+            context_tokens={"raw_history": 1000, "compact": 100}
+        ))
+        self.assertNotIn("0 characters", section)
+        self.assertIn("about 100 tokens", section)
+
+    def test_characters_lead_when_they_were_recorded(self):
+        section = reporter.readme_section(run(context_tokens={
+            "raw_history": 1000, "compact": 100,
+            "characters": {"raw_history": 4000, "compact": 400},
+        }))
+        self.assertIn("400 characters", section)
+        self.assertIn("4,000", section)
 
     def test_the_context_saving_is_computed_rather_than_quoted(self):
         section = reporter.readme_section(run(

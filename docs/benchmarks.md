@@ -1,157 +1,164 @@
 # Benchmarks
 
-These numbers come from running real agent CLIs against a project whose state
-we control, so every question has a known correct answer. The harness is
-`benchmarks/agent_memory_bench.py` in this repository, so the results can be
-reproduced or disputed.
+Every figure on this page is generated from `benchmarks/results.json` by
+`benchmarks/report.py`, which is the only way to keep a published number
+and the run that produced it from drifting apart. Most of the faults this
+benchmark has had were found by checking how a number was produced, not
+by looking at the number.
 
-**This page is being regenerated.** Its accuracy figures were withdrawn, and
-the prose figures below were typed rather than taken from a results file, so
-they cannot be traced to a run. `benchmarks/report.py` replaces this page from
-`benchmarks/results.json` once the re-measurement finishes. Quote nothing from
-it until then.
+Reproduce with:
 
-## What is measured
+```bash
+python benchmarks/agent_memory_bench.py --trials 30 --agents claude,codex
+python benchmarks/report.py --write
+```
 
-The categories follow the ones that agent memory systems publish against:
-single-hop recall, knowledge update, temporal reasoning, multi-session recall,
-and abstention. LoCoMo and LongMemEval define them.
+That calls real agent CLIs and spends quota. The context sizes below need
+neither, and can be checked in seconds.
 
-Five probe questions describe one recorded project state. A renamed class, a
-failing test file, an assertion count, what happened to the callers, and the
-next action. All five are answerable from the recorded handoff and from nothing
-else, so a correct answer means the handoff arrived.
+## What is asked
+
+One project with a known recorded state, and five questions about it. The
+probe kinds exist so that copying the context cannot score:
+
+| Probe | Kind | claude | codex |
+| --- | --- | --- | --- |
+| `class` | distractor | 100% | 100% |
+| `file` | recall | 100% | 100% |
+| `count` | recall | 100% | 100% |
+| `headroom` | inference | 100% | 100% |
+| `owner` | unanswerable | 100% | 100% |
+
+Percentages are per probe, on the injected arm.
 
 ## Context size
 
-One scenario, 40 background events on top of the handoff.
+Deterministic and free to reproduce: no agent, no network, no quota.
 
-| | tokens | against raw |
+|  | characters | estimated tokens | against raw |
+| --- | --- | --- | --- |
+| raw event history | 6,837 | ~1,710 |  |
+| deep | 2,334 | ~584 | 66% smaller |
+| normal | 1,668 | ~417 | 76% smaller |
+| compact | 436 | ~109 | 94% smaller |
+
+## Accuracy
+
+30 trials per cell, a fresh agent process each time. The interval is a
+95% Wilson score interval on the probe answers. A percentile bootstrap
+was used before and is not used now: when every trial scores the same it
+can only resample that one value, so it printed 100 to 100 and asserted
+no uncertainty at all from 30 trials.
+
+| Arm | claude | codex |
 | --- | --- | --- |
-| raw event history | 1,604 | |
-| deep | 608 | 62% smaller |
-| normal | 412 | 74% smaller |
-| compact | 74 | 95% smaller |
+| Continuum injects the context | 100% (98 to 100) | 100% (98 to 100) |
+| No injection, the agent reads `.continuum/` itself | 100% (98 to 100) | 100% (98 to 100) |
+| No project memory at all | 17% (12 to 24) | 20% (14 to 27) |
 
-## Fidelity: withdrawn, being re-measured
+The middle row is the one that keeps this honest. An agent given no injected
+context, but left free to open `.continuum/` itself, answers just as well.
+Recording the context is what produces the accuracy. Injecting it is what
+makes it cheap, which is the next table.
 
-The accuracy figures previously reported here are withdrawn.
+## Time to answer
 
-The scorer searched for each accepted answer across the entire reply rather than
-against the numbered question it belonged to. An answer to question 3, "the
-retry test asserts 3 attempts", satisfied the unrelated question 5 probe through
-the word "retry". A reply that answered some questions and skipped others could
-therefore score full marks, and a reply with every answer against the wrong
-question could too.
-
-That flaw affects every accuracy number in the previous version of this page, in
-an unknown direction. They are not reproduced here, because a number that cannot
-be trusted is worse than no number.
-
-What survives is how long each run took, with one caveat that matters: these
-are raw process durations, not time to a correct answer. The scorer accepted
-replies it should not have, so some of the runs being timed may not have
-answered properly, and a timing is only a latency-to-answer once the reply it
-belongs to has been rescored.
-
-| Arm | Claude | Codex |
+| Arm | claude | codex |
 | --- | --- | --- |
-| Continuum injects the context | 6.5s | 37.6s |
-| No injection, `.continuum/` readable | 29.1s | 49.0s |
-| Difference | 22.6s | 11.4s |
+| Continuum injects the context | 5.5s | 22.9s |
+| No injection, the agent reads `.continuum/` itself | 17.1s | 29.9s |
+| No project memory at all | 21.4s | 94.5s |
 
-The injected prompt is 286 tokens. The other arms send 82 and let the agent go
-and find what it needs, which is what the extra time is spent on. The two agents
-differ by twice over, so there is no single figure for it.
+## Trials that completed
 
-The re-measurement fixes the scorer to match per question, and additionally
-adds probes that cannot be satisfied by echoing the context: inference probes
-whose answer is not a literal span, distractor probes where a plausible wrong
-answer appears verbatim, and unanswerable probes where the correct response is
-to say the context does not contain it. It runs 30 trials per cell with
-bootstrap confidence intervals, and reports the completion rate separately so an
-agent that fails to start is not scored as an agent that answered badly.
+An agent that fails to start has not answered badly, it has not answered.
+Those trials are excluded from accuracy and counted here instead.
 
-## Which source does the agent actually use
-
-Also unaffected by the scoring flaw: this asks one question and reads one word
-out of the reply.
-
-Injected context and the files on disk were made to disagree. The injected
-version said the class was renamed to `BillingGateway`; the files said
-`LedgerClient`.
-
-| | answered from injected context | answered from disk |
+| Arm | claude | codex |
 | --- | --- | --- |
-| Claude | 3/3 | 0/3 |
-| Codex | 3/3 | 0/3 |
+| Continuum injects the context | 30/30 | 30/30 |
+| No injection, the agent reads `.continuum/` itself | 30/30 | 30/30 |
+| No project memory at all | 30/30 | 30/30 |
 
-Injection wins when the two conflict, for both agents.
+## Which source is used when they disagree
+
+The injected context and the files on disk are made to contradict each
+other: the injected version says the class is `BillingGateway`, the files
+say `LedgerClient`.
+
+|  | answered from injected context | answered from disk |
+| --- | --- | --- |
+| claude | 30/30 | 0/30 |
+| codex | 30/30 | 0/30 |
 
 ## Categories
 
-These are not affected by the scoring flaw above. Each category asks a single
-question and checks that one reply, so there is no second probe for an answer to
-satisfy by accident. Their weaknesses are the ordinary ones: three trials, and
-matching on substrings, so an agent that echoes the context without
-understanding it still passes.
+The distinctions LongMemEval draws, since recall alone flatters a memory
+system.
 
-Three trials each, both agents, after the compact-context fix.
-
-| Category | Claude | Codex |
+| Category | claude | codex |
 | --- | --- | --- |
-| Knowledge update: a superseded fact is dropped | 3/3 | 3/3 |
-| Temporal: which of two events came first | 3/3 | 3/3 |
-| Multi-session: a decision 25 events back | 3/3 | 3/3 |
-| Abstention: says UNKNOWN rather than inventing | 3/3 | 3/3 |
+| abstention | 30/30 | 30/30 |
+| knowledge_update | 30/30 | 30/30 |
+| multi_session | 30/30 | 30/30 |
+| temporal | 30/30 | 30/30 |
 
-Multi-session recall used to be the weak one. Claude scored 2/3 before the fix,
-and the passing answers cited `.continuum/events.jsonl`, meaning the agent had
-gone and read the raw log because the compact context no longer mentioned the
-decision. `current.md` now carries a short trail of earlier handoff tasks, and
-compact context for that case is 44 tokens rather than 74. A six-trial rerun
-scored 6/6.
+## Launching an agent and getting its reply back
 
-Codex passed that category at 3/3 even before the fix. It reads files more
-aggressively, which is also why it is slower.
+Continuum starts an agent, sends it a prompt and reads what comes back.
+This is the mechanism cross-agent delegation is built on, measured on its
+own. It is not a measurement of one agent consulting another: no calling
+agent is started, and nothing here exercises an agent reaching Continuum
+through its own tool wiring, which is where the sandbox and tool-access
+failures live.
 
-## Delegation
+|  | round trip | reply delivered | completed |
+| --- | --- | --- | --- |
+| claude | 5.1s | 100% | 30/30 |
+| codex | 17.2s | 100% | 30/30 |
 
-One agent consulting another, three trials, 210 prompt tokens.
+## What this does not measure
 
-| | round trip |
-| --- | --- |
-| Claude | 7.3s |
-| Codex | 24.7s |
+One scenario, one project. A benchmark built from a single recorded state
+cannot tell you how Continuum behaves across a real project's history.
 
-## Caveats
+Substring matching against accepted answers, per question. It is
+reproducible and needs no judge, but it cannot tell a correct answer from a
+differently-worded correct answer it was not told to accept.
 
-Three trials per cell, and no confidence intervals. The floor was visibly noisy
-even before the scoring flaw was found: the same no-memory arm scored 26.7% in
-one run and 13.3% in the next, which is on its own enough reason not to quote a
-single figure from three trials.
+Cross-agent delegation end to end. The table above measures Continuum
+launching an agent and reading its reply. Whether one agent can reach
+another through its own tool wiring depends on that agent's sandbox and
+tool permissions, and is not measured here.
 
-Scoring is substring matching against accepted answers. An agent that echoes
-the injected text without understanding it still passes. Worse, in the five
-probe fidelity run the match was made against the whole reply rather than the
-question it belonged to, which is why those numbers are withdrawn above.
+Token counts. The sizes above are characters divided by four, not
+tokenized, so the token column is an estimate and the character column is
+not. A ratio between two of them is unaffected, since the same divisor is
+on both sides.
 
-One scenario, one project, two agents. Gemini is not included because it stops
-on a browser sign-in prompt before answering.
+Gemini is absent: it stops on a browser sign-in prompt before answering, so
+there is nothing to measure without a signed-in machine.
 
-Two earlier versions of this harness produced numbers that were wrong, and both
-failures are worth knowing about because they are easy to repeat:
+## Faults this benchmark has had
 
-The first conflict test built the injected prompt by calling
-`resume_context()`, which reads the same files it was supposed to contradict.
-Injected and disk therefore said the same thing, and the result meant nothing.
+Recorded because a benchmark that hides its own failures is worth less than
+one that does not.
 
-Codex's no-memory arm first reported 0% in 0.3 seconds. Codex refuses to start
-outside a Git repository, so a refusal was recorded as a score of zero. After
-adding a repository it ran, but scored 5/5 once in an empty project, because
-the control directory sat next to the other test projects and Codex spent 156
-seconds finding them. That arm was re-run in an isolated temporary directory,
-though its accuracy figure is withdrawn along with the rest.
-
-Three separate instrument faults, each found only by looking at how a result was
-produced rather than at the result itself. That is the reason this page exists.
+1. The scorer matched each accepted answer against the whole reply rather
+   than the question it belonged to, so an answer to one question could
+   satisfy another. Every accuracy figure it produced was withdrawn.
+2. A conflict test built its injected prompt from the same files it was
+   meant to contradict, so both sides agreed and the result meant nothing.
+3. A control arm scored an agent's refusal to start as zero, turning an
+   infrastructure failure into a model result.
+4. Two runs were left calling the same CLIs at once, so a set of timings was
+   measured under contention and had to be discarded and repeated.
+5. The delegation arm scored every trial zero without reading the reply,
+   and that zero was divided by the five fidelity probes, so a cell that
+   never checked an answer published delegation as zero percent accurate
+   over 30 trials, with a confidence interval to match.
+6. The machine suspended for ten hours mid-run and charged the whole
+   suspension to the trial in flight, moving one cell's mean from about
+   forty seconds to 1217.5. Timings are now published as medians, and a
+   cell whose longest trial exceeds twenty times its median is flagged
+   rather than quietly dropped.

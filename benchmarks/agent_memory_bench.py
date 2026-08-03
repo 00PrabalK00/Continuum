@@ -250,13 +250,53 @@ def bootstrap_interval(values: list[float], confidence: float = 0.95,
     return (round(low, 2), round(high, 2))
 
 
+def wilson_interval(successes: int, total: int, z: float = 1.96) -> tuple[float, float]:
+    """A Wilson score interval on the proportion, as a percentage.
+
+    The percentile bootstrap this replaced could only resample the values it was
+    given, so a cell where all 30 trials scored identically produced [100, 100]:
+    an interval asserting no uncertainty at all, from 30 observations. That is
+    false, and it is worse than no interval, because it invites the reader to
+    believe the sample settled the question.
+
+    Wilson keeps a boundary away from the edge. Thirty trials of five probes,
+    all correct, gives a lower bound near 97.5% rather than 100%, which is what
+    150 successes actually support.
+    """
+    if total <= 0:
+        return (0.0, 0.0)
+    proportion = successes / total
+    denominator = 1 + z * z / total
+    centre = (proportion + z * z / (2 * total)) / denominator
+    spread = z * ((proportion * (1 - proportion) / total + z * z / (4 * total * total)) ** 0.5) / denominator
+    low = max(0.0, centre - spread) * 100
+    high = min(1.0, centre + spread) * 100
+    return (round(low, 2), round(high, 2))
+
+
 def context_sizes(store: MemoryStore) -> dict:
     raw = "\n".join(
         json.dumps(item, ensure_ascii=True) for item in store.recent_events(200)
     )
-    sizes = {"raw_history": estimate_tokens(raw)}
+    # The handoff file records the absolute project path, so the measured size
+    # of the normal and deep modes moved with the length of the temporary
+    # directory: 427 tokens under one name and 436 under a longer one. That is a
+    # fact about where the benchmark ran, not about how much context Continuum
+    # produces, and it made two of the four published figures unreproducible.
+    def measured(text: str) -> str:
+        return text.replace(str(store.project), "<project>")
+
+    sizes = {"raw_history": estimate_tokens(measured(raw))}
     for mode in ("compact", "normal", "deep"):
-        sizes[mode] = estimate_tokens(store.resume_context(mode))
+        sizes[mode] = estimate_tokens(measured(store.resume_context(mode)))
+    # Characters as well, because they are exact. estimate_tokens divides by
+    # four, so the token figures are an estimate and should be published as one.
+    # The ratio between two of them is unaffected, since the same divisor is on
+    # both sides.
+    sizes["characters"] = {
+        "raw_history": len(measured(raw)),
+        **{mode: len(measured(store.resume_context(mode))) for mode in ("compact", "normal", "deep")},
+    }
     return sizes
 
 
@@ -319,7 +359,11 @@ def summarize(rows: list[dict], max_score: int | None = None) -> dict:
     # and was published as 0% accurate because of it.
     denominator = max_score or len(PROBES)
     per_trial_pct = [100.0 * value / denominator for value in scores]
-    low, high = bootstrap_interval(per_trial_pct)
+    # On the probe answers rather than on the trial means. Accuracy here is
+    # exactly (probes passed) / (probes asked), so a proportion interval is the
+    # right instrument, and unlike a bootstrap it does not collapse to a point
+    # when every trial happens to score the same.
+    low, high = wilson_interval(sum(scores), denominator * len(good))
     # Per probe kind, so a headline number cannot hide a category that always
     # fails. Each probe contributes one pass or fail per completed trial.
     by_kind: dict[str, list[int]] = {}

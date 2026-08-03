@@ -139,16 +139,33 @@ continuum agent list
 
 <!-- benchmark-results:start -->
 
-**The figures that were here have been withdrawn while they are re-measured.**
-Review found that the scorer matched each accepted answer against the whole
-reply rather than against the question it belonged to, so an answer to one
-question could satisfy an unrelated one and a reply that skipped a question
-entirely could still score full marks. Any accuracy number it produced is
-unreliable, in an unknown direction.
+Measured against real agent CLIs, 30 trials per cell, on a project whose
+recorded state we control. The interval is a 95% Wilson score interval.
 
-A re-measurement is underway with per-question scoring, adversarial and
-unanswerable probes, 30 trials per cell and confidence intervals.
-[docs/benchmarks.md](docs/benchmarks.md) records the method and what went wrong.
+| Arm | claude | codex |
+| --- | --- | --- |
+| Continuum injects the context | 100% (98 to 100) | 100% (98 to 100) |
+| No injection, the agent reads `.continuum/` itself | 100% (98 to 100) | 100% (98 to 100) |
+| No project memory at all | 17% (12 to 24) | 20% (14 to 27) |
+
+Compact context for that project is 436 characters against 6,837 of
+raw event history, 94% smaller. That is roughly 109 tokens against 1,710,
+though the token figures are characters divided by four rather than real
+tokenization, so the ratio is the exact part. It needs no agent and no API
+key, and can be checked in seconds.
+
+The middle row is the uncomfortable one, and it stays in the table. An agent
+left to open `.continuum/` itself answers just as well, so recording the
+context is what produces the accuracy. Injecting it is what makes it fast:
+
+| Arm | claude | codex |
+| --- | --- | --- |
+| Continuum injects the context | 5.5s | 22.9s |
+| No injection, the agent reads `.continuum/` itself | 17.1s | 29.9s |
+| No project memory at all | 21.4s | 94.5s |
+
+[docs/benchmarks.md](docs/benchmarks.md) has the method, the per-probe
+breakdown, what this does not measure, and the faults this benchmark has had.
 
 <!-- benchmark-results:end -->
 
