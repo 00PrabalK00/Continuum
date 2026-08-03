@@ -34,6 +34,7 @@ from .orchestration import OrchestrationError, Orchestrator
 from .policy import PolicyError, requires_approval, write_starter_policy
 from . import command_risk
 from . import freshness
+from . import history
 from . import mcp_trust
 from . import audit_export
 from .benchmark import capture_task, compare_captures, load_capture, render_comparison, write_capture
@@ -603,6 +604,44 @@ def setup(args: argparse.Namespace) -> int:
     print("  continuum go            open the next AI with your context; saves on exit")
     print("  continuum copy          copy context for any AI chat (web included)")
     print("  continuum               show where you left off")
+    return 0
+
+
+def checkpoint_log(args: argparse.Namespace) -> int:
+    print(history.render_log(store_from(args), max(1, int(args.limit))))
+    return 0
+
+
+def checkpoint_diff(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    if args.older and args.newer:
+        older, newer = history.find(store, args.older), history.find(store, args.newer)
+    elif args.older:
+        # One argument reads as "what changed since this one", which is the
+        # question people actually ask of a diff against a named point.
+        older, newer = history.find(store, args.older), history.find(store, "HEAD")
+    else:
+        recent = history.checkpoints(store, 2)
+        if len(recent) < 2:
+            raise SystemExit("Fewer than two checkpoints recorded, so there is nothing to compare.")
+        newer, older = recent[0], recent[1]
+    print(history.render_diff(store, older, newer))
+    return 0
+
+
+def checkpoint_restore(args: argparse.Namespace) -> int:
+    store = store_from(args)
+    wanted = history.find(store, args.checkpoint)
+    task = history.field(wanted, "task")
+    next_step = history.field(wanted, "next_step")
+    if not task and not next_step:
+        raise SystemExit(f"{history.label(wanted)} recorded no task to restore.")
+    saved = history.restore(store, wanted)
+    print(f"Restored {history.label(wanted)}.")
+    print(f"Task: {saved['task']}")
+    if saved["next_step"]:
+        print(f"Next: {saved['next_step']}")
+    print("Recorded as a new checkpoint; the history is unchanged.")
     return 0
 
 
@@ -2472,6 +2511,22 @@ def parser(collapse: bool = True) -> argparse.ArgumentParser:
     output = commands.add_parser("logs", parents=[common], help="Show daemon output.")
     output.add_argument("--tail", type=int, default=50)
     output.set_defaults(func=logs)
+
+    show_log = commands.add_parser("log", parents=[common], help="List recorded checkpoints, newest first.")
+    show_log.add_argument("--limit", type=int, default=20)
+    show_log.set_defaults(func=checkpoint_log)
+
+    show_diff = commands.add_parser("diff", parents=[common], help="Show what changed between two checkpoints.")
+    show_diff.add_argument("older", nargs="?", help="Checkpoint id, for example C6. Defaults to the one before newest.")
+    show_diff.add_argument("newer", nargs="?", help="Checkpoint id. Defaults to the newest.")
+    show_diff.set_defaults(func=checkpoint_diff)
+
+    do_restore = commands.add_parser(
+        "restore", parents=[common],
+        help="Continue from an earlier checkpoint. Records a new one rather than erasing what happened.",
+    )
+    do_restore.add_argument("checkpoint", help="Checkpoint id, for example C6.")
+    do_restore.set_defaults(func=checkpoint_restore)
 
     make_handoff = commands.add_parser("handoff", parents=[common], help="Write a deliberate continuation checkpoint.")
     make_handoff.add_argument("--task", required=True)
