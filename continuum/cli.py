@@ -629,6 +629,14 @@ def checkpoint_diff(args: argparse.Namespace) -> int:
     return 0
 
 
+def checkpoint_blame(args: argparse.Namespace) -> int:
+    text = " ".join(args.text).strip()
+    if not text:
+        raise SystemExit('Say what to look for, for example: continuum blame "BillingGateway"')
+    print(history.render_blame(store_from(args), text))
+    return 0
+
+
 def checkpoint_restore(args: argparse.Namespace) -> int:
     store = store_from(args)
     wanted = history.find(store, args.checkpoint)
@@ -2520,6 +2528,13 @@ def parser(collapse: bool = True) -> argparse.ArgumentParser:
     show_diff.add_argument("older", nargs="?", help="Checkpoint id, for example C6. Defaults to the one before newest.")
     show_diff.add_argument("newer", nargs="?", help="Checkpoint id. Defaults to the newest.")
     show_diff.set_defaults(func=checkpoint_diff)
+
+    show_blame = commands.add_parser(
+        "blame", parents=[common],
+        help="Show which checkpoint a piece of recorded context came from.",
+    )
+    show_blame.add_argument("text", nargs="+", help="Words to look for in the recorded task or next step.")
+    show_blame.set_defaults(func=checkpoint_blame)
 
     do_restore = commands.add_parser(
         "restore", parents=[common],

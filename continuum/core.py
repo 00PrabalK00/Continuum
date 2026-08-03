@@ -1506,6 +1506,31 @@ The planner role is preserving architecture intent and constraints while the exe
             for row in rows
         ]
 
+    def handoffs_mentioning(self, text: str) -> list[dict[str, Any]]:
+        """Every handoff whose payload contains the text, oldest first.
+
+        The whole history rather than a recent window. Provenance answered from
+        a window is wrong in two directions at once: a term recorded only before
+        the window reads as never recorded, and a term repeated inside it is
+        attributed to the later mention as though that were the first.
+
+        SQLite does the narrowing on the raw payload, which can match a key or a
+        field the caller did not ask about, so the caller filters the survivors.
+        """
+        if not self.db_file.exists() or not text:
+            return []
+        connection = self.connect()
+        rows = connection.execute(
+            "SELECT id, created_at, kind, payload FROM events "
+            "WHERE kind = 'handoff' AND lower(payload) LIKE ? ORDER BY id ASC",
+            (f"%{text.lower()}%",),
+        ).fetchall()
+        connection.close()
+        return [
+            {"id": row[0], "created_at": row[1], "kind": row[2], "payload": json.loads(row[3])}
+            for row in rows
+        ]
+
     def earlier_tasks(self, limit: int = 4, exclude: str = "") -> list[str]:
         """Distinct earlier handoff tasks, most recent first.
 
