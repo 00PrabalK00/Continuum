@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from .freshness import head_sha
+
 if TYPE_CHECKING:  # pragma: no cover - import cycle at runtime
     from .core import MemoryStore
 
@@ -48,10 +50,18 @@ def find(store: "MemoryStore", reference: str) -> dict[str, Any]:
             f"{reference!r} is not a checkpoint. Use an id from `continuum log`, "
             "such as C7, or HEAD."
         ) from None
-    for item in checkpoints(store, 500):
-        if item["id"] == wanted:
-            return item
-    raise HistoryError(f"No checkpoint C{wanted}. Run `continuum log` to see which exist.")
+    # By id rather than by scanning a window. A fixed scan rejects checkpoints
+    # that `continuum log --limit` will happily display, so history the project
+    # still holds would be unreachable to diff and restore.
+    found = store.get_memory(wanted)
+    if not found:
+        raise HistoryError(f"No checkpoint C{wanted}. Run `continuum log` to see which exist.")
+    if found.get("kind") != "handoff":
+        raise HistoryError(
+            f"M{wanted} is a {found.get('kind')} event, not a checkpoint. "
+            "`continuum log` lists the checkpoints."
+        )
+    return found
 
 
 def label(item: dict[str, Any]) -> str:
@@ -60,6 +70,43 @@ def label(item: dict[str, Any]) -> str:
 
 def field(item: dict[str, Any], name: str) -> str:
     return str((item.get("payload") or {}).get(name) or "")
+
+
+def one_line(text: str, limit: int = 100) -> str:
+    """Flatten and bound a recorded field for the log.
+
+    A task is caller-supplied and can be long or multiline. Printed raw, one
+    checkpoint turns a twenty-line history into thousands of characters, and the
+    line-per-checkpoint shape the log depends on stops holding.
+    """
+    flat = " ".join(str(text).split())
+    return flat if len(flat) <= limit else flat[: limit - 1].rstrip() + "…"
+
+
+def restore(store: "MemoryStore", wanted: dict[str, Any]) -> dict[str, str]:
+    """Record the selected checkpoint's state again, exactly as it was.
+
+    Not through record_progress: its job is to fill in what a caller left out,
+    by asking the handoff model or carrying the current next step forward. That
+    is right for a save and wrong here. A checkpoint with a task and no next
+    step would come back carrying the *current* next step, which is a state that
+    never existed, presented as a restore of one that did.
+    """
+    task = field(wanted, "task")
+    next_step = field(wanted, "next_step")
+    store.event(
+        "handoff",
+        {
+            "task": task,
+            "next_step": next_step or None,
+            "base_next_step": next_step or None,
+            "source": "restore",
+            "restored_from": wanted["id"],
+            "commit": head_sha(store.project),
+        },
+    )
+    store.write_handoff(task, next_step or None)
+    return {"task": task, "next_step": next_step}
 
 
 def render_log(store: "MemoryStore", limit: int = 20) -> str:
@@ -71,7 +118,8 @@ def render_log(store: "MemoryStore", limit: int = 20) -> str:
         commit = field(item, "commit")
         stamp = str(item["created_at"])[:16].replace("T", " ")
         suffix = f"  ({commit[:SHORT]})" if commit else ""
-        lines.append(f"{label(item):<6} {stamp}  {field(item, 'task') or '(no task recorded)'}{suffix}")
+        task = one_line(field(item, "task")) or "(no task recorded)"
+        lines.append(f"{label(item):<6} {stamp}  {task}{suffix}")
     return "\n".join(lines)
 
 

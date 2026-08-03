@@ -105,6 +105,52 @@ class FindTest(unittest.TestCase):
                 history.find(store, "yesterday")
 
 
+class RenderingTest(unittest.TestCase):
+    """The log is one line per checkpoint. A caller-supplied task can be long or
+    multiline, and printed raw it breaks that shape."""
+
+    def test_a_multiline_task_stays_on_one_line(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            record_progress(store, "first line\nsecond line\nthird line", "next")
+            body = run(checkpoint_log, store, limit=20)
+            self.assertEqual(len([line for line in body.splitlines() if line]), 1)
+
+    def test_a_very_long_task_is_bounded(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            record_progress(store, "x" * 5_000, "next")
+            body = run(checkpoint_log, store, limit=20).strip()
+            self.assertLess(len(body), 200)
+            self.assertTrue(body.endswith("…"))
+
+    def test_an_ordinary_task_is_untouched(self):
+        self.assertEqual(history.one_line("wrote the audit log schema"),
+                         "wrote the audit log schema")
+
+
+class OldHistoryTest(unittest.TestCase):
+    def test_a_checkpoint_beyond_the_recent_window_still_resolves(self):
+        # A fixed scan of the newest N rejected checkpoints that `continuum log
+        # --limit` would happily display.
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            record_progress(store, "the first thing", "the first step")
+            oldest = history.checkpoints(store, 1)[0]
+            for index in range(30):
+                record_progress(store, f"thing {index}", f"step {index}")
+            self.assertEqual(history.find(store, history.label(oldest))["id"], oldest["id"])
+
+    def test_a_non_checkpoint_event_is_named_as_such(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            store.event("agent_exit", {"summary": "not a checkpoint", "returncode": 0})
+            recorded = store.recent_events(1)[0]
+            with self.assertRaises(history.HistoryError) as caught:
+                history.find(store, str(recorded["id"]))
+            self.assertIn("not a checkpoint", str(caught.exception))
+
+
 class DiffTest(unittest.TestCase):
     def test_the_default_compares_the_newest_two(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -205,6 +251,28 @@ class RestoreTest(unittest.TestCase):
             oldest = history.checkpoints(store, 2)[-1]
             text = run(checkpoint_restore, store, checkpoint=history.label(oldest))
             self.assertIn("history is unchanged", text)
+
+    def test_a_checkpoint_with_no_next_step_does_not_gain_one(self):
+        # record_progress fills in a missing next step from the current state or
+        # the handoff model. Restoring through it produced a state that never
+        # existed: the old task carrying the current next step.
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            record_progress(store, "just the task", "")
+            bare = history.checkpoints(store, 1)[0]
+            record_progress(store, "later work", "a step that must not be copied")
+            run(checkpoint_restore, store, checkpoint=history.label(bare))
+            self.assertEqual(store.latest_task()[0], "just the task")
+            self.assertNotEqual(store.latest_task()[1], "a step that must not be copied")
+
+    def test_the_source_checkpoint_is_recorded(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh(temporary)
+            two(store)
+            oldest = history.checkpoints(store, 2)[-1]
+            run(checkpoint_restore, store, checkpoint=history.label(oldest))
+            self.assertEqual(history.checkpoints(store, 1)[0]["payload"]["restored_from"],
+                             oldest["id"])
 
     def test_an_unknown_checkpoint_is_refused(self):
         with tempfile.TemporaryDirectory() as temporary:

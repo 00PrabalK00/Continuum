@@ -636,7 +636,7 @@ def checkpoint_restore(args: argparse.Namespace) -> int:
     next_step = history.field(wanted, "next_step")
     if not task and not next_step:
         raise SystemExit(f"{history.label(wanted)} recorded no task to restore.")
-    saved = record_progress(store, task, next_step, source="restore")
+    saved = history.restore(store, wanted)
     print(f"Restored {history.label(wanted)}.")
     print(f"Task: {saved['task']}")
     if saved["next_step"]:
