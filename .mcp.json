@@ -1,0 +1,6 @@
+{
+  "continuum": {
+    "command": "continuum",
+    "args": ["mcp", "serve", "--project", "${CLAUDE_PROJECT_DIR}"]
+  }
+}

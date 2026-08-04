@@ -1,0 +1,2 @@
+Git keeps the history of your code. Continuum keeps the working context around it.
+Plain files in your project — what you were doing, what you decided, what comes next — handed to whichever AI you open next. It sits beside git, not inside it.

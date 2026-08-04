@@ -16,6 +16,7 @@ from continuum.cli import parser
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / ".claude-plugin" / "plugin.json"
 MARKETPLACE = ROOT / ".claude-plugin" / "marketplace.json"
+MCP = ROOT / ".mcp.json"
 
 
 def load(path: Path) -> dict:
@@ -36,10 +37,19 @@ class ManifestTest(unittest.TestCase):
         self.assertEqual(entry["name"], plugin["name"])
         self.assertEqual(entry["version"], plugin["version"])
 
+    def test_the_server_is_declared_where_claude_code_reads_it(self):
+        # Claude Code reads MCP servers from .mcp.json at the plugin root, not
+        # from an mcpServers key in plugin.json. Declaring it in plugin.json
+        # installs cleanly and registers nothing, which is what happened: the
+        # component inventory reported "MCP servers (0)" while the README said
+        # installing registers the server.
+        self.assertTrue(MCP.exists(), ".mcp.json is what actually registers the server")
+        self.assertNotIn("mcpServers", load(PLUGIN))
+
     def test_the_declared_mcp_command_exists(self):
         # The manifest promises `continuum mcp serve`. If that subcommand is
         # renamed, the plugin installs and then does nothing.
-        server = load(PLUGIN)["mcpServers"]["continuum"]
+        server = load(MCP)["continuum"]
         self.assertEqual(server["command"], "continuum")
         self.assertEqual(server["args"][:2], ["mcp", "serve"])
 
@@ -53,7 +63,7 @@ class ManifestTest(unittest.TestCase):
     def test_the_project_directory_is_passed_through(self):
         # Without it the server would scope itself to the process working
         # directory, which is not necessarily the project being opened.
-        args = load(PLUGIN)["mcpServers"]["continuum"]["args"]
+        args = load(MCP)["continuum"]["args"]
         self.assertIn("--project", args)
         self.assertTrue(any("CLAUDE_PROJECT_DIR" in item for item in args))
 

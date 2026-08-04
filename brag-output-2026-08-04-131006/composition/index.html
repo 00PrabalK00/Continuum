@@ -1,0 +1,524 @@
+<!doctype html>
+<html lang="en" data-resolution="landscape">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Continuum — beside git</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script src="assets/audio-data.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #0c1018;
+      }
+
+      :root {
+        --bg: #0c1018;
+        --surface: #121b28;
+        --border: #243144;
+        --text: #e7edf7;
+        --muted: #94a3b8;
+        --accent: #5272f2;
+        --accent-soft: #7c94f6;
+        --success: #43c59e;
+        --sans: Inter, "Segoe UI", system-ui, sans-serif;
+        --mono: "JetBrains Mono", Consolas, "Cascadia Mono", ui-monospace, monospace;
+        --glow: 30px;
+        --glowa: 0.06;
+      }
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #0c1018;
+        font-family: var(--sans);
+        color: var(--text);
+      }
+
+      .clip {
+        position: absolute;
+        inset: 0;
+      }
+      .bg {
+        position: absolute;
+        inset: 0;
+        background: var(--bg);
+      }
+      .stage {
+        position: absolute;
+        inset: 0;
+      }
+
+      /* ---------- terminal panels ---------- */
+      .panel {
+        position: absolute;
+        top: 130px;
+        width: 880px;
+        height: 644px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        overflow: hidden;
+        box-shadow: 0 0 var(--glow) rgba(82, 114, 242, var(--glowa));
+      }
+      #panel-git {
+        left: 70px;
+      }
+      #panel-agent {
+        left: 970px;
+      }
+      .bar {
+        position: relative;
+        display: flex;
+        align-items: center;
+        height: 44px;
+        padding: 0 20px;
+        background: #101620;
+        border-bottom: 1px solid var(--border);
+      }
+      .dot {
+        display: block;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--accent);
+        margin-right: 12px;
+      }
+      .lblwrap {
+        position: relative;
+        flex: 1;
+        height: 44px;
+      }
+      .lbl {
+        position: absolute;
+        left: 0;
+        top: 0;
+        height: 44px;
+        line-height: 44px;
+        font-family: var(--mono);
+        font-size: 19px;
+        color: var(--muted);
+      }
+      #lbl-codex {
+        opacity: 0;
+      }
+      #bar-pulse {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 2px;
+        background: var(--accent);
+        transform-origin: left center;
+      }
+      .view {
+        position: relative;
+        height: 600px;
+        padding: 0 20px;
+        overflow: hidden;
+      }
+      .body {
+        position: relative;
+        padding: 20px 0;
+        font-family: var(--mono);
+        font-size: 20px;
+      }
+      .ln {
+        height: 32px;
+        line-height: 32px;
+        white-space: pre;
+        opacity: 0;
+        color: var(--text);
+      }
+      .sp {
+        height: 16px;
+      }
+      .acc {
+        color: var(--accent-soft);
+      }
+      .mut {
+        color: var(--muted);
+      }
+      .ok {
+        color: var(--success);
+      }
+      .ch {
+        opacity: 0;
+      }
+
+      /* ---------- annotation band ---------- */
+      .annot {
+        position: absolute;
+        left: 70px;
+        right: 70px;
+        top: 812px;
+        height: 120px;
+      }
+      .annot-line {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        font-size: 58px;
+        font-weight: 600;
+        letter-spacing: -0.5px;
+        opacity: 0;
+      }
+
+      /* ---------- outro ---------- */
+      .solo {
+        position: absolute;
+        left: 510px;
+        top: 196px;
+        width: 900px;
+        height: 224px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        overflow: hidden;
+        box-shadow: 0 0 var(--glow) rgba(82, 114, 242, var(--glowa));
+      }
+      .caption {
+        position: absolute;
+        left: 70px;
+        right: 70px;
+        top: 494px;
+        height: 88px;
+        line-height: 88px;
+        text-align: center;
+        font-size: 56px;
+        font-weight: 600;
+        letter-spacing: -0.5px;
+        opacity: 0;
+      }
+      .wordmark {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 646px;
+        height: 112px;
+        line-height: 112px;
+        text-align: center;
+        font-size: 84px;
+        font-weight: 600;
+        letter-spacing: -1.5px;
+        opacity: 0;
+      }
+      .caret {
+        display: inline-block;
+        width: 16px;
+        height: 62px;
+        margin-left: 16px;
+        vertical-align: -8px;
+        background: var(--accent);
+      }
+      .tagline {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 782px;
+        height: 44px;
+        line-height: 44px;
+        text-align: center;
+        font-size: 30px;
+        color: var(--muted);
+        opacity: 0;
+      }
+      .repo {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 840px;
+        height: 34px;
+        line-height: 34px;
+        text-align: center;
+        font-family: var(--mono);
+        font-size: 22px;
+        color: var(--muted);
+        opacity: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="20.6"
+      data-width="1920"
+      data-height="1080"
+      data-fps="30"
+    >
+      <!-- ============ SCENES 1-3: the two panels ============ -->
+      <div id="sc-main" class="clip" data-start="0" data-duration="15.803" data-track-index="1">
+        <div class="bg"></div>
+        <div class="stage" id="main-stage">
+          <!-- left: git, working exactly as intended -->
+          <div class="panel" id="panel-git">
+            <div class="bar">
+              <span class="dot"></span>
+              <span class="lbl">git — my-project</span>
+            </div>
+            <div class="view">
+              <div class="body" id="git-body" data-layout-allow-overflow>
+                <div class="ln" id="g0"><span class="acc">$ </span><span class="typed" id="tg0">git log --oneline</span></div>
+                <div class="ln" id="g1"><span class="mut">816794a</span> Add the Claude Code plugin manifests</div>
+                <div class="ln" id="g2"><span class="mut">70390b6</span> Let a directory claim cover the files inside it (#70)</div>
+                <div class="ln" id="g3"><span class="mut">95f4d51</span> Install from GitHub rather than a registry</div>
+                <div class="ln" id="g4"><span class="mut">84c0647</span> Release 0.13.0</div>
+                <div class="ln" id="g5"><span class="mut">bad4acd</span> Rewrite the README around the results</div>
+                <div class="ln" id="g6"><span class="mut">205ab40</span> Publish the verified benchmark results (#66)</div>
+                <div class="ln" id="g7"><span class="mut">6129334</span> Add log, diff and restore over the checkpoint history (#64)</div>
+                <div class="ln" id="g8"><span class="mut">aa0cb94</span> Prepare both packages for release (#59)</div>
+                <div class="ln" id="g9"><span class="mut">ceb2b8e</span> Simplify the README and add measured results (#52)</div>
+                <div class="ln" id="g10"><span class="mut">be9c038</span> Keep earlier decisions in compact context (#53)</div>
+                <div class="ln" id="g11"><span class="mut">f6a8159</span> Add end-to-end trust demo flow integration test (#46)</div>
+                <div class="ln" id="g12"><span class="mut">a507ebf</span> QA: harden Control Center trust UI (#45)</div>
+                <div class="ln" id="g13"><span class="mut">de6aa1b</span> QA: harden flight recorder, ROI and benchmark (#47)</div>
+                <div class="ln" id="g14"><span class="mut">d93bef5</span> Add `continuum objective` one-command workflow (#41)</div>
+                <div class="ln" id="g15"><span class="mut">4c29981</span> Release 0.8.0 (#40)</div>
+                <div class="ln" id="g16"><span class="mut">e0b9f10</span> Add evidence pack and PR packet trust artifacts (#37)</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- right: the working context -->
+          <div class="panel" id="panel-agent">
+            <div class="bar">
+              <span class="dot"></span>
+              <span class="lblwrap">
+                <span class="lbl" id="lbl-claude">claude — my-project</span>
+                <span class="lbl" id="lbl-codex">codex — my-project</span>
+              </span>
+              <div id="bar-pulse"></div>
+            </div>
+            <div class="view">
+              <div class="body" id="agent-body" data-layout-allow-overflow>
+                <div class="ln" id="r0"><span class="acc">&gt; </span><span class="typed" id="tr0">what am I working on?</span></div>
+                <div class="ln mut" id="r1">I don't have any context for this project.</div>
+                <div class="sp"></div>
+                <div class="ln" id="r3"><span class="acc">$ </span><span class="typed" id="tr3">continuum save "fixed the auth bug | next: test the retry logic"</span></div>
+                <div class="ln" id="r4">Saved: fixed the auth bug</div>
+                <div class="ln" id="r5">Next:  test the retry logic</div>
+                <div class="sp"></div>
+                <div class="ln acc" id="r7">.continuum/</div>
+                <div class="ln mut" id="r8">  current.md          # where things stand</div>
+                <div class="ln mut" id="r9">  latest_handoff.md   # what the next AI gets</div>
+                <div class="ln mut" id="r10">  events.sqlite3      # full history</div>
+                <div class="ln mut" id="r11">  session_logs/       # what each AI actually did</div>
+                <div class="sp"></div>
+                <div class="ln" id="r13"><span class="acc">$ </span><span class="typed" id="tr13">continuum go</span></div>
+                <div class="ln mut" id="r14">Handing off to codex (claude used last).</div>
+                <div class="sp"></div>
+                <div class="ln" id="r16"><span class="acc">&gt; </span>what am I working on?</div>
+                <div class="ln ok" id="r17">Task: fixed the auth bug</div>
+                <div class="ln ok" id="r18">Next: test the retry logic</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="annot">
+            <div class="annot-line" id="an-git">Git keeps the history of your code.</div>
+            <div class="annot-line" id="an-ctx">Continuum keeps the working context around it.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ SCENE 4: beside git ============ -->
+      <div id="sc-outro" class="clip" data-start="15.803" data-duration="4.797" data-track-index="2">
+        <div class="bg"></div>
+        <div class="stage" id="outro-stage">
+          <div class="solo">
+            <div class="bar">
+              <span class="dot"></span>
+              <span class="lbl">my-project</span>
+            </div>
+            <div class="view" style="height: 180px">
+              <div class="body" id="solo-body" data-layout-allow-overflow>
+                <div class="ln" id="s0"><span class="acc">$ </span><span class="typed" id="ts0">cat .continuum/.gitignore</span></div>
+                <div class="ln" id="s1">*</div>
+              </div>
+            </div>
+          </div>
+          <div class="caption" id="caption">It sits beside git, not inside it.</div>
+          <div class="wordmark" id="wordmark">Continuum<span class="caret"></span></div>
+          <div class="tagline" id="tagline">Shared memory for AI coding agents.</div>
+          <div class="repo" id="repo">MIT · github.com/00PrabalK00/Continuum</div>
+        </div>
+      </div>
+
+      <!-- ============ audio ============ -->
+      <audio
+        id="bgm"
+        src="assets/music/happy-beats-business-moves-vol-9-by-ende-dot-app.mp3"
+        data-start="0"
+        data-duration="20.6"
+        data-track-index="10"
+        data-volume="0.18"
+      ></audio>
+
+      <!-- keystrokes (track 11) -->
+      <audio id="k1" src="assets/sfx/keypress-001.wav" data-start="0.26" data-duration="0.12" data-track-index="11" data-volume="0.2"></audio>
+      <audio id="k2" src="assets/sfx/keypress-002.wav" data-start="0.44" data-duration="0.12" data-track-index="11" data-volume="0.2"></audio>
+      <audio id="k3" src="assets/sfx/keypress-003.wav" data-start="0.62" data-duration="0.12" data-track-index="11" data-volume="0.2"></audio>
+      <audio id="k4" src="assets/sfx/keypress-004.wav" data-start="0.80" data-duration="0.12" data-track-index="11" data-volume="0.2"></audio>
+      <audio id="k5" src="assets/sfx/keypress-005.wav" data-start="2.24" data-duration="0.12" data-track-index="11" data-volume="0.2"></audio>
+      <audio id="k6" src="assets/sfx/keypress-006.wav" data-start="2.40" data-duration="0.12" data-track-index="11" data-volume="0.2"></audio>
+      <audio id="k7" src="assets/sfx/keypress-007.wav" data-start="2.56" data-duration="0.12" data-track-index="11" data-volume="0.2"></audio>
+      <audio id="k8" src="assets/sfx/keypress-008.wav" data-start="2.72" data-duration="0.12" data-track-index="11" data-volume="0.2"></audio>
+      <audio id="k9" src="assets/sfx/keypress-009.wav" data-start="6.00" data-duration="0.12" data-track-index="11" data-volume="0.2"></audio>
+      <audio id="k10" src="assets/sfx/keypress-010.wav" data-start="6.16" data-duration="0.12" data-track-index="11" data-volume="0.2"></audio>
+      <audio id="k11" src="assets/sfx/keypress-011.wav" data-start="6.32" data-duration="0.12" data-track-index="11" data-volume="0.2"></audio>
+      <audio id="k12" src="assets/sfx/keypress-012.wav" data-start="6.48" data-duration="0.12" data-track-index="11" data-volume="0.2"></audio>
+      <audio id="k13" src="assets/sfx/keypress-013.wav" data-start="11.78" data-duration="0.12" data-track-index="11" data-volume="0.2"></audio>
+      <audio id="k14" src="assets/sfx/keypress-014.wav" data-start="11.94" data-duration="0.12" data-track-index="11" data-volume="0.2"></audio>
+      <audio id="k15" src="assets/sfx/keypress-015.wav" data-start="12.10" data-duration="0.12" data-track-index="11" data-volume="0.2"></audio>
+      <audio id="k16" src="assets/sfx/keypress-001.wav" data-start="16.02" data-duration="0.12" data-track-index="11" data-volume="0.2"></audio>
+      <audio id="k17" src="assets/sfx/keypress-003.wav" data-start="16.18" data-duration="0.12" data-track-index="11" data-volume="0.2"></audio>
+      <audio id="k18" src="assets/sfx/keypress-005.wav" data-start="16.34" data-duration="0.12" data-track-index="11" data-volume="0.2"></audio>
+      <audio id="k19" src="assets/sfx/keypress-007.wav" data-start="16.50" data-duration="0.12" data-track-index="11" data-volume="0.2"></audio>
+
+      <!-- printed lines (track 12) -->
+      <audio id="p1" src="assets/sfx/click2.ogg" data-start="1.598" data-duration="0.055" data-track-index="12" data-volume="0.17"></audio>
+      <audio id="p2" src="assets/sfx/click2.ogg" data-start="3.18" data-duration="0.055" data-track-index="12" data-volume="0.15"></audio>
+      <audio id="p3" src="assets/sfx/click2.ogg" data-start="6.60" data-duration="0.055" data-track-index="12" data-volume="0.14"></audio>
+      <audio id="p4" src="assets/sfx/click2.ogg" data-start="6.75" data-duration="0.055" data-track-index="12" data-volume="0.14"></audio>
+      <audio id="p5" src="assets/sfx/click2.ogg" data-start="12.655" data-duration="0.055" data-track-index="12" data-volume="0.14"></audio>
+      <audio id="p6" src="assets/sfx/click2.ogg" data-start="14.50" data-duration="0.055" data-track-index="12" data-volume="0.12"></audio>
+
+      <!-- .continuum/ tree (track 13) -->
+      <audio id="f0" src="assets/sfx/rollover2.ogg" data-start="6.862" data-duration="0.057" data-track-index="13" data-volume="0.16"></audio>
+      <audio id="f1" src="assets/sfx/rollover2.ogg" data-start="7.396" data-duration="0.057" data-track-index="13" data-volume="0.14"></audio>
+      <audio id="f2" src="assets/sfx/rollover2.ogg" data-start="7.918" data-duration="0.057" data-track-index="13" data-volume="0.14"></audio>
+      <audio id="f3" src="assets/sfx/rollover2.ogg" data-start="8.441" data-duration="0.057" data-track-index="13" data-volume="0.14"></audio>
+      <audio id="f4" src="assets/sfx/rollover2.ogg" data-start="8.964" data-duration="0.057" data-track-index="13" data-volume="0.14"></audio>
+
+      <!-- the two payoffs (track 14) -->
+      <audio id="i1" src="assets/sfx/impactSoft_medium_002.ogg" data-start="14.222" data-duration="0.135" data-track-index="14" data-volume="0.24"></audio>
+      <audio id="i2" src="assets/sfx/impactSoft_medium_001.ogg" data-start="16.858" data-duration="0.183" data-track-index="14" data-volume="0.26"></audio>
+
+      <!-- agent identity swap (track 16) -->
+      <audio id="sw1" src="assets/sfx/switch_002.ogg" data-start="12.90" data-duration="0.25" data-track-index="16" data-volume="0.2"></audio>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      var tl = gsap.timeline({ paused: true });
+
+      /* --- typing: one span per character, revealed on a stagger --- */
+      function split(el) {
+        var t = el.textContent;
+        var frag = document.createDocumentFragment();
+        for (var i = 0; i < t.length; i++) {
+          var s = document.createElement("span");
+          s.className = "ch";
+          s.textContent = t[i];
+          frag.appendChild(s);
+        }
+        el.textContent = "";
+        el.appendChild(frag);
+        return el.querySelectorAll(".ch");
+      }
+
+      function type(lineId, spanId, start, dur) {
+        var chars = split(document.getElementById(spanId));
+        tl.to("#" + lineId, { opacity: 1, duration: 0.01, ease: "none" }, Math.max(0, start - 0.02));
+        tl.to(chars, { opacity: 1, duration: 0.01, ease: "none", stagger: dur / chars.length }, start);
+      }
+
+      /* --- a printed output line --- */
+      function print(id, at) {
+        tl.fromTo(
+          "#" + id,
+          { opacity: 0, y: 10 },
+          { opacity: 1, y: 0, duration: 0.2, ease: "power3.out" },
+          at
+        );
+      }
+
+      /* ===== Scene 1 - two logs (0 -> 5.805) ===== */
+      type("g0", "tg0", 0.15, 0.75);
+      // a real `git log` prints its whole output at once
+      // beat-locked: strongCue 1.598 - a real `git log` prints its whole output at once
+      for (var gi = 1; gi <= 16; gi++) {
+        print("g" + gi, 1.598);
+      }
+      type("r0", "tr0", 2.15, 0.75);
+      print("r1", 3.18);
+      tl.fromTo("#an-git", { opacity: 0, y: 34 }, { opacity: 1, y: 0, duration: 0.4, ease: "power4.out" }, 3.30); // lands 3.70
+      tl.to("#an-git", { opacity: 0, x: -230, duration: 0.3, ease: "power3.in" }, 5.805);
+
+      /* ===== Scene 2 - the other half (5.805 -> 11.598) ===== */
+      type("r3", "tr3", 5.95, 0.6);
+      print("r4", 6.6);
+      print("r5", 6.75);
+      print("r7", 6.862); // beat-locked: strongCue 6.862
+      print("r8", 7.396); // beat-grid
+      print("r9", 7.918); // beat-grid
+      print("r10", 8.441); // beat-grid
+      print("r11", 8.964); // beat-grid
+      tl.fromTo("#an-ctx", { opacity: 0, y: 34 }, { opacity: 1, y: 0, duration: 0.4, ease: "power4.out" }, 9.097); // lands 9.497 (strongCue)
+
+      /* ===== Scene 3 - handoff (11.598 -> 15.803) ===== */
+      type("r13", "tr13", 11.75, 0.5);
+      print("r14", 12.655); // beat-locked: strongCue 12.655
+      tl.to("#lbl-claude", { opacity: 0, duration: 0.16, ease: "none" }, 12.9);
+      tl.to("#lbl-codex", { opacity: 1, duration: 0.16, ease: "none" }, 12.95);
+      tl.fromTo("#bar-pulse", { scaleX: 0 }, { scaleX: 1, duration: 0.34, ease: "power3.out" }, 12.9);
+      print("r16", 13.3);
+      print("r17", 14.222); // beat-locked: strongCue 14.222
+      print("r18", 14.5);
+      // the context line holds across scene 3 as the film's thesis, then leaves with the cut
+      tl.to("#an-ctx", { opacity: 0, x: -230, duration: 0.3, ease: "power3.in" }, 15.803);
+
+      /* seam - hard cut on strongCue 15.803, travelling LEFT (the film's current) */
+      tl.to("#main-stage", { x: -230, opacity: 0, duration: 0.34, ease: "power4.in" }, 15.52);
+      tl.fromTo("#outro-stage", { x: 230 }, { x: 0, duration: 0.45, ease: "power4.out" }, 15.803);
+
+      /* ===== Scene 4 - beside git (15.803 -> 20.600) ===== */
+      type("s0", "ts0", 15.95, 0.65);
+      print("s1", 16.858); // beat-locked: beat 16.858
+      tl.fromTo("#caption", { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.38, ease: "power4.out" }, 17.0); // lands 17.380
+      tl.fromTo("#wordmark", { opacity: 0, y: 26 }, { opacity: 1, y: 0, duration: 0.38, ease: "power4.out" }, 18.057); // lands 18.437
+      tl.fromTo("#tagline", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.34, ease: "power3.out" }, 18.62);
+      tl.fromTo("#repo", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.32, ease: "power3.out" }, 19.16);
+
+      /* ===== music: flat bed, one duck under the caption, fade to silence ===== */
+      tl.set("#bgm", { volume: 0.18 }, 0);
+      tl.to("#bgm", { volume: 0.13, duration: 0.25, ease: "none" }, 17.6);
+      tl.to("#bgm", { volume: 0, duration: 1.3, ease: "none" }, 19.3);
+
+      /* ===== audio-reactive: accent halo on the panels only ===== */
+      var rootEl = document.getElementById("root");
+      var frameCount = Math.min(AUDIO_DATA.totalFrames, 618);
+      for (var f = 0; f < frameCount; f++) {
+        tl.call(
+          (function (i) {
+            return function () {
+              var r = AUDIO_DATA.rms[i] || 0;
+              var b = AUDIO_DATA.bass[i] || 0;
+              rootEl.style.setProperty("--glow", (24 + b * 28).toFixed(1) + "px");
+              rootEl.style.setProperty("--glowa", (0.045 + r * 0.085).toFixed(3));
+            };
+          })(f),
+          [],
+          f / 30
+        );
+      }
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

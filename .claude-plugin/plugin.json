@@ -1,4 +1,5 @@
 {
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "continuum",
   "description": "Shared project memory for AI coding agents. Records what you are working on and hands it to whichever AI you open next.",
   "version": "0.13.0",
@@ -15,11 +16,5 @@
     "handoff",
     "mcp",
     "multi-agent"
-  ],
-  "mcpServers": {
-    "continuum": {
-      "command": "continuum",
-      "args": ["mcp", "serve", "--project", "${CLAUDE_PROJECT_DIR}"]
-    }
-  }
+  ]
 }
