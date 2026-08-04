@@ -76,7 +76,18 @@ const context = {
   encodeURIComponent,
   Promise,
   document: {
-    getElementById: (id) => nodes[id] || makeNode(id),
+    /* A browser returns null for an id that is not on the page. Handing back a
+       fresh stub node instead made every getElementById succeed, which hid the
+       bug this test exists to catch: the History view wired controls that the
+       empty state never renders. */
+    getElementById(id) {
+      if (nodes[id]) return nodes[id];
+      /* Not cached. A node found in one render must not still resolve in the
+         next one, or the empty state inherits the controls the populated view
+         happened to draw, which is exactly the bug being tested for. */
+      if (String(nodes.view.innerHTML).includes(`id="${id}"`)) return makeNode(id);
+      return null;
+    },
     querySelectorAll: () => [],
   },
   location: { hash: "" },
@@ -144,6 +155,26 @@ process.on("uncaughtException", (error) => { failures.push(`threw: ${error.messa
     }
     console.log(`${view.padEnd(9)} rendered ${String(html.length).padStart(5)} chars`);
   }
+
+  /* A brand new project. Every view must render its empty state rather than an
+     error: the first version wired the blame controls unconditionally, so the
+     History tab threw and showed "Could not load this view" until the first
+     checkpoint existed. Fixtures with data never reach that path, which is why
+     it survived. */
+  const EMPTY = {
+    "/api/now": { project: "fresh", branch: "main", task: "", next_step: "", age_days: null,
+                  drift: null, recorded_against: "", decisions: [], open_questions: [], facts: [] },
+    "/api/checkpoints": [], "/api/branches": [], "/api/notes": [],
+    "/api/providers": [], "/api/teams": [], "/api/tasks": [], "/api/events": [],
+  };
+  Object.assign(FIXTURES, EMPTY);
+  for (const view of Object.keys(EXPECT)) {
+    await context.load(view);
+    const html = nodes.view.innerHTML;
+    if (/Could not load this view/.test(html)) failures.push(`${view}: empty project renders an error`);
+    if (!/empty-state/.test(html)) failures.push(`${view}: empty project renders no guidance`);
+  }
+  console.log("empty     all four views render their empty state");
 
   // Recorded text is never trusted markup. Tested through the rendered output
   // rather than by calling esc() directly: esc is a const, so it never reaches

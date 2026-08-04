@@ -206,27 +206,42 @@ function renderAdvanced(data) {
 
 /* Wiring ------------------------------------------------------------- */
 
+let generation = 0;
+
 async function load(view) {
   const node = document.getElementById("view");
+  const mine = ++generation;
+  /* Switching tabs mid-request left the slower response to overwrite the tab
+     you had already moved to, while the highlight and the URL said otherwise. */
+  const stale = () => mine !== generation;
   node.innerHTML = card(`<p class="muted">Loading…</p>`);
   try {
     if (view === "now") {
       const now = await api("/api/now");
+      if (stale()) return;
       document.getElementById("project").textContent = now.project || "";
       node.innerHTML = renderNow(now);
     } else if (view === "history") {
       const [checkpoints, branches] = await Promise.all([api("/api/checkpoints"), api("/api/branches")]);
+      if (stale()) return;
       node.innerHTML = renderHistory(checkpoints, branches);
-      wireHistory(checkpoints);
+      /* Only when the controls exist. The empty state renders no search box, and
+         wiring it unconditionally threw, so a project with no checkpoints yet
+         showed "Could not load this view" instead of how to make one. */
+      if (checkpoints.length) wireHistory(checkpoints);
     } else if (view === "notes") {
-      node.innerHTML = renderNotes(await api("/api/notes"));
+      const notes = await api("/api/notes");
+      if (stale()) return;
+      node.innerHTML = renderNotes(notes);
     } else {
       const [providers, teams, tasks, events] = await Promise.all([
         api("/api/providers"), api("/api/teams"), api("/api/tasks"), api("/api/events"),
       ]);
+      if (stale()) return;
       node.innerHTML = renderAdvanced({ providers, teams, tasks, events });
     }
   } catch (error) {
+    if (stale()) return;
     node.innerHTML = card(nothing(`Could not load this view. ${esc(error.message)}`));
   }
 }
