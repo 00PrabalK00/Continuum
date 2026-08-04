@@ -7,6 +7,7 @@ about now. These tests cover recording the moment and reporting the drift.
 """
 
 import argparse
+import datetime as dt
 import os
 import subprocess
 import tempfile
@@ -45,6 +46,23 @@ def commit(store: MemoryStore, name: str) -> str:
     git(store.project, "add", name)
     git(store.project, "commit", "-m", name)
     return git(store.project, "rev-parse", "HEAD")
+
+
+def backdate(store, days):
+    """Age the newest checkpoint.
+
+    The age is taken from the checkpoint rather than from latest_handoff.md,
+    because that file is rewritten whenever a branch is switched or a merge
+    lands, which reset its mtime and made an old branch read as recorded today.
+    """
+    import sqlite3
+
+    stamp = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days)).isoformat()
+    newest = store.recent_handoffs(1)[0]["id"]
+    connection = sqlite3.connect(store.db_file)
+    connection.execute("UPDATE events SET created_at = ? WHERE id = ?", (stamp, newest))
+    connection.commit()
+    connection.close()
 
 
 class RecordingTest(unittest.TestCase):
@@ -233,10 +251,26 @@ class SurfacingTest(unittest.TestCase):
             store = MemoryStore(Path(temporary) / "plain")
             store.initialize(100000, 0.8)
             record_progress(store, "did a thing", "do the next thing")
-            handoff = store.state_dir / "latest_handoff.md"
-            old = time.time() - 40 * 86_400
-            os.utime(handoff, (old, old))
+            backdate(store, 40)
             self.assertIn("Recorded 40 days ago", store.resume_context("compact"))
+
+    def test_switching_branches_does_not_reset_the_age(self):
+        # history.switch() rewrites latest_handoff.md, so an age read from the
+        # file made a branch whose last work was weeks ago report as recorded
+        # today. Freshness that resets itself is worse than none, because it is
+        # the one number here whose job is to be doubted.
+        from continuum import history
+
+        with tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "plain")
+            store.initialize(100000, 0.8)
+            record_progress(store, "old work on main", "carry on")
+            backdate(store, 30)
+            history.switch(store, "side")
+            record_progress(store, "fresh work on the side branch", "next")
+            history.switch(store, "main")
+            self.assertEqual(freshness.age_days(store), 30)
+            self.assertIn("Recorded 30 days ago", store.resume_context("compact"))
 
     def test_todays_context_carries_no_age_note(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -264,9 +298,7 @@ class SurfacingTest(unittest.TestCase):
             store = MemoryStore(Path(temporary) / "plain")
             store.initialize(100000, 0.8)
             record_progress(store, "did a thing", "do the next thing")
-            handoff = store.state_dir / "latest_handoff.md"
-            old = time.time() - 1.5 * 86_400
-            os.utime(handoff, (old, old))
+            backdate(store, 1)
             self.assertIn("Recorded 1 day ago", store.resume_context("compact"))
 
     def test_current_context_is_not_prefixed_with_a_warning(self):

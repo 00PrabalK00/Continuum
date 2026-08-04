@@ -1,4 +1,5 @@
 import json
+import re
 import subprocess
 import tempfile
 import threading
@@ -63,8 +64,12 @@ class ControlCenterTest(unittest.TestCase):
                 server.server_close()
                 thread.join(timeout=2)
 
-            self.assertIn("Continuum Control Center", html)
-            self.assertIn('class="active" data-view="teams"', html)
+            self.assertIn("<title>Continuum</title>", html)
+            # Four tabs, and Now is the one that opens: the page leads with where
+            # the project stands rather than with orchestration.
+            for view in ("now", "history", "notes", "advanced"):
+                self.assertIn(f'data-view="{view}"', html)
+            self.assertIn('class="tab active" data-view="now"', html)
             self.assertIn('src="/logo.png"', html)
             self.assertEqual(logo_type, "image/png")
             self.assertEqual(logo[:8], b"\x89PNG\r\n\x1a\n")
@@ -455,48 +460,32 @@ class ControlCenterTest(unittest.TestCase):
             timeline = app.timeline()
             self.assertTrue(any(block["title"] == payload for block in timeline["blocks"]))
 
-    def test_app_js_escapes_user_controlled_trust_values(self):
-        # Static assertion: every user/task-controlled value rendered in the trust
-        # views must be wrapped in escapeHtml(...) so the malicious payload above
-        # cannot break out of the DOM. We assert the specific risky interpolations.
+    def test_app_js_escapes_every_recorded_value_it_renders(self):
+        """Recorded text is written by agents and by people, so none of it is
+        trusted markup.
+
+        This checks the rule rather than a list of call sites, which is what the
+        previous version did: it named specific interpolations from the old
+        views, so it went green whenever those views were removed rather than
+        when escaping was still correct. tests/ui_smoke.js proves the escaping
+        works by rendering a hostile string; this proves nothing was left
+        unescaped anywhere in the file.
+        """
         source = UI_APP_JS.read_text(encoding="utf-8")
-        required = [
-            # timelineView
-            "${escapeHtml(block.lane)}",
-            "${escapeHtml(block.id)} ${escapeHtml(block.title)}",
-            "${escapeHtml(block.status",
-            "${escapeHtml(block.branch",
-            # worktreeBoardView
-            "${escapeHtml(schedule.schedule_id)} ${escapeHtml(schedule.status)}",
-            "${escapeHtml(schedule.objective)}",
-            # laneCard
-            "${escapeHtml(lane.task_id)} ${escapeHtml(lane.role",
-            "${escapeHtml(lane.agent",
-            "${escapeHtml(lane.branch",
-            # flightRecordView
-            "${escapeHtml(record.final_status)}",
-            "${escapeHtml(record.task_id)} ${escapeHtml(record.objective)}",
-            "${escapeHtml(record.agent)} | ${escapeHtml(record.branch",
-            # contextPacketView
-            "${escapeHtml(packet.task_id)}",
-            "${escapeHtml(packet.role)}",
-            # data-* attributes (read back into API/inspect calls) must be escaped too
-            'data-task="${escapeHtml(record.task_id)}"',
-            'data-task="${escapeHtml(packet.task_id)}"',
-            'data-task="${escapeHtml(task.task_id)}"',
+        self.assertIn("const esc =", source, "the escaping helper is gone")
+
+        # Every interpolation of a data field, as opposed to a local literal or a
+        # helper call, has to pass through esc(). `${esc(...)}`, `${card(...)}`,
+        # `${list(...)}` and ternaries are fine; `${item.task}` is not.
+        raw = re.findall(r"\$\{\s*([a-z][A-Za-z0-9_]*)\.([A-Za-z0-9_]+)\s*\}", source)
+        allowed_objects = {"state", "response", "location", "toast", "event"}
+        offenders = [
+            f"${{{obj}.{field}}}"
+            for obj, field in raw
+            if obj not in allowed_objects
         ]
-        for snippet in required:
-            self.assertIn(snippet, source, f"Missing escaped interpolation: {snippet}")
-        # Guard against regressions: no raw (unescaped) interpolation of these
-        # task/user-controlled fields in the trust views.
-        forbidden = [
-            "${block.title}", "${block.lane}", "${block.objective}",
-            "${schedule.objective}", "${record.objective}", "${record.agent}",
-            "${lane.agent}", "${lane.role}", "${lane.branch}",
-            'data-task="${record.task_id}"', 'data-task="${packet.task_id}"',
-        ]
-        for snippet in forbidden:
-            self.assertNotIn(snippet, source, f"Unescaped trust-view interpolation: {snippet}")
+        self.assertEqual(offenders, [], f"Unescaped recorded values: {offenders}")
+
 
 
 if __name__ == "__main__":

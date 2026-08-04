@@ -18,6 +18,7 @@ that pattern applied to handoffs.
 
 from __future__ import annotations
 
+import datetime as dt
 import subprocess
 import time
 from pathlib import Path
@@ -77,7 +78,28 @@ def recorded_commit(store: "MemoryStore") -> str | None:
 
 
 def age_days(store: "MemoryStore") -> int | None:
-    """Whole days since the handoff was written, or None if none exists."""
+    """Whole days since the newest checkpoint on this branch was recorded.
+
+    From the checkpoint rather than the file. `latest_handoff.md` is
+    re-materialized whenever a branch is switched or a merge lands, which resets
+    its mtime, so a branch whose last real work was weeks ago came back reading
+    "recorded today". Freshness that resets itself is worse than no freshness,
+    because it is the one number here whose whole job is to be doubted.
+
+    The file's timestamp is still the fallback, for a project that has a handoff
+    written but no checkpoint recorded against it.
+    """
+    for item in store.recent_handoffs(1):
+        stamp = str(item.get("created_at") or "")
+        try:
+            written = dt.datetime.fromisoformat(stamp)
+        except ValueError:
+            break
+        if written.tzinfo is None:
+            written = written.replace(tzinfo=dt.timezone.utc)
+        seconds = (dt.datetime.now(dt.timezone.utc) - written).total_seconds()
+        return max(0, int(seconds // 86_400))
+
     handoff = store.state_dir / "latest_handoff.md"
     if not handoff.exists():
         return None

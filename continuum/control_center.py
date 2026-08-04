@@ -20,6 +20,7 @@ from .context_intel import gather_context_intel, score_intel
 from .core import MemoryStore, compact_text, write_text
 from .evidence import EvidenceError, gather_evidence
 from .flight import FlightRecordError, gather_flight_record
+from .history import HistoryError
 from .orchestration import OrchestrationError, Orchestrator
 from .providers import ProviderError, ProviderManager
 from .roi import roi_summary
@@ -267,6 +268,95 @@ class ControlCenter:
             "events": events[:8],
         }
 
+    def now(self) -> dict[str, Any]:
+        """The answer to the question someone opens this page to ask.
+
+        Where the project stands, how old that is, and whether it still
+        describes the code. Everything else on the page is secondary to this,
+        so it is assembled in one call rather than stitched together by the
+        browser from four.
+        """
+        from . import freshness, notes
+        from .history import checkpoints, field
+
+        latest = self.store.latest_task()
+        recent = checkpoints(self.store, 1)
+        return {
+            "project": self.store.project.name,
+            "branch": self.store.current_branch(),
+            "task": latest[0] if latest else "",
+            "next_step": (latest[1] if latest else "") or "",
+            "age_days": freshness.age_days(self.store),
+            "drift": freshness.describe(self.store),
+            "recorded_against": field(recent[0], "commit")[:7] if recent else "",
+            "decisions": [item["text"] for item in notes.decisions(self.store)[:5]],
+            "open_questions": [item["text"] for item in notes.open_questions(self.store)[:5]],
+            "facts": [item["text"] for item in notes.facts(self.store)[:5]],
+        }
+
+    def checkpoints(self, limit: int = 40) -> list[dict[str, Any]]:
+        from .history import checkpoints, field, label, one_line
+
+        return [
+            {
+                "id": item["id"],
+                "ref": label(item),
+                "created_at": item["created_at"],
+                "task": one_line(field(item, "task")) or "(no task recorded)",
+                "next_step": one_line(field(item, "next_step")),
+                "commit": field(item, "commit")[:7],
+                "source": field(item, "source"),
+                "branch": field(item, "branch") or self.store.DEFAULT_BRANCH,
+            }
+            for item in checkpoints(self.store, limit)
+        ]
+
+    def checkpoint_diff(self, older: str, newer: str) -> dict[str, Any]:
+        from .history import find, label, render_diff
+
+        left, right = find(self.store, older), find(self.store, newer)
+        return {"older": label(left), "newer": label(right),
+                "diff": render_diff(self.store, left, right)}
+
+    def blame(self, text: str) -> dict[str, Any]:
+        from .history import blame, field, label, render_blame
+
+        if not text.strip():
+            return {"query": "", "summary": "", "matches": []}
+        return {
+            "query": text,
+            "summary": render_blame(self.store, text),
+            "matches": [
+                {"ref": label(item), "created_at": item["created_at"],
+                 "task": field(item, "task"), "commit": field(item, "commit")[:7]}
+                for item in blame(self.store, text)
+            ],
+        }
+
+    def notes(self) -> list[dict[str, Any]]:
+        from . import notes
+
+        return [
+            {"id": item["id"], "type": item["type"], "text": item["text"],
+             "state": item.get("state", ""), "created_at": item["created_at"]}
+            for item in notes.recent(self.store)
+        ]
+
+    def branches(self) -> list[dict[str, Any]]:
+        from .history import field, one_line
+
+        current = self.store.current_branch()
+        found = []
+        for name in self.store.branches():
+            recent = self.store.recent_handoffs(1, branch=name)
+            found.append({
+                "name": name,
+                "current": name == current,
+                "task": one_line(field(recent[0], "task")) if recent else "",
+                "checkpoints": len(self.store.recent_handoffs(500, branch=name)),
+            })
+        return found
+
     def _worktree_schedules(self) -> list[dict[str, Any]]:
         if not self.store.db_file.exists():
             return []
@@ -356,6 +446,10 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
         app = self.server.app
         handlers = {
             "/api/overview": app.overview,
+            "/api/now": app.now,
+            "/api/checkpoints": app.checkpoints,
+            "/api/notes": app.notes,
+            "/api/branches": app.branches,
             "/api/project": app.project_info,
             "/api/providers": app.providers,
             "/api/teams": app.teams,
@@ -368,7 +462,11 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
             "/api/roi": app.roi,
         }
         try:
-            if path == "/api/memory":
+            if path == "/api/blame":
+                self.send_json(app.blame(query.get("q", [""])[0]))
+            elif path == "/api/diff":
+                self.send_json(app.checkpoint_diff(query.get("older", [""])[0], query.get("newer", ["HEAD"])[0]))
+            elif path == "/api/memory":
                 self.send_json(app.memory(query.get("q", [""])[0]))
             elif path == "/api/flight-record":
                 self.send_json(app.flight_record(query.get("task", [""])[0]))
@@ -376,7 +474,7 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
                 self.send_json(handlers[path]())
             else:
                 self.send_json({"error": "Unknown endpoint"}, HTTPStatus.NOT_FOUND)
-        except (EvidenceError, FlightRecordError, ProviderError, TeamError, ValueError, WorktreeError) as error:
+        except (EvidenceError, FlightRecordError, HistoryError, ProviderError, TeamError, ValueError, WorktreeError) as error:
             self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
 
     def do_POST(self) -> None:  # noqa: N802

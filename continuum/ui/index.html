@@ -3,67 +3,28 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>Continuum Control Center</title>
+    <title>Continuum</title>
     <link rel="icon" type="image/png" href="/logo.png">
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
-    <div class="app">
-      <aside class="sidebar">
-        <div class="brand">
-          <img class="mark" src="/logo.png" alt="Continuum">
-          <div>
-            <strong>Continuum</strong>
-            <span>Control Center</span>
-          </div>
-        </div>
-        <nav id="nav">
-          <button data-view="overview">Overview</button>
-          <button data-view="projects">Projects</button>
-          <button class="active" data-view="teams">Teams</button>
-          <button data-view="providers">Providers</button>
-          <button data-view="memory">Memory</button>
-          <button data-view="runs">Runs</button>
-          <button data-view="handoffs">Handoffs</button>
-          <button data-view="settings">Settings</button>
-        </nav>
-        <div class="sidebar-foot">
-          <span class="state-dot" id="daemon-dot"></span>
-          <span id="daemon-label">Loading daemon...</span>
-        </div>
-      </aside>
+    <header class="bar">
+      <div class="bar-left">
+        <img class="mark" src="/logo.png" alt="">
+        <span class="wordmark">Continuum</span>
+        <span class="project" id="project"></span>
+      </div>
+      <nav class="tabs" id="tabs">
+        <button class="tab active" data-view="now">Now</button>
+        <button class="tab" data-view="history">History</button>
+        <button class="tab" data-view="notes">Notes</button>
+        <button class="tab" data-view="advanced">Advanced</button>
+      </nav>
+    </header>
 
-      <main class="workspace">
-        <header class="topbar">
-          <div>
-            <p class="eyebrow">Local orchestration</p>
-            <h1 id="title">Teams</h1>
-            <p id="description" class="description"></p>
-          </div>
-          <div id="primary-action"></div>
-        </header>
-        <section id="content" class="content"></section>
-      </main>
+    <main id="view"></main>
 
-      <aside id="inspector" class="inspector">
-        <div class="inspector-header">
-          <p class="eyebrow">Inspector</p>
-          <h2 id="inspect-title">Selection</h2>
-        </div>
-        <div id="inspect-body" class="inspect-body">
-          <p class="muted">Select a team role, provider, task or memory result to inspect it.</p>
-        </div>
-      </aside>
-    </div>
-
-    <section class="activity collapsed" id="activity">
-      <button class="activity-toggle" id="activity-toggle">
-        <span>Activity</span>
-        <span id="activity-summary">Loading events...</span>
-      </button>
-      <div class="activity-log" id="activity-log"></div>
-    </section>
-    <div id="toast" class="toast"></div>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
     <script src="/app.js"></script>
   </body>
 </html>
