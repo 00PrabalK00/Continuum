@@ -68,6 +68,18 @@ automatic session summaries. Press enter to take the defaults, or run
 `continuum install --yes` to skip the questions, which is also what happens when
 no terminal is attached so scripts and CI keep working.
 
+In Claude Code you can add it as a plugin instead, which registers the MCP
+server for you:
+
+```
+/plugin marketplace add 00PrabalK00/Continuum
+/plugin install continuum@continuum
+```
+
+The plugin still needs the `continuum` command on your PATH, since that is what
+it runs. `continuum install` remains the way to reach Codex, Gemini and
+everything else.
+
 Now use your AI normally:
 
 ```

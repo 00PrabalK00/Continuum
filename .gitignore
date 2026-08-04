@@ -9,6 +9,7 @@ build/
 
 # Output from unrelated local tooling
 brag-output/
+brag-output-*/
 
 # Projects the benchmark generates as it runs
 benchmarks/project/

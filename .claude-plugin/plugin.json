@@ -1,0 +1,20 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "continuum",
+  "description": "Shared project memory for AI coding agents. Records what you are working on and hands it to whichever AI you open next.",
+  "version": "0.13.0",
+  "author": {
+    "name": "00PrabalK00",
+    "url": "https://github.com/00PrabalK00"
+  },
+  "homepage": "https://github.com/00PrabalK00/Continuum",
+  "repository": "https://github.com/00PrabalK00/Continuum",
+  "license": "MIT",
+  "keywords": [
+    "memory",
+    "context",
+    "handoff",
+    "mcp",
+    "multi-agent"
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "name": "continuum",
+  "owner": {
+    "name": "00PrabalK00",
+    "url": "https://github.com/00PrabalK00"
+  },
+  "metadata": {
+    "description": "Shared project memory for AI coding agents. Switch between Claude, Codex and Gemini without re-explaining your work.",
+    "version": "0.13.0"
+  },
+  "plugins": [
+    {
+      "name": "continuum",
+      "source": "./",
+      "description": "Records what you are working on and hands it to whichever AI you open next. Local files only.",
+      "version": "0.13.0",
+      "author": {
+        "name": "00PrabalK00",
+        "url": "https://github.com/00PrabalK00"
+      },
+      "homepage": "https://github.com/00PrabalK00/Continuum",
+      "repository": "https://github.com/00PrabalK00/Continuum",
+      "license": "MIT",
+      "keywords": [
+        "memory",
+        "context",
+        "handoff",
+        "mcp",
+        "multi-agent"
+      ]
+    }
+  ]
+}
