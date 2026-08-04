@@ -25,6 +25,8 @@ jobs:
       - run: python -m unittest discover -s examples/multi-agent-handoff -v
       - run: python -m continuum --help
       - run: node --check continuum/ui/app.js
+      # Parsing is not rendering: this drives every view against fixtures.
+      - run: node tests/ui_smoke.js
       - run: continuum --version
       - run: node bin/continuum.js --version
       - run: npm pack --dry-run

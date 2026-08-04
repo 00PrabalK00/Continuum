@@ -1,317 +1,275 @@
-const state = {
-  view: "teams", overview: null, project: null, providers: [], teams: [],
-  tasks: [], events: [], memory: null, flightRecords: [], timeline: null,
-  worktreeBoard: null, contextPackets: [], roi: null
-};
-const pageMeta = {
-  overview: ["Overview", "Monitor the local daemon, memory and planned work."],
-  projects: ["Projects", "Inspect the repository and its local memory paths."],
-  teams: ["Teams", "Inspect roles and routes configured through Continuum commands."],
-  providers: ["Providers", "Inspect CLI agents and model backends configured for this project."],
-  memory: ["Memory", "Read compact state and retrieve only relevant stored events."],
-  runs: ["Runs", "Inspect controlled tasks, ownership and file claims."],
-  handoffs: ["Handoffs", "Read the compact continuation note used across agents."],
-  settings: ["Settings", "Review local storage and configured context boundaries."]
-};
+/* Continuum, four views.
+ *
+ * The old page had eight nav items, an inspector and an activity drawer, all
+ * competing for the same attention while the thing people actually open it for,
+ * where does this project stand, was buried. Now answers that in the biggest
+ * type on the page. History and Notes are the two ways to interrogate it.
+ * Everything else lives behind Advanced, demoted rather than deleted.
+ */
+
+const VIEWS = ["now", "history", "notes", "advanced"];
+const state = { view: "now", data: {}, diff: null, blame: null };
+
+/* Escaped by default. Every string on this page is recorded by an agent or
+   typed by a person, so none of it is trusted markup. */
+const esc = (value) =>
+  String(value ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 async function api(path) {
-  const response = await fetch(path);
-  const data = await response.json();
-  if (!response.ok || data.error) throw new Error(data.error || `Request failed: ${response.status}`);
-  return data;
-}
-const sessionToken = document.querySelector('meta[name="continuum-token"]')?.content || "";
-async function post(path, payload) {
-  const response = await fetch(path, {
-    method: "POST",
-    headers: {"Content-Type": "application/json", "X-Continuum-Token": sessionToken},
-    body: JSON.stringify(payload)
-  });
-  const data = await response.json();
-  if (!response.ok || data.error) throw new Error(data.error || `Request failed: ${response.status}`);
-  return data;
-}
-function escapeHtml(value = "") {
-  return String(value).replace(/[&<>"']/g, value => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[value]));
-}
-function human(value) {
-  return String(value || "").replaceAll("_", " ").replace(/\b\w/g, character => character.toUpperCase());
-}
-function command(text) {
-  return `<p class="field-label">Terminal command</p><pre>${escapeHtml(text)}</pre>`;
-}
-function field(label, value) {
-  return `<div><p class="field-label">${escapeHtml(label)}</p><p class="field-value">${escapeHtml(value ?? "-")}</p></div>`;
-}
-function inspect(title, body) {
-  document.getElementById("inspect-title").textContent = title;
-  document.getElementById("inspect-body").innerHTML = body;
-}
-function viewOnly() {
-  document.getElementById("primary-action").innerHTML = `<span class="pill">Explicit controls | CLI remains canonical</span>`;
-}
-function showError(message) {
-  const toast = document.getElementById("toast");
-  toast.textContent = message;
-  toast.classList.add("show");
-  setTimeout(() => toast.classList.remove("show"), 4000);
-}
-async function loadAll() {
-  [
-    state.overview, state.project, state.providers, state.teams, state.tasks,
-    state.events, state.memory, state.flightRecords, state.timeline,
-    state.worktreeBoard, state.contextPackets, state.roi
-  ] = await Promise.all([
-    api("/api/overview"), api("/api/project"), api("/api/providers"), api("/api/teams"),
-    api("/api/tasks"), api("/api/events"), api("/api/memory"), api("/api/flight-records"),
-    api("/api/timeline"), api("/api/worktree-board"), api("/api/context-packets"), api("/api/roi")
-  ]);
-  const daemon = state.overview.daemon;
-  document.getElementById("daemon-dot").classList.toggle("running", daemon.running);
-  document.getElementById("daemon-label").textContent = daemon.running ? `Daemon running | PID ${daemon.pid}` : "Daemon stopped";
-  renderActivity();
-  render();
-}
-function render() {
-  const [title, description] = pageMeta[state.view];
-  document.getElementById("title").textContent = title;
-  document.getElementById("description").textContent = description;
-  document.querySelectorAll("#nav button").forEach(button => button.classList.toggle("active", button.dataset.view === state.view));
-  viewOnly();
-  ({
-    overview: renderOverview, projects: renderProjects, teams: renderTeams, providers: renderProviders,
-    memory: renderMemory, runs: renderRuns, handoffs: renderHandoffs, settings: renderSettings
-  }[state.view])();
-}
-function taskTable(tasks) {
-  if (!tasks.length) return `<div class="empty"><h3>No controlled tasks</h3><p>Create work from the terminal.</p>${command('continuum task create "Fix auth"')}</div>`;
-  return `<div class="table"><div class="row header"><span>Task</span><span>Worker</span><span>Status</span><span>Files</span></div>${tasks.map(task => `
-    <div class="row selectable task-row" data-task="${escapeHtml(task.task_id)}"><span>${escapeHtml(task.title)}</span><span>${escapeHtml(task.agent || "Unassigned")}</span><span>${escapeHtml(task.status)}</span><span>${task.locked_files.length} claimed</span></div>`).join("")}</div>`;
-}
-function bindTasks() {
-  document.querySelectorAll(".task-row").forEach(row => row.onclick = () => {
-    const task = state.tasks.find(item => item.task_id === row.dataset.task);
-    const flight = state.flightRecords.find(item => item.task_id === task.task_id);
-    inspect(task.task_id, field("Task", task.title) + field("Status", task.status) + field("Worker", task.agent || "Unassigned") +
-      field("Claimed files", task.locked_files.map(lock => lock.path).join(", ") || "None") +
-      (flight ? field("Flight status", flight.final_status) + field("Next action", flight.next_action) : "") +
-      command(`continuum flight-record ${task.task_id}`));
-  });
-}
-function renderOverview() {
-  const overview = state.overview;
-  const daemon = overview.daemon.running ? "Running" : "Stopped";
-  document.getElementById("content").innerHTML = `
-    <div class="grid cards">
-      <article class="card selectable" id="daemon-card"><p class="label">Daemon status</p><p class="value">${daemon}</p><p class="detail">${overview.daemon.pid ? `PID ${overview.daemon.pid}` : "No active process"}</p></article>
-      <article class="card"><p class="label">Active project</p><p class="value">${escapeHtml(overview.project.name)}</p><p class="detail mono">${escapeHtml(overview.project.branch || "No branch")}</p></article>
-      <article class="card"><p class="label">Current team</p><p class="value">${escapeHtml(overview.current_team || "Not selected")}</p><p class="detail">${state.teams.length} configured</p></article>
-      <article class="card"><p class="label">Providers</p><p class="value">${overview.providers.filter(provider => provider.enabled).length} enabled</p><p class="detail">${overview.providers.length} configured entries</p></article>
-    </div>
-    <div class="section"><div class="section-head"><h2>Latest compact state</h2></div><pre>${escapeHtml(overview.latest_handoff || "No handoff has been recorded.")}</pre></div>
-    <div class="section"><div class="section-head"><h2>Controlled work</h2></div>${taskTable(overview.tasks)}</div>`;
-  document.getElementById("daemon-card").onclick = () => inspect("Daemon", field("Status", daemon) + field("PID", overview.daemon.pid || "-") + command(`continuum ${overview.daemon.running ? "down" : "up"}`));
-  document.getElementById("daemon-card").onclick();
-  bindTasks();
-}
-function renderProjects() {
-  const project = state.project;
-  document.getElementById("content").innerHTML = `
-    <article class="card selectable" id="project-card"><p class="status connected">Observed</p><h2>${escapeHtml(project.name)}</h2><p class="detail mono">${escapeHtml(project.path)}</p>
-      <div class="section grid cards"><div><p class="label">Git branch</p><p>${escapeHtml(project.branch || "Not committed")}</p></div><div><p class="label">Memory</p><p>${escapeHtml(project.memory_path)}</p></div><div><p class="label">Obsidian</p><p>${project.obsidian_path ? "Configured" : "Disabled"}</p></div></div>
-    </article>`;
-  document.getElementById("project-card").onclick = () => inspect("Project", field("Path", project.path) + field("Branch", project.branch || "None") + field("Memory path", project.memory_path) + field("Obsidian path", project.obsidian_path || "Disabled") + command("continuum status"));
-  document.getElementById("project-card").onclick();
-}
-function renderProviders() {
-  document.getElementById("content").innerHTML = state.providers.length ? `<div class="grid cards">${state.providers.map(provider => `
-    <article class="card selectable provider-card" data-name="${provider.name}"><p class="status ${provider.enabled ? "connected" : "disabled"}">${provider.enabled ? "Enabled" : "Disabled"}</p><h3>${human(provider.name)}</h3><p class="detail">${human(provider.kind)} | ${human(provider.type)}</p><p class="detail">${escapeHtml(provider.model)}</p></article>`).join("")}</div>` :
-    `<div class="empty"><h3>No provider config</h3><p>Initialize the project, then enable only providers you choose.</p>${command("continuum init")}</div>`;
-  document.querySelectorAll(".provider-card").forEach(card => card.onclick = () => {
-    const provider = state.providers.find(item => item.name === card.dataset.name);
-    inspect(human(provider.name), field("Type", `${human(provider.kind)} / ${human(provider.type)}`) + field("State", provider.enabled ? "Enabled" : "Disabled") + field("Model", provider.model) + field("Endpoint / command", provider.base_url || provider.command) + `<button id="test-provider" class="button">Test connection</button>` + command(`continuum providers test ${provider.name}`));
-    document.getElementById("test-provider").onclick = async () => {
-      try { const result = await post("/api/providers/test", {provider: provider.name}); showError(result.result); await loadAll(); }
-      catch (error) { showError(error.message); }
-    };
-  });
-  if (state.providers[0]) document.querySelector(".provider-card").click();
-}
-function renderTeams() {
-  const team = state.teams[0];
-  if (!team) {
-    document.getElementById("content").innerHTML = `<div class="empty"><h3>No teams configured</h3><p>Create the editable default starter team.</p><button id="create-team" class="button">Create Team</button>${command("continuum team init default_dev_team")}</div>`;
-    document.getElementById("create-team").onclick = async () => {
-      try { await post("/api/teams/create", {preset: "default_dev_team"}); await loadAll(); }
-      catch (error) { showError(error.message); }
-    };
-    inspect("Teams", command("continuum team list"));
-    return;
-  }
-  document.getElementById("content").innerHTML = `<div class="section-head"><div><h2>${human(team.name)}</h2><p class="muted">${human(team.mode)} workflow</p></div></div>
-    <div class="grid columns">${Object.entries(team.agents).map(([name, agent]) => `
-      <article class="card role-card selectable team-role" data-name="${name}"><p class="role-name">${human(name)}</p><p class="provider">${human(agent.provider)}</p><p class="detail">${human(agent.role)}</p>
-      <div class="pills"><span class="pill">${agent.can_edit_files ? "Can edit" : "Read / model"}</span><span class="pill">${agent.can_run_commands ? "Commands" : "No commands"}</span></div></article>`).join("")}</div>
-    <div class="section"><div class="section-head"><h2>Run a controlled workflow</h2></div><div class="search"><input id="workflow-request" placeholder="Fix failing auth test"><input id="workflow-files" placeholder="Writable paths, comma-separated"><button id="plan-workflow">Plan</button><button id="execute-workflow">Execute</button></div>${command(`continuum team run ${team.name} "Fix failing auth test" --execute --allow-file src/auth.ts`)}</div>`;
-  document.getElementById("plan-workflow").onclick = async () => {
-    const request = document.getElementById("workflow-request").value.trim();
-    if (!request) return showError("Enter a task before planning.");
-    try { const workflow = await post("/api/workflows/run", {team: team.name, request}); showError(`Planned ${workflow.workflow_id}`); await loadAll(); }
-    catch (error) { showError(error.message); }
-  };
-  document.getElementById("execute-workflow").onclick = async () => {
-    const request = document.getElementById("workflow-request").value.trim();
-    const allowFiles = document.getElementById("workflow-files").value.split(",").map(value => value.trim()).filter(Boolean);
-    if (!request) return showError("Enter a task before executing.");
-    try { const workflow = await post("/api/workflows/run", {team: team.name, request, execute: true, allow_files: allowFiles}); showError(`Executed ${workflow.workflow_id}`); await loadAll(); }
-    catch (error) { showError(error.message); }
-  };
-  document.querySelectorAll(".team-role").forEach(card => card.onclick = () => {
-    const agent = team.agents[card.dataset.name];
-    inspect(human(card.dataset.name), field("Provider", human(agent.provider)) + field("Role", human(agent.role)) + field("Can edit files", agent.can_edit_files ? "Yes" : "No") + field("Can run commands", agent.can_run_commands ? "Yes" : "No") + field("One writer safety", team.safety.one_writer_at_a_time ? "Enabled" : "Custom") + `<p class="field-label">Team JSON</p><textarea id="team-json" rows="10">${escapeHtml(JSON.stringify(team, null, 2))}</textarea><button id="save-team" class="button">Save Team</button>`);
-    document.getElementById("save-team").onclick = async () => {
-      try { await post("/api/teams/save", {name: team.name, config: JSON.parse(document.getElementById("team-json").value)}); showError("Team saved."); await loadAll(); }
-      catch (error) { showError(error.message); }
-    };
-  });
-  document.querySelector(".team-role").click();
-}
-function renderRuns() {
-  document.getElementById("content").innerHTML = `
-    <div class="section"><div class="section-head"><h2>Workflow Timeline</h2></div>${timelineView()}</div>
-    <div class="section"><div class="section-head"><h2>Multi-Agent Worktree Board</h2></div>${worktreeBoardView()}</div>
-    <div class="section"><div class="section-head"><h2>Agent Flight Recorder</h2></div>${flightRecordView()}</div>
-    <div class="section"><div class="section-head"><h2>Agent ROI</h2></div>${roiView()}</div>
-    <div class="section"><div class="section-head"><h2>Context Packet Studio</h2></div>${contextPacketView()}</div>
-    <div class="section"><div class="section-head"><h2>Tasks</h2></div>${taskTable(state.tasks)}</div>
-    <div class="section"><div class="section-head"><h2>Resume context</h2></div><div class="search"><input id="resume-role" value="coder"><button id="resume-context">Build compact packet</button></div><pre id="resume-output"></pre></div>`;
-  bindTasks();
-  bindFlightRecords();
-  bindContextPackets();
-  document.getElementById("resume-context").onclick = async () => {
-    try { const result = await post("/api/resume-context", {role: document.getElementById("resume-role").value, mode: "compact"}); document.getElementById("resume-output").textContent = result.text; }
-    catch (error) { showError(error.message); }
-  };
-  inspect("Runs", command("continuum flight-record T0001"));
-}
-function timelineView() {
-  const blocks = state.timeline?.blocks || [];
-  if (!blocks.length) return `<div class="empty"><h3>No workflow timeline yet</h3><p>Plan an objective or schedule worktrees to create timeline state.</p>${command('continuum objective "Build X" --mode schedule')}</div>`;
-  return `<div class="timeline">${blocks.map(block => `
-    <article class="timeline-block">
-      <p class="field-label">${escapeHtml(block.lane)}</p>
-      <h3>${escapeHtml(block.id)} ${escapeHtml(block.title)}</h3>
-      <div class="pills"><span class="pill">${escapeHtml(block.status || "-")}</span><span class="pill">${escapeHtml(block.branch || "no branch")}</span>${block.merge_ready ? '<span class="pill ready">merge ready</span>' : ''}</div>
-      <p class="detail">${escapeHtml((block.claimed_files || []).join(", ") || "No claimed files")}</p>
-    </article>`).join("")}</div>`;
-}
-function worktreeBoardView() {
-  const schedules = state.worktreeBoard?.schedules || [];
-  const standalone = state.worktreeBoard?.standalone || [];
-  if (!schedules.length && !standalone.length) return `<div class="empty"><h3>No worktree lanes</h3><p>Create isolated lanes from the terminal.</p>${command('continuum worktree schedule "Build X" --lane backend:claude:src --lane tests:codex:tests')}</div>`;
-  const scheduled = schedules.map(schedule => `
-    <div class="board-group"><p class="field-label">${escapeHtml(schedule.schedule_id)} ${escapeHtml(schedule.status)}</p><h3>${escapeHtml(schedule.objective)}</h3>
-      <div class="worktree-board">${(schedule.lanes || []).map(laneCard).join("")}</div></div>`).join("");
-  const solo = standalone.length ? `<div class="board-group"><p class="field-label">Standalone worktrees</p><div class="worktree-board">${standalone.map(laneCard).join("")}</div></div>` : "";
-  return scheduled + solo;
-}
-function laneCard(lane) {
-  return `<article class="card lane-card">
-    <p class="status ${lane.merge_ready ? "connected" : "disabled"}">${lane.merge_ready ? "Merge ready" : escapeHtml(lane.status || "Active")}</p>
-    <h3>${escapeHtml(lane.task_id)} ${escapeHtml(lane.role || "")}</h3>
-    <p class="detail">${escapeHtml(lane.agent || "worktree")} | ${escapeHtml(lane.branch || "-")}</p>
-    <p class="detail">${escapeHtml((lane.owned_paths || []).join(", ") || "No owned paths")}</p>
-    <div class="pills"><span class="pill">tests ${escapeHtml(lane.test_result || "-")}</span><span class="pill">review ${escapeHtml(lane.review_status || "-")}</span></div>
-  </article>`;
-}
-function flightRecordView() {
-  if (!state.flightRecords.length) return `<div class="empty"><h3>No flight records</h3><p>Create or assign a task to record auditable agent work.</p>${command('continuum task create "Fix auth"')}</div>`;
-  return `<div class="grid cards">${state.flightRecords.map(record => `
-    <article class="card selectable flight-card" data-task="${escapeHtml(record.task_id)}">
-      <p class="status ${record.risks.length ? "failed" : "connected"}">${escapeHtml(record.final_status)}</p>
-      <h3>${escapeHtml(record.task_id)} ${escapeHtml(record.objective)}</h3>
-      <p class="detail">${escapeHtml(record.agent)} | ${escapeHtml(record.branch || "no branch")}</p>
-      <p class="detail">${record.files_allowed.length} allowed | ${record.files_touched.length} touched | ${record.risks.length} risks</p>
-    </article>`).join("")}</div>`;
-}
-function contextPacketView() {
-  if (!state.contextPackets.length) return `<div class="empty"><h3>No context packets</h3><p>Build task context or schedule a worktree lane.</p>${command("continuum context build coder")}</div>`;
-  return `<div class="table"><div class="row header"><span>Task</span><span>Role</span><span>Risk</span><span>Sources</span></div>${state.contextPackets.map(packet => `
-    <div class="row selectable context-row" data-task="${escapeHtml(packet.task_id)}"><span>${escapeHtml(packet.task_id)}</span><span>${escapeHtml(packet.role)}</span><span>${escapeHtml(packet.risk_level || "-")}</span><span>${escapeHtml(packet.source_count ?? "-")}</span></div>`).join("")}</div>`;
-}
-function roiView() {
-  const roi = state.roi || {};
-  return `<div class="grid cards">
-    <article class="card"><p class="label">Tasks</p><p class="value">${escapeHtml(roi.tasks_completed ?? 0)} done</p><p class="detail">${escapeHtml(roi.tasks_failed ?? 0)} failed | ${escapeHtml(roi.tasks_total ?? 0)} total</p></article>
-    <article class="card"><p class="label">Tokens</p><p class="value">${escapeHtml(roi.estimated_tokens ?? 0)}</p><p class="detail">${escapeHtml(roi.cost_per_accepted_change_tokens ?? 0)} per accepted change</p></article>
-    <article class="card"><p class="label">Quality</p><p class="value">${escapeHtml(roi.tests_passed ?? 0)} tests</p><p class="detail">${escapeHtml(roi.files_changed_outside_scope ?? 0)} out-of-scope | ${escapeHtml(roi.review_rejections ?? 0)} rejected</p></article>
-    <article class="card selectable" id="roi-card"><p class="label">Routing</p><p class="value">${escapeHtml((roi.recommendations || []).length)} rules</p><p class="detail">Cost-aware provider guidance</p></article>
-  </div>`;
-}
-function bindFlightRecords() {
-  document.querySelectorAll(".flight-card").forEach(card => card.onclick = async () => {
-    try {
-      const record = await api(`/api/flight-record?task=${encodeURIComponent(card.dataset.task)}`);
-      inspect(record.task_id, field("Objective", record.objective) + field("Agent", record.agent) + field("Final status", record.final_status) +
-        field("Files allowed", record.files_allowed.join(", ") || "None") + field("Files touched", record.files_touched.join(", ") || "None") +
-        field("Risks", record.risks.join(" | ") || "None") + field("Next action", record.next_action) + command(`continuum flight-record ${record.task_id}`));
-    } catch (error) { showError(error.message); }
-  });
-}
-function bindContextPackets() {
-  document.querySelectorAll(".context-row").forEach(row => row.onclick = () => {
-    const packet = state.contextPackets.find(item => item.task_id === row.dataset.task);
-    inspect(`Context ${packet.task_id}`, field("Role", packet.role) + field("Agent", packet.agent || "-") +
-      field("Tokens", packet.estimated_tokens ?? "-") + field("Risk", packet.risk_level || "-") +
-      field("Missing info", packet.missing_info.join(" | ") || "None") + field("Files", packet.files.join(", ") || "None") +
-      command(`continuum context score ${packet.task_id}`));
-  });
-  const roiCard = document.getElementById("roi-card");
-  if (roiCard) roiCard.onclick = () => {
-    const roi = state.roi || {};
-    inspect("Agent ROI", field("Estimated tokens", roi.estimated_tokens ?? 0) + field("Cost per accepted change", roi.cost_per_accepted_change_tokens ?? 0) +
-      field("Manual corrections", roi.manual_corrections ?? 0) + field("Reruns", roi.reruns ?? 0) +
-      `<p class="field-label">Recommendations</p><pre>${escapeHtml((roi.recommendations || []).map(item => `${item.task}: ${item.provider} - ${item.reason}`).join("\\n") || "No recommendations.")}</pre>` +
-      command("continuum roi"));
-  };
-}
-function renderMemory() {
-  document.getElementById("content").innerHTML = `<div class="tabs"><button class="active">Current State</button><button>Decisions</button><button>Implemented</button><button>Open Tasks</button><button>Raw Events</button></div>
-    <div class="search"><input id="memory-query" placeholder="Search a file, failure or decision"><button id="memory-search">Search</button></div>
-    <div class="section"><pre id="memory-note">${escapeHtml(state.memory.current || "No current context.")}</pre></div><div class="section" id="memory-results"></div>
-    <p class="muted section">Tiny handoff first. Relevant memory only when needed. Raw logs only on demand.</p>`;
-  const notes = [state.memory.current, state.memory.decisions, state.memory.implemented, state.memory.open_tasks, JSON.stringify(state.memory.results, null, 2)];
-  document.querySelectorAll(".tabs button").forEach((button, index) => button.onclick = () => {
-    document.querySelectorAll(".tabs button").forEach(item => item.classList.remove("active"));
-    button.classList.add("active");
-    document.getElementById("memory-note").textContent = notes[index] || "No recorded content.";
-  });
-  document.getElementById("memory-search").onclick = searchMemory;
-  inspect("Memory", command('continuum search "topic"'));
-}
-async function searchMemory() {
-  state.memory = await api(`/api/memory?q=${encodeURIComponent(document.getElementById("memory-query").value)}`);
-  const results = document.getElementById("memory-results");
-  results.innerHTML = state.memory.results.length ? state.memory.results.map(event => `<article class="card"><p class="status connected">${escapeHtml(human(event.kind))}</p><p class="detail mono">${escapeHtml(event.created_at)}</p><p>${escapeHtml(JSON.stringify(event.payload).slice(0, 180))}</p></article>`).join("") : `<div class="empty"><h3>No matching memory</h3><p>Try a narrower query.</p></div>`;
-}
-function renderHandoffs() {
-  document.getElementById("content").innerHTML = `<div class="section"><pre>${escapeHtml(state.memory.handoff || "No handoff recorded.")}</pre></div>`;
-  inspect("Handoff", command('continuum handoff --task "<current task>" --next-step "<next action>"'));
-}
-function renderSettings() {
-  document.getElementById("content").innerHTML = `<div class="grid cards">
-    <article class="card"><p class="label">Privacy</p><p class="value">Local-first</p><p class="detail">State remains under .continuum/</p></article>
-    <article class="card"><p class="label">Session context limit</p><p class="value">${escapeHtml(state.project.context_limit || "Not initialized")}</p><p class="detail">Checkpoint threshold ${escapeHtml(state.project.threshold || "-")}</p></article>
-    <article class="card"><p class="label">Control Center</p><p class="value">Explicit controls</p><p class="detail">Actions mirror audited CLI operations</p></article></div>`;
-  inspect("Settings", field("Project", state.project.path) + field("Memory path", state.project.memory_path) + field("Obsidian mirror", state.project.obsidian_path || "Disabled") + command("continuum doctor"));
-}
-function renderActivity() {
-  const latest = state.events[0];
-  document.getElementById("activity-summary").textContent = latest ? `${latest.kind} | ${latest.created_at}` : "No recorded activity";
-  document.getElementById("activity-log").innerHTML = state.events.map(event => `<div class="event"><time>${escapeHtml(event.created_at)}</time><span class="kind">${escapeHtml(event.kind)}</span><span>${escapeHtml(JSON.stringify(event.payload).slice(0, 180))}</span></div>`).join("");
+  const response = await fetch(path, { headers: { Accept: "application/json" } });
+  const body = await response.json().catch(() => ({ error: "The server sent something that is not JSON." }));
+  if (!response.ok || body.error) throw new Error(body.error || `Request failed (${response.status}).`);
+  return body;
 }
 
-document.querySelectorAll("#nav button").forEach(button => button.onclick = () => { state.view = button.dataset.view; render(); });
-document.getElementById("activity-toggle").onclick = () => document.getElementById("activity").classList.toggle("collapsed");
-loadAll().catch(error => showError(error.message));
-setInterval(() => api("/api/events").then(events => { state.events = events; renderActivity(); }).catch(() => {}), 5000);
+function toast(message) {
+  const node = document.getElementById("toast");
+  node.textContent = message;
+  node.classList.add("show");
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => node.classList.remove("show"), 2600);
+}
+
+function when(value) {
+  if (!value) return "";
+  return String(value).slice(0, 16).replace("T", " ");
+}
+
+function ago(days) {
+  if (days === null || days === undefined) return "";
+  if (days === 0) return "today";
+  return days === 1 ? "1 day ago" : `${days} days ago`;
+}
+
+/* Empty is a state with something to say, not a blank panel. */
+function nothing(text) {
+  return `<p class="empty-state">${text}</p>`;
+}
+
+function card(inner) {
+  return `<section class="card">${inner}</section>`;
+}
+
+function list(items, render) {
+  if (!items || !items.length) return "";
+  return `<ul class="plain">${items.map(render).join("")}</ul>`;
+}
+
+/* Now ---------------------------------------------------------------- */
+
+function renderNow(now) {
+  const headline = now.task
+    ? `<h1 class="headline">${esc(now.task)}</h1>`
+    : `<h1 class="headline empty">Nothing recorded on this branch yet.</h1>`;
+
+  const next = now.next_step
+    ? `<div><p class="label">Next</p><p class="next">${esc(now.next_step)}</p></div>`
+    : "";
+
+  const meta = [];
+  if (now.age_days !== null && now.age_days !== undefined) meta.push(`Recorded ${ago(now.age_days)}`);
+  if (now.branch) meta.push(`Branch <span class="mono">${esc(now.branch)}</span>`);
+  if (now.recorded_against) meta.push(`Against <span class="mono">${esc(now.recorded_against)}</span>`);
+
+  const drift = now.drift ? `<div class="drift">${esc(now.drift)}</div>` : "";
+
+  const claims = [];
+  if (now.decisions.length) {
+    claims.push(card(`<p class="label">Decisions</p>${list(now.decisions, (t) => `<li>${esc(t)}</li>`)}`));
+  }
+  if (now.open_questions.length) {
+    claims.push(card(
+      `<p class="label">Open questions</p>` +
+      list(now.open_questions, (t) => `<li>${esc(t)} <span class="pill open">open</span></li>`)
+    ));
+  }
+  if (now.facts.length) {
+    claims.push(card(`<p class="label">Observed</p>${list(now.facts, (t) => `<li>${esc(t)}</li>`)}`));
+  }
+
+  const empty = !now.task && !claims.length
+    ? card(nothing(
+        `Run <code>continuum save "what you did | next: what is next"</code> in this project, ` +
+        `or let an agent record it as it works. This page reads what is in <code>.continuum/</code>.`))
+    : "";
+
+  return `<div class="stack">
+    ${card(`<div class="stack">${headline}${next}
+      ${meta.length ? `<p class="meta">${meta.join(" &middot; ")}</p>` : ""}</div>`)}
+    ${drift}
+    ${claims.length ? `<div class="row">${claims.join("")}</div>` : ""}
+    ${empty}
+  </div>`;
+}
+
+/* History ------------------------------------------------------------ */
+
+function renderHistory(checkpoints, branches) {
+  if (!checkpoints.length) {
+    return card(nothing(`No checkpoints yet. Each <code>continuum save</code> writes one, and so does the
+      end of an agent session.`));
+  }
+
+  const rows = checkpoints.map((item) => `
+    <button class="rowitem" data-diff="${esc(item.ref)}">
+      <span class="ref">${esc(item.ref)}</span>
+      <span class="what">${esc(item.task)}</span>
+      <span class="when">${esc(when(item.created_at))}${item.commit ? ` &middot; <span class="mono">${esc(item.commit)}</span>` : ""}</span>
+    </button>`).join("");
+
+  const others = branches.filter((b) => !b.current);
+  const branchNote = others.length
+    ? card(`<p class="label">Other branches</p>${list(others, (b) =>
+        `<li><span class="mono">${esc(b.name)}</span> &middot; ${esc(b.task || "nothing recorded")}
+         <span class="faint small">(${esc(b.checkpoints)})</span></li>`)}`)
+    : "";
+
+  const diff = state.diff
+    ? card(`<p class="label">${esc(state.diff.older)} to ${esc(state.diff.newer)}</p>
+        <pre class="diff">${esc(state.diff.diff)}</pre>`)
+    : "";
+
+  return `<div class="stack">
+    ${card(`<p class="label">Find where a claim came from</p>
+      <div class="row" style="align-items:center">
+        <input class="field" id="blame-q" placeholder="BillingGateway" value="${esc(state.blame ? state.blame.query : "")}">
+        <button class="btn" id="blame-go" style="flex:0 0 auto">Search</button>
+      </div>
+      ${state.blame ? `<p class="muted small" style="margin:14px 0 0">${esc(state.blame.summary)}</p>` : ""}`)}
+    ${card(`<p class="label">Checkpoints, newest first. Select one to compare it with the newest.</p>
+      <div class="rows">${rows}</div>`)}
+    ${diff}
+    ${branchNote}
+  </div>`;
+}
+
+/* Notes -------------------------------------------------------------- */
+
+function renderNotes(notes) {
+  if (!notes.length) {
+    return card(nothing(`Nothing recorded yet. <code>continuum note decision "chose PostgreSQL"</code>
+      records one; hypothesis and fact are the other two kinds. An open hypothesis is shown to the
+      next agent as unsettled rather than as established.`));
+  }
+
+  const rows = notes.map((item) => {
+    const mark = item.state === "open" ? "open" : "";
+    const shown = item.state ? ` <span class="pill ${esc(mark)}">${esc(item.state)}</span>` : "";
+    return `<li><span class="pill ${item.type === "decision" ? "decision" : ""}">${esc(item.type)}</span>
+      ${esc(item.text)}${shown}
+      <span class="faint small">&middot; ${esc(when(item.created_at))}</span></li>`;
+  }).join("");
+
+  return card(`<p class="label">Decisions, hypotheses and facts</p><ul class="plain">${rows}</ul>`);
+}
+
+/* Advanced ----------------------------------------------------------- */
+
+function renderAdvanced(data) {
+  const sections = [];
+
+  sections.push(card(`<p class="label">Providers</p>${
+    data.providers.length
+      ? list(data.providers, (p) => `<li><span class="mono">${esc(p.name)}</span>
+          <span class="faint small">${esc(p.kind || "")} ${esc(p.type || "")}</span></li>`)
+      : nothing("No providers configured. <code>continuum providers</code> lists what is available.")
+  }`));
+
+  sections.push(card(`<p class="label">Teams</p>${
+    data.teams.length
+      ? list(data.teams, (t) => `<li><span class="mono">${esc(t.name)}</span>
+          <span class="faint small">${esc((t.roles || []).length)} roles</span></li>`)
+      : nothing("No teams configured. <code>continuum team init default_dev_team</code> creates one.")
+  }`));
+
+  sections.push(card(`<p class="label">Tasks</p>${
+    data.tasks.length
+      ? list(data.tasks.slice(0, 8), (t) => `<li><span class="mono">${esc(t.task_id)}</span>
+          ${esc(t.title || "")} <span class="faint small">${esc(t.status || "")}</span></li>`)
+      : nothing("No controlled tasks. <code>continuum task create</code> opens one.")
+  }`));
+
+  sections.push(card(`<p class="label">Recent events</p>${
+    data.events.length
+      ? list(data.events.slice(0, 12), (e) => `<li><span class="mono small">${esc(e.kind)}</span>
+          <span class="faint small">${esc(when(e.created_at))}</span></li>`)
+      : nothing("Nothing recorded yet.")
+  }`));
+
+  return `<div class="stack">
+    ${card(nothing(`These are Continuum's orchestration features. You do not need any of them for the
+      daily loop, which is <code>continuum go</code> and the Now tab.`))}
+    <div class="row">${sections.join("")}</div>
+  </div>`;
+}
+
+/* Wiring ------------------------------------------------------------- */
+
+async function load(view) {
+  const node = document.getElementById("view");
+  node.innerHTML = card(`<p class="muted">Loading…</p>`);
+  try {
+    if (view === "now") {
+      const now = await api("/api/now");
+      document.getElementById("project").textContent = now.project || "";
+      node.innerHTML = renderNow(now);
+    } else if (view === "history") {
+      const [checkpoints, branches] = await Promise.all([api("/api/checkpoints"), api("/api/branches")]);
+      node.innerHTML = renderHistory(checkpoints, branches);
+      wireHistory(checkpoints);
+    } else if (view === "notes") {
+      node.innerHTML = renderNotes(await api("/api/notes"));
+    } else {
+      const [providers, teams, tasks, events] = await Promise.all([
+        api("/api/providers"), api("/api/teams"), api("/api/tasks"), api("/api/events"),
+      ]);
+      node.innerHTML = renderAdvanced({ providers, teams, tasks, events });
+    }
+  } catch (error) {
+    node.innerHTML = card(nothing(`Could not load this view. ${esc(error.message)}`));
+  }
+}
+
+function wireHistory(checkpoints) {
+  const newest = checkpoints.length ? checkpoints[0].ref : "HEAD";
+  document.querySelectorAll("[data-diff]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const ref = button.dataset.diff;
+      if (ref === newest) { toast("That is the newest checkpoint."); return; }
+      try {
+        state.diff = await api(`/api/diff?older=${encodeURIComponent(ref)}&newer=${encodeURIComponent(newest)}`);
+        await load("history");
+      } catch (error) { toast(error.message); }
+    });
+  });
+
+  const run = async () => {
+    const query = document.getElementById("blame-q").value.trim();
+    if (!query) { toast("Type something to look for."); return; }
+    try {
+      state.blame = await api(`/api/blame?q=${encodeURIComponent(query)}`);
+      await load("history");
+    } catch (error) { toast(error.message); }
+  };
+  document.getElementById("blame-go").addEventListener("click", run);
+  document.getElementById("blame-q").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") run();
+  });
+}
+
+function show(view) {
+  state.view = VIEWS.includes(view) ? view : "now";
+  document.querySelectorAll(".tab").forEach((tab) =>
+    tab.classList.toggle("active", tab.dataset.view === state.view));
+  location.hash = state.view;
+  load(state.view);
+}
+
+document.getElementById("tabs").addEventListener("click", (event) => {
+  const tab = event.target.closest(".tab");
+  if (tab) show(tab.dataset.view);
+});
+
+window.addEventListener("hashchange", () => show(location.hash.replace("#", "")));
+show(location.hash.replace("#", "") || "now");
