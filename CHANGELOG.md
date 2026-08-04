@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.14.0
+
+The control centre was rebuilt around the question people open it to ask.
+
+- Four tabs instead of eight views, an inspector and an activity drawer. Now
+  answers where the project stands in the biggest type on the page, with the
+  age, the drift against the recorded commit, the decisions and the unresolved
+  questions. History lists checkpoints, diffs any two and searches blame. Notes
+  shows the typed claims. Advanced holds teams, providers, tasks and events,
+  demoted rather than deleted.
+- Six endpoints back it: now, checkpoints, diff, blame, notes and branches. A
+  bad checkpoint reference returns 400 carrying the message the CLI gives.
+- Empty sections say what would fill them. Several old panels rendered blank
+  because their data is empty by design, which reads as broken.
+- Fixed the age resetting itself. It was read from latest_handoff.md's mtime,
+  and switching branches rewrites that file, so returning to a branch whose last
+  work was weeks old reported it as recorded today. It comes from the newest
+  checkpoint now. Freshness that resets itself is worse than none, because it is
+  the one number whose job is to be doubted.
+- Added tests/ui_smoke.js, which renders every view against fixtures through a
+  stub DOM and runs in CI beside `node --check`, because parsing is not
+  rendering.
+
+
 ## 0.13.0
 
 Continuum's history became something you can inspect, and its published
