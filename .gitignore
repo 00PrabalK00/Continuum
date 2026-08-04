@@ -6,12 +6,11 @@ dist/
 build/
 *.egg-info/
 .continuum/
-# Written by `continuum install`, and they embed the absolute project path of
-# whoever ran it, so committing them breaks the next person and leaks a home
-# directory.
-.codex/
-.gemini/
-.claude/settings.json
+# Written by `continuum install`, and they name one machine's project path, so
+# committing them would break the next clone. Narrowed to the generated files:
+# anything else a contributor puts in these directories stays trackable.
+.codex/config.toml
+.gemini/settings.json
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
 

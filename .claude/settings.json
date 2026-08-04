@@ -1,0 +1,29 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "continuum hook session-start --project \"${CLAUDE_PROJECT_DIR}\"",
+            "timeout": 15,
+            "statusMessage": "Loading Continuum context"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "continuum hook session-end --project \"${CLAUDE_PROJECT_DIR}\"",
+            "timeout": 60,
+            "statusMessage": "Recording Continuum handoff"
+          }
+        ]
+      }
+    ]
+  }
+}
