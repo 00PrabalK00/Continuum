@@ -6,6 +6,14 @@ dist/
 build/
 *.egg-info/
 .continuum/
+# Written by `continuum install`, and they embed the absolute project path of
+# whoever ran it, so committing them breaks the next person and leaks a home
+# directory.
+.codex/
+.gemini/
+.claude/settings.json
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
 
 # Output from unrelated local tooling
 brag-output/
