@@ -64,6 +64,30 @@ class RuleFileTest(unittest.TestCase):
 
 
 class ClaudeHookTest(unittest.TestCase):
+    def test_the_hook_commands_name_no_particular_machine(self):
+        # .claude/settings.json is shared team configuration that Continuum
+        # merges into rather than owns. An absolute path baked in here either
+        # breaks every other clone or forces the whole file out of version
+        # control, which is what it did.
+        import tempfile as _tempfile
+
+        from continuum.integrations import claude_hooks
+
+        with _tempfile.TemporaryDirectory() as temporary:
+            store = MemoryStore(Path(temporary) / "repo")
+            store.initialize(100000, 0.8)
+            hooks = claude_hooks(store)
+            commands = [
+                hook["command"]
+                for phase in ("SessionStart", "SessionEnd")
+                for entry in hooks[phase]
+                for hook in entry["hooks"]
+            ]
+            self.assertTrue(commands)
+            for command in commands:
+                self.assertIn("${CLAUDE_PROJECT_DIR}", command)
+                self.assertNotIn(str(store.project), command)
+
     def test_hooks_are_added_without_disturbing_existing_ones(self):
         with tempfile.TemporaryDirectory() as temporary:
             store = fresh_store(temporary)

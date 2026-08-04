@@ -105,8 +105,14 @@ def claude_hooks(store: "MemoryStore") -> dict:
     These are what make Continuum part of the workflow rather than a command to
     remember: the agent starts already knowing where the work stands, and the
     handoff is written whether or not anyone remembers to ask for it.
+
+    The project is referenced through Claude Code's own variable rather than
+    written as an absolute path. `.claude/settings.json` is shared team
+    configuration that Continuum merges into rather than owns, so baking one
+    machine's home directory into it would either break every other clone or
+    force the whole file out of version control.
     """
-    project = store.project.as_posix()
+    project = "${CLAUDE_PROJECT_DIR}"
     return {
         "SessionStart": [
             {
