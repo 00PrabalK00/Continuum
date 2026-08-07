@@ -41,6 +41,19 @@ breakdown, what this does not measure, and the faults this benchmark has had.
 
 <!-- benchmark-results:end -->
 
+## What that makes this
+
+A recorder. The accuracy in that table comes from writing the context down, not
+from anything Continuum does at the moment you open an agent — the middle row is
+an agent with no daemon, no injection and no wrappers, reading the files cold,
+and it scores the same. So the commands that matter are the ones that record:
+`save`, `note`, `handoff`, and the history they build up.
+
+Everything else is convenience on that. Injection makes it fast rather than
+correct. Teams, worktrees, claims and evidence are there for coordinating
+several agents at once, which is a different problem from a single agent
+knowing where you left off. `continuum help --all` is grouped in that order.
+
 ## The problem
 
 You are three hours into a bug. Your AI hits its context limit, or you switch

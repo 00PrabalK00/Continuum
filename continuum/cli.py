@@ -920,7 +920,7 @@ def install_cmd(args: argparse.Namespace) -> int:
 
 def show_help(args: argparse.Namespace) -> int:
     if getattr(args, "all", False):
-        parser(collapse=False).print_help()
+        print_grouped_help()
         return 0
     print("Continuum - local context continuity for AI coding agents.")
     print()
@@ -2428,6 +2428,76 @@ def audit_export_cmd(args: argparse.Namespace) -> int:
 # before; it is reached through `continuum help --all`, the Control Center or
 # the MCP server rather than through the top-level help.
 DAILY_COMMANDS = ("install", "go", "copy", "help")
+
+
+# The order here is the claim the benchmark makes. Recording the context is what
+# produces the accuracy: an agent that only reads `.continuum/` scores the same
+# as one Continuum injects into. Everything below the first two groups is
+# convenience on top of that, so it is listed after it and named as such.
+COMMAND_GROUPS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    (
+        "Recording the context",
+        "What produces the accuracy. These write the state an agent reads cold.",
+        ("save", "note", "handoff", "log", "diff", "blame", "restore", "branch", "merge", "search", "status"),
+    ),
+    (
+        "Handing it to an agent",
+        "Getting recorded context into whichever AI you open next.",
+        ("go", "copy", "ask", "chat", "run", "resume", "install", "setup",
+         "agent", "session", "limits", "adapters", "handoff-llm"),
+    ),
+    (
+        "Keeping it current",
+        "Set-up and upkeep for the recording itself.",
+        ("init", "up", "down", "daemon", "logs", "doctor", "memory", "context"),
+    ),
+    (
+        "Coordinating several agents",
+        "Optional. Useful for parallel work; not what makes a single agent accurate.",
+        ("task", "claim", "team", "workflow", "worktree", "message",
+         "objective", "instruct", "route", "providers", "model"),
+    ),
+    (
+        "Evidence and governance",
+        "Optional. Inspecting and constraining what agents did.",
+        ("evidence", "pr-packet", "flight-record", "roi", "benchmark",
+         "policy", "command", "audit", "secrets"),
+    ),
+    (
+        "Surfaces",
+        "Other ways into the same recorded memory.",
+        ("ui", "mcp", "shell", "service", "autostart", "hook", "help"),
+    ),
+)
+
+
+def print_grouped_help() -> None:
+    """List every command, grouped so the recording verbs read first."""
+    root = parser(collapse=False)
+    commands = next(
+        action for action in root._subparsers._group_actions
+        if isinstance(action, argparse._SubParsersAction)
+    )
+    summaries = {action.dest: (action.help or "") for action in commands._choices_actions}
+    width = max((len(name) for name in summaries), default=0)
+
+    print("Continuum - every command.")
+    grouped: set[str] = set()
+    for title, note, names in COMMAND_GROUPS:
+        listed = [name for name in names if name in summaries]
+        if not listed:
+            continue
+        grouped.update(listed)
+        print(f"\n{title}\n  {note}")
+        for name in listed:
+            print(f"    {name.ljust(width)}  {summaries[name]}")
+
+    remaining = [name for name in summaries if name not in grouped]
+    if remaining:
+        print("\nOther")
+        for name in remaining:
+            print(f"    {name.ljust(width)}  {summaries[name]}")
+    print("\nThe daily loop is the first three of these: continuum, continuum go, continuum copy.")
 
 
 def collapse_help(commands: argparse._SubParsersAction) -> None:
