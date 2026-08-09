@@ -15,9 +15,23 @@ re-explain anything:
 - `.continuum/current.md` — where the work stands
 - `.continuum/latest_handoff.md` — what the previous agent left for you
 
-If the Continuum MCP server is connected, prefer its tools over reading files:
-`get_startup_context` first, then `search_memory` and `expand_memory` for
-targeted detail. Do not load full history by default.
+## The tools
+
+If the Continuum MCP server is connected, prefer its tools over reading the
+files. Start narrow and expand; do not load full history by default.
+
+| What you need | MCP tool | Without MCP |
+| --- | --- | --- |
+| Where the work stands | `get_startup_context` | `continuum status` |
+| What the last agent left | `get_latest_handoff` | read `.continuum/latest_handoff.md` |
+| One exact topic | `search_memory` | `continuum search "<topic>"` |
+| Full text behind a result | `expand_memory` | `continuum log` |
+| Record what you did | `save_progress` | `continuum save "<did> \| <next step>"` |
+| Hand the work over | `write_handoff` | `continuum handoff --task "<state>" --next-step "<next>"` |
+| Reach another agent | `list_agents`, `ask_agent` | `continuum ask <agent> "<question>"` |
+
+`get_raw_log` returns the unsummarised history. It is a last resort, not the
+read path — the compact views above are what keep this cheap.
 
 ## Recording progress
 

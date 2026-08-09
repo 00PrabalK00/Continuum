@@ -54,6 +54,25 @@ class RuleFileTest(unittest.TestCase):
             self.assertIn("My own house rules", text)
             self.assertIn("Continuum Shared Memory", text)
 
+    def test_copilot_gets_the_file_it_actually_reads(self):
+        # Copilot is the one common agent that ignores AGENTS.md.
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh_store(temporary)
+            first = integrations.install_copilot(store)[0]
+            path = store.project / ".github" / "copilot-instructions.md"
+            self.assertEqual(first.status, integrations.INSTALLED)
+            self.assertIn("get_startup_context", path.read_text(encoding="utf-8"))
+            self.assertEqual(integrations.install_copilot(store)[0].status, integrations.ALREADY)
+
+    def test_every_instruction_names_the_tools_and_the_commands(self):
+        # An agent that never connects the MCP server still has to be able to
+        # act, so each surface carries both halves.
+        text = integrations.AGENT_INSTRUCTIONS
+        for tool in ("get_startup_context", "get_latest_handoff", "search_memory", "expand_memory", "save_progress"):
+            self.assertIn(tool, text)
+        for command in ("continuum status", "continuum search", "continuum save", "continuum handoff"):
+            self.assertIn(command, text)
+
     def test_windsurf_and_cline_rules_are_written(self):
         with tempfile.TemporaryDirectory() as temporary:
             store = fresh_store(temporary)

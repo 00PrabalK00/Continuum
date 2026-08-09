@@ -30,6 +30,11 @@ ALREADY = "already"
 
 # What every agent is told about Continuum. Kept short: it competes with the
 # user's own instructions for attention, and the tool descriptions carry detail.
+#
+# The table names the tools rather than describing them in prose. An agent
+# reading an instruction file has not yet seen the MCP tool list, and an agent
+# whose harness never connects the server has no tool list at all, so each row
+# carries the tool and the command that does the same thing without it.
 AGENT_INSTRUCTIONS = """## Continuum Shared Memory
 
 This project uses Continuum, a local shared memory across AI coding agents.
@@ -40,9 +45,23 @@ re-explain anything:
 - `.continuum/current.md` — where the work stands
 - `.continuum/latest_handoff.md` — what the previous agent left for you
 
-If the Continuum MCP server is connected, prefer its tools over reading files:
-`get_startup_context` first, then `search_memory` and `expand_memory` for
-targeted detail. Do not load full history by default.
+## The tools
+
+If the Continuum MCP server is connected, prefer its tools over reading the
+files. Start narrow and expand; do not load full history by default.
+
+| What you need | MCP tool | Without MCP |
+| --- | --- | --- |
+| Where the work stands | `get_startup_context` | `continuum status` |
+| What the last agent left | `get_latest_handoff` | read `.continuum/latest_handoff.md` |
+| One exact topic | `search_memory` | `continuum search "<topic>"` |
+| Full text behind a result | `expand_memory` | `continuum log` |
+| Record what you did | `save_progress` | `continuum save "<did> \\| <next step>"` |
+| Hand the work over | `write_handoff` | `continuum handoff --task "<state>" --next-step "<next>"` |
+| Reach another agent | `list_agents`, `ask_agent` | `continuum ask <agent> "<question>"` |
+
+`get_raw_log` returns the unsummarised history. It is a last resort, not the
+read path — the compact views above are what keep this cheap.
 
 ## Recording progress
 
@@ -242,6 +261,17 @@ def install_cline(store: "MemoryStore") -> list[Result]:
     return [write_rule_file(path, AGENT_INSTRUCTIONS, "Cline", "cline")]
 
 
+def install_copilot(store: "MemoryStore") -> list[Result]:
+    """Copilot reads `.github/copilot-instructions.md` on every request.
+
+    It is the one widely-installed agent that ignores AGENTS.md, and it ships
+    inside VS Code and the JetBrains IDEs rather than as a CLI, so detection
+    goes through the editor rather than through PATH.
+    """
+    path = store.project / ".github" / "copilot-instructions.md"
+    return [append_to_memory_file(path, "GitHub Copilot", "copilot")]
+
+
 def install_generic(store: "MemoryStore") -> list[Result]:
     """AGENTS.md is the convention most other agent CLIs already read."""
     return [append_to_memory_file(store.project / "AGENTS.md", "AGENTS.md (any other agent)", "agents-md")]
@@ -277,6 +307,12 @@ TARGETS: list[Target] = [
         install_windsurf,
     ),
     Target("cline", "Cline", lambda: home_has(".clinerules"), install_cline),
+    Target(
+        "copilot",
+        "GitHub Copilot",
+        lambda: shutil.which("code") is not None or home_has(".vscode", ".vscode-insiders"),
+        install_copilot,
+    ),
     # Always installed: any agent CLI Continuum does not know by name still
     # reads AGENTS.md, so this is what makes an unlisted agent work.
     Target("agents-md", "AGENTS.md (any other agent)", lambda: True, install_generic),

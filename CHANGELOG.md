@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- The instruction file every agent reads at startup now names the tools. It
+  described them in prose before, which left an agent to guess at the tool
+  names before it had seen the MCP tool list — and left an agent whose harness
+  never connects the server with nothing to do at all. Each row now carries the
+  tool and the command that does the same thing without it.
+- Added GitHub Copilot as an install target. It reads
+  `.github/copilot-instructions.md` and ignores AGENTS.md, so it was the one
+  widely-installed agent the installer left out.
+
 ## 0.14.0
 
 The control centre was rebuilt around the question people open it to ask.

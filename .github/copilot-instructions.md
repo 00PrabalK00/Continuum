@@ -1,22 +1,3 @@
-# Continuum Development Instructions
-
-Keep Continuum local-first and project-scoped.
-
-- Compact handoffs are the default agent context; raw logs must not become the
-  default read path.
-- Implemented claims in the README must correspond to tested functionality.
-- MCP tools must remain scoped to the initialized project passed to the server.
-- Docker integrations are optional additions, not required for host-side file
-  watching or local agent execution.
-
-Run before completing changes:
-
-```bash
-python -m unittest discover -s tests -v
-python -m continuum --help
-node bin/continuum.js --version
-```
-
 ## Continuum Shared Memory
 
 This project uses Continuum, a local shared memory across AI coding agents.
