@@ -64,13 +64,62 @@ class RuleFileTest(unittest.TestCase):
             self.assertIn("get_startup_context", path.read_text(encoding="utf-8"))
             self.assertEqual(integrations.install_copilot(store)[0].status, integrations.ALREADY)
 
+    def test_an_older_block_is_replaced_not_left_alone(self):
+        # An upgrade that only reaches fresh installations reaches almost
+        # nobody: every project already using Continuum keeps whatever text it
+        # was first installed with.
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh_store(temporary)
+            path = store.project / "AGENTS.md"
+            path.write_text(
+                "# House rules\n\nDo not delete things.\n\n"
+                "## Continuum Shared Memory\n\n"
+                "If the Continuum MCP server is connected, prefer its tools.\n\n"
+                "## Recording progress\n\nRecord progress with `save_progress`.\n\n"
+                "## My own section\n\nKeep this.\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(integrations.append_to_memory_file(path, "test", "test").status, integrations.UPDATED)
+            text = path.read_text(encoding="utf-8")
+            self.assertIn("Do not delete things.", text)
+            self.assertIn("Keep this.", text)
+            self.assertIn("| Where the work stands |", text)
+            self.assertNotIn("prefer its tools.\n", text)
+            self.assertEqual(text.count(integrations.BLOCK_OPEN), 1)
+            self.assertEqual(integrations.append_to_memory_file(path, "test", "test").status, integrations.ALREADY)
+
+    def test_the_version_changes_with_the_text(self):
+        # The version is derived rather than bumped by hand, so instructions
+        # cannot ship with a stale marker that makes every rerun a no-op.
+        self.assertNotEqual(integrations.block_version("one"), integrations.block_version("two"))
+
+    def test_frontmatter_stays_the_first_thing_in_the_file(self):
+        # Cursor and Claude only read frontmatter at the very top, so the
+        # marker cannot be written above it.
+        with tempfile.TemporaryDirectory() as temporary:
+            store = fresh_store(temporary)
+            integrations.install_cursor(store)
+            text = (store.project / ".cursor" / "rules" / "continuum.mdc").read_text(encoding="utf-8")
+            self.assertTrue(text.startswith("---\n"))
+            self.assertLess(text.index("alwaysApply"), text.index(integrations.BLOCK_OPEN))
+
+    def test_copilot_is_detected_without_vs_code(self):
+        # Copilot ships in the JetBrains IDEs too, and that machine may never
+        # have run VS Code.
+        target = next(item for item in integrations.TARGETS if item.id == "copilot")
+        with (
+            patch("continuum.integrations.shutil.which", return_value=None),
+            patch("continuum.integrations.home_has", lambda *names: "JetBrains" in names),
+        ):
+            self.assertTrue(target.detect())
+
     def test_every_instruction_names_the_tools_and_the_commands(self):
         # An agent that never connects the MCP server still has to be able to
         # act, so each surface carries both halves.
         text = integrations.AGENT_INSTRUCTIONS
         for tool in ("get_startup_context", "get_latest_handoff", "search_memory", "expand_memory", "save_progress"):
             self.assertIn(tool, text)
-        for command in ("continuum status", "continuum search", "continuum save", "continuum handoff"):
+        for command in ("continuum search", "continuum save", "continuum handoff", "continuum ask"):
             self.assertIn(command, text)
 
     def test_windsurf_and_cline_rules_are_written(self):

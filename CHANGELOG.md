@@ -9,7 +9,16 @@
   tool and the command that does the same thing without it.
 - Added GitHub Copilot as an install target. It reads
   `.github/copilot-instructions.md` and ignores AGENTS.md, so it was the one
-  widely-installed agent the installer left out.
+  widely-installed agent the installer left out. Detected through VS Code or a
+  JetBrains configuration directory, since it ships inside an IDE rather than
+  as a command.
+- `continuum install` now updates the block it wrote last time instead of
+  leaving it. It treated the presence of any Continuum block as final, so a
+  project installed under an earlier release kept that release's instructions
+  forever and every improvement reached new projects only. The block is
+  delimited and carries a version derived from its own text, and a block from
+  before the markers is found by its headings, so what you wrote around it —
+  above or below — survives the upgrade.
 
 ## 0.14.0
 

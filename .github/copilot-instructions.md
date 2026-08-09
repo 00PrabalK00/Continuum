@@ -1,3 +1,4 @@
+<!-- continuum:instructions v=03cd1e5def23 -->
 ## Continuum Shared Memory
 
 This project uses Continuum, a local shared memory across AI coding agents.
@@ -15,7 +16,7 @@ files. Start narrow and expand; do not load full history by default.
 
 | What you need | MCP tool | Without MCP |
 | --- | --- | --- |
-| Where the work stands | `get_startup_context` | `continuum status` |
+| Where the work stands | `get_startup_context` | `continuum` |
 | What the last agent left | `get_latest_handoff` | read `.continuum/latest_handoff.md` |
 | One exact topic | `search_memory` | `continuum search "<topic>"` |
 | Full text behind a result | `expand_memory` | `continuum log` |
@@ -46,3 +47,4 @@ whether something is already recorded, so you are not writing a handoff after
 every message.
 
 To hand work to a different AI, use `list_agents` and `ask_agent`.
+<!-- /continuum:instructions -->

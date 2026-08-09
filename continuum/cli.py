@@ -71,6 +71,7 @@ from .integrations import (
     INSTALLED as INSTALLED_STATUS,
     SKIPPED as SKIPPED_STATUS,
     TARGETS as AGENT_TARGETS,
+    UPDATED as UPDATED_STATUS,
     detect as detect_agents,
     install as install_integrations,
 )
@@ -867,12 +868,21 @@ def connect_agents(store: MemoryStore, only: list[str] | None) -> int:
         return 0
     width = max(len(item.label) for item in results)
     for item in results:
-        mark = {INSTALLED_STATUS: "+", ALREADY_STATUS: "=", SKIPPED_STATUS: "!"}.get(item.status, "-")
+        mark = {
+            INSTALLED_STATUS: "+",
+            UPDATED_STATUS: "^",
+            ALREADY_STATUS: "=",
+            SKIPPED_STATUS: "!",
+        }.get(item.status, "-")
         print(f"  {mark} {item.label.ljust(width)}  {item.detail}")
     installed = sum(1 for item in results if item.status == INSTALLED_STATUS)
+    updated = sum(1 for item in results if item.status == UPDATED_STATUS)
     skipped = [item for item in results if item.status == SKIPPED_STATUS]
     print()
-    print(f"Connected {len({item.target for item in results})} agent target(s); {installed} newly written.")
+    written = f"{installed} newly written"
+    if updated:
+        written += f", {updated} brought up to date"
+    print(f"Connected {len({item.target for item in results})} agent target(s); {written}.")
     if skipped:
         print(f"{len(skipped)} needed attention. See the lines marked ! above.")
     return installed
