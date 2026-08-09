@@ -1,5 +1,3 @@
-# Claude Instructions
-
 <!-- continuum:instructions v=03cd1e5def23 -->
 ## Continuum Shared Memory
 

@@ -920,6 +920,29 @@ class HelpSurfaceTest(unittest.TestCase):
         self.assertIn("worktree", text)
         self.assertIn("flight-record", text)
 
+    def test_help_all_groups_every_command(self):
+        import argparse
+
+        from continuum.cli import COMMAND_GROUPS
+
+        root = parser(collapse=False)
+        commands = next(
+            action for action in root._subparsers._group_actions
+            if isinstance(action, argparse._SubParsersAction)
+        )
+        every = {action.dest for action in commands._choices_actions}
+        grouped = {name for _, _, names in COMMAND_GROUPS for name in names}
+        self.assertEqual(every - grouped, set(), "command missing from COMMAND_GROUPS")
+        self.assertEqual(grouped - every, set(), "COMMAND_GROUPS names a command that no longer exists")
+
+    def test_help_all_leads_with_the_recording_commands(self):
+        output = StringIO()
+        with redirect_stdout(output):
+            self.assertEqual(main(["help", "--all"]), 0)
+        text = output.getvalue()
+        self.assertLess(text.index("Recording the context"), text.index("Coordinating several agents"))
+        self.assertLess(text.index("note"), text.index("worktree"))
+
     def test_hidden_commands_still_run(self):
         output = StringIO()
         with redirect_stdout(output):

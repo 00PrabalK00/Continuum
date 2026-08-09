@@ -27,9 +27,15 @@ if TYPE_CHECKING:
 SKIPPED = "skipped"
 INSTALLED = "installed"
 ALREADY = "already"
+UPDATED = "updated"
 
 # What every agent is told about Continuum. Kept short: it competes with the
 # user's own instructions for attention, and the tool descriptions carry detail.
+#
+# The table names the tools rather than describing them in prose. An agent
+# reading an instruction file has not yet seen the MCP tool list, and an agent
+# whose harness never connects the server has no tool list at all, so each row
+# carries the tool and the command that does the same thing without it.
 AGENT_INSTRUCTIONS = """## Continuum Shared Memory
 
 This project uses Continuum, a local shared memory across AI coding agents.
@@ -40,9 +46,23 @@ re-explain anything:
 - `.continuum/current.md` — where the work stands
 - `.continuum/latest_handoff.md` — what the previous agent left for you
 
-If the Continuum MCP server is connected, prefer its tools over reading files:
-`get_startup_context` first, then `search_memory` and `expand_memory` for
-targeted detail. Do not load full history by default.
+## The tools
+
+If the Continuum MCP server is connected, prefer its tools over reading the
+files. Start narrow and expand; do not load full history by default.
+
+| What you need | MCP tool | Without MCP |
+| --- | --- | --- |
+| Where the work stands | `get_startup_context` | `continuum` |
+| What the last agent left | `get_latest_handoff` | read `.continuum/latest_handoff.md` |
+| One exact topic | `search_memory` | `continuum search "<topic>"` |
+| Full text behind a result | `expand_memory` | `continuum log` |
+| Record what you did | `save_progress` | `continuum save "<did> \\| <next step>"` |
+| Hand the work over | `write_handoff` | `continuum handoff --task "<state>" --next-step "<next>"` |
+| Reach another agent | `list_agents`, `ask_agent` | `continuum ask <agent> "<question>"` |
+
+`get_raw_log` returns the unsummarised history. It is a last resort, not the
+read path — the compact views above are what keep this cheap.
 
 ## Recording progress
 
@@ -68,6 +88,26 @@ To hand work to a different AI, use `list_agents` and `ask_agent`.
 
 RULE_HEADER = "Continuum Shared Memory"
 
+# The headings Continuum has ever written. A block installed by an older release
+# carries no marker, so this is how its end is found: the block runs from its
+# heading until a heading Continuum did not write, or to the end of the file.
+OWN_HEADINGS = ("## " + RULE_HEADER, "## The tools", "## Recording progress")
+
+BLOCK_OPEN = "<!-- continuum:instructions"
+BLOCK_CLOSE = "<!-- /continuum:instructions -->"
+
+
+def block_version(body: str) -> str:
+    """A short digest of the text, so a rerun can tell current from outdated.
+
+    Deriving the version from the text rather than bumping a constant means an
+    edit to the instructions can never ship without changing the version, which
+    is the failure that leaves every existing project on the old block.
+    """
+    from hashlib import sha256
+
+    return sha256(body.strip().encode("utf-8")).hexdigest()[:12]
+
 
 @dataclass
 class Result:
@@ -78,25 +118,79 @@ class Result:
 
 
 def marker_block(body: str) -> str:
-    return body if body.endswith("\n") else body + "\n"
+    """Wrap the instructions so a later release can find and replace them."""
+    body = body.strip("\n")
+    return f"{BLOCK_OPEN} v={block_version(body)} -->\n{body}\n{BLOCK_CLOSE}\n"
 
 
-def write_rule_file(path: Path, body: str, label: str, target: str) -> Result:
-    """Write one instruction file, leaving an existing Continuum one alone."""
-    if path.exists() and RULE_HEADER in path.read_text(encoding="utf-8", errors="replace"):
+def strip_block(text: str) -> tuple[str, str | None]:
+    """Return the text without Continuum's block, and the version it carried.
+
+    Handles both shapes: the marked block this version writes, and the bare
+    heading an older release left behind.
+    """
+    start = text.find(BLOCK_OPEN)
+    if start != -1:
+        opener_end = text.find("-->", start)
+        version = text[start:opener_end].split("v=")[-1].strip() if opener_end != -1 else None
+        end = text.find(BLOCK_CLOSE, start)
+        tail = text[end + len(BLOCK_CLOSE) :] if end != -1 else ""
+        return text[:start] + tail, version
+
+    start = text.find(OWN_HEADINGS[0])
+    if start == -1:
+        return text, None
+    # An unmarked block ends where text Continuum did not write begins. Anything
+    # the user added below their own heading has to survive being upgraded.
+    end = len(text)
+    for offset, line in scan_headings(text, start + 1):
+        if line.rstrip() not in OWN_HEADINGS:
+            end = offset
+            break
+    return text[:start] + text[end:], None
+
+
+def scan_headings(text: str, from_index: int) -> list[tuple[int, str]]:
+    found = []
+    index = from_index
+    while True:
+        index = text.find("\n## ", index)
+        if index == -1:
+            return found
+        index += 1
+        line_end = text.find("\n", index)
+        found.append((index, text[index : line_end if line_end != -1 else len(text)]))
+
+
+def write_instructions(path: Path, body: str, label: str, target: str, front: str = "") -> Result:
+    """Write Continuum's block, replacing an older one and keeping the rest.
+
+    Rerunning `continuum install` after an upgrade has to actually deliver the
+    new instructions. Treating any existing block as final is what left every
+    project already using Continuum on whatever text it was installed with.
+
+    `front` is YAML frontmatter, which several agents only read as the first
+    thing in the file, so it is written ahead of the marker rather than inside
+    the block.
+    """
+    existing = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+    remainder, version = strip_block(existing)
+    if version == block_version(body):
         return Result(target, label, ALREADY, str(path))
-    write_text(path, marker_block(body))
-    return Result(target, label, INSTALLED, str(path))
+    if front and not remainder.lstrip().startswith("---"):
+        remainder = front + remainder
+    separator = "\n\n" if remainder.strip() else ""
+    write_text(path, remainder.rstrip("\n") + separator + marker_block(body))
+    return Result(target, label, INSTALLED if not existing.strip() else UPDATED, str(path))
+
+
+def write_rule_file(path: Path, body: str, label: str, target: str, front: str = "") -> Result:
+    return write_instructions(path, body, label, target, front)
 
 
 def append_to_memory_file(path: Path, label: str, target: str) -> Result:
-    """Append the instructions to an agent's memory file, keeping what is there."""
-    existing = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
-    if RULE_HEADER in existing:
-        return Result(target, label, ALREADY, str(path))
-    separator = "\n\n" if existing.strip() else ""
-    write_text(path, existing.rstrip("\n") + separator + marker_block(AGENT_INSTRUCTIONS))
-    return Result(target, label, INSTALLED, str(path))
+    """Add the instructions to an agent's memory file, keeping what is there."""
+    return write_instructions(path, AGENT_INSTRUCTIONS, label, target)
 
 
 def claude_hooks(store: "MemoryStore") -> dict:
@@ -172,15 +266,15 @@ def install_claude(store: "MemoryStore") -> list[Result]:
         status = INSTALLED
     results = [Result("claude", "Claude Code", status, message)]
     skill = store.project / ".claude" / "skills" / "continuum" / "SKILL.md"
-    body = (
+    front = (
         "---\n"
         "name: continuum\n"
         "description: >-\n"
         "  Shared project memory across AI agents. Use when resuming work, when asked what\n"
         "  was happening, when running low on context, or to hand work to another AI.\n"
-        "---\n\n" + AGENT_INSTRUCTIONS
+        "---\n"
     )
-    results.append(write_rule_file(skill, body, "Claude Code skill", "claude"))
+    results.append(write_rule_file(skill, AGENT_INSTRUCTIONS, "Claude Code skill", "claude", front))
 
     settings_path = store.project / ".claude" / "settings.json"
     settings: dict = {}
@@ -222,14 +316,14 @@ def install_gemini(store: "MemoryStore") -> list[Result]:
 
 
 def install_cursor(store: "MemoryStore") -> list[Result]:
-    body = (
+    front = (
         "---\n"
         'description: "Continuum shared memory — read project context before asking the user to repeat it"\n'
         "alwaysApply: true\n"
-        "---\n\n" + AGENT_INSTRUCTIONS
+        "---\n"
     )
     path = store.project / ".cursor" / "rules" / "continuum.mdc"
-    return [write_rule_file(path, body, "Cursor", "cursor")]
+    return [write_rule_file(path, AGENT_INSTRUCTIONS, "Cursor", "cursor", front)]
 
 
 def install_windsurf(store: "MemoryStore") -> list[Result]:
@@ -242,6 +336,17 @@ def install_cline(store: "MemoryStore") -> list[Result]:
     return [write_rule_file(path, AGENT_INSTRUCTIONS, "Cline", "cline")]
 
 
+def install_copilot(store: "MemoryStore") -> list[Result]:
+    """Copilot reads `.github/copilot-instructions.md` on every request.
+
+    It is the one widely-installed agent that ignores AGENTS.md, and it ships
+    inside VS Code and the JetBrains IDEs rather than as a CLI, so detection
+    goes through the editor rather than through PATH.
+    """
+    path = store.project / ".github" / "copilot-instructions.md"
+    return [append_to_memory_file(path, "GitHub Copilot", "copilot")]
+
+
 def install_generic(store: "MemoryStore") -> list[Result]:
     """AGENTS.md is the convention most other agent CLIs already read."""
     return [append_to_memory_file(store.project / "AGENTS.md", "AGENTS.md (any other agent)", "agents-md")]
@@ -250,6 +355,20 @@ def install_generic(store: "MemoryStore") -> list[Result]:
 def home_has(*names: str) -> bool:
     home = Path.home()
     return any((home / name).exists() for name in names)
+
+
+def has_jetbrains() -> bool:
+    """Copilot in a JetBrains IDE, on a machine that may never have run VS Code.
+
+    JetBrains keeps its configuration in one directory per platform, so this is
+    where an install shows up whichever IDE of theirs it belongs to.
+    """
+    return home_has(
+        "JetBrains",  # the directory itself, when the home is the config root
+        ".config/JetBrains",  # Linux
+        "AppData/Roaming/JetBrains",  # Windows
+        "Library/Application Support/JetBrains",  # macOS
+    )
 
 
 @dataclass
@@ -277,6 +396,12 @@ TARGETS: list[Target] = [
         install_windsurf,
     ),
     Target("cline", "Cline", lambda: home_has(".clinerules"), install_cline),
+    Target(
+        "copilot",
+        "GitHub Copilot",
+        lambda: shutil.which("code") is not None or home_has(".vscode", ".vscode-insiders") or has_jetbrains(),
+        install_copilot,
+    ),
     # Always installed: any agent CLI Continuum does not know by name still
     # reads AGENTS.md, so this is what makes an unlisted agent work.
     Target("agents-md", "AGENTS.md (any other agent)", lambda: True, install_generic),
